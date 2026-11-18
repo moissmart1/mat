@@ -30,11 +30,19 @@
 //   returns the first one, with its log id) and then undo that. A line that
 //   provably never left the phone is simply forgotten.
 //
+// Who you are (security, 2026-11-18): when load says personal, the phone is
+// the link's own person (me from the backend, no choice offered, and queued
+// lines are written as that person). A key the backend refuses (bad_key)
+// takes the trip off the phone: everything in memory, and every mat.* key
+// in storage (clear, given to createStore; by default js/forget.js
+// clearTrip), keeping only this person's own unsent lines in mat.queue.
+//
 // Everything outside comes in through createStore's arguments.
 
 import { newId } from "./time.js";
 import { untickOutcome } from "./todos.js";
 import { LOST as TICKET_LOST } from "./tickets.js";
+import { clearTrip } from "./forget.js";
 
 const BUSY_RETRIES = 3;
 const BUSY_DELAY_MS = 400;
@@ -153,11 +161,20 @@ function isData(d) {
   return !!d && typeof d === "object" && Array.isArray(d.expenses) && Array.isArray(d.payments) && Array.isArray(d.people);
 }
 
+// A key that came in the address and the trip refused (the phone keeps its own).
+const ADDRESS_KEY_REFUSED = "That link didn’t work. This phone stays on the link it already had.";
+
 // ticketData(id) -> Promise<base64 | null>: a ticket picture's data from the
 // phone's keep, to send one that was queued (its data is never in mat.queue).
 // afterLoad(): called after every load that answered (js/tickets.js
 // fetchMissing hangs here).
-export function createStore({ api, storage, now = () => Date.now(), wait = defaultWait, ticketData = async () => null, afterLoad = null }) {
+export function createStore({ api, storage, now = () => Date.now(), wait = defaultWait, clear = (queue) => clearTrip(storage, { queue }), ticketData = async () => null, afterLoad = null }) {
+  // Set once the trip was taken off this phone: nothing more is written to
+  // storage or sent with the refused key until boot() starts again.
+  let wiped = false;
+  // How many times the trip was taken off (fix round 1, I1): a reply that
+  // left before a wipe and lands after it is dropped, never drawn.
+  let wipes = 0;
   // ---- storage, never allowed to throw ----
   const getItem = (k) => {
     try {
@@ -168,6 +185,7 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
     }
   };
   const setItem = (k, v) => {
+    if (wiped) return;
     try {
       storage.setItem(k, v);
     } catch {
@@ -188,6 +206,9 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
     status: "boot", online: true, rev: null, me: null,
     trip: null, people: [], days: [], stops: [], stays: [], expenses: [], payments: [], rateToday: null, rateSource: null, sheetUrl: "", plannerLinked: false, todos: [], todosPulledAt: "", paymentsPulledAt: "", stampDefs: [], stamps: [], paymentProblems: { at: "", list: [], more: 0 }, todoProblems: { at: "", list: [], more: 0 }, tickets: [], ticketsReady: false,
     loadedAt: null, seenAt: null, lastChange: null, notice: null, setAside: [], keyRefused: false,
+    // personal: this phone opened its own person's link (load said so); me is then theirs.
+    // cleared: the trip was taken off this phone after its key was refused ({ kept: own unsent lines kept }).
+    personal: false, cleared: null,
     history: { entries: [], more: false, loading: false, error: null },
   };
 
@@ -317,15 +338,20 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
   // ---- talking to the backend ----
 
   async function call(action, args, opts) {
+    if (wiped) throw refusedError();
+    const wipesAt = wipes;
     for (let attempt = 0; ; attempt++) {
       try {
         const r = opts ? await api(action, args, opts) : await api(action, args);
+        if (wipes !== wipesAt) throw lateError();
         state.online = true;
         // Contact after a write that got no reply: show what the backend has.
         // (refresh and checkRev see to it themselves.)
         if (reloadAfter !== null && action !== "load" && action !== "rev") reloadOnContact();
         return r;
       } catch (err) {
+        if (err && err.late) throw err; // the trip was taken off meanwhile: nothing more to do with it
+        if (wipes !== wipesAt) throw lateError();
         const code = err && err.code;
         if (code === "busy" && attempt < BUSY_RETRIES) {
           await wait(BUSY_DELAY_MS);
@@ -335,9 +361,83 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
         if (code === "bad_key") {
           state.status = "nokey";
           state.keyRefused = true; // a key was tried and the trip said no
+          takeTripOff();
         }
         throw err;
       }
+    }
+  }
+
+  function lateError() {
+    const err = refusedError();
+    err.late = true;
+    return err;
+  }
+
+  function refusedError() {
+    const err = new Error("This link’s trip key doesn’t match. Ask for a fresh invite link.");
+    err.code = "bad_key";
+    return err;
+  }
+
+  // Who an entry of mat.queue was made by (null when it does not say).
+  function queuedBy(q) {
+    if (!q || typeof q !== "object") return null;
+    const who = q.undo === true ? q.actor : q.stamp ? q.who : q.payment ? q.stampedBy : q.addedBy;
+    return typeof who === "string" ? who : null;
+  }
+
+  // The backend refused this phone's key (a definitive bad_key: never a
+  // network failure or busy). The trip comes off the phone: memory and
+  // storage, except this person's own unsent entries, which stay in mat.queue
+  // for when they open their new link. The no-key screen then shows.
+  function takeTripOff({ keep = true } = {}) {
+    if (wiped && keep) return;
+    const queue = keep ? getJson("mat.queue") : null;
+    // With nobody known (an earlier refusal already took mat.me off), the
+    // queue is already only this person's: kept as it is (fix round 1, C2).
+    // Never a ticket picture: every one comes off the phone, unsent ones too.
+    const notPicture = (q) => q && typeof q === "object" && !q.ticket && !(q.undo === true && q.kind === "ticket");
+    const mine = !Array.isArray(queue) ? [] : myName ? queue.filter((q) => notPicture(q) && queuedBy(q) === myName) : queue.filter(notPicture);
+    // Only say the trip was taken off when there was one here (a wrong key
+    // pasted on an empty phone has nothing to take off).
+    const had = base !== null || getItem("mat.cache") !== null || (Array.isArray(queue) && queue.length > 0);
+    wiped = true;
+    wipes++;
+    try {
+      clear(mine.length ? JSON.stringify(mine) : null);
+    } catch {
+      // storage that cannot be cleared: memory is cleared all the same
+    }
+    base = null;
+    ops = [];
+    resolving = [];
+    writes.clear();
+    settled = [];
+    unsureUndos = [];
+    myName = null;
+    for (const k of DATA_KEYS) state[k] = Array.isArray(state[k]) ? [] : null;
+    Object.assign(state, {
+      rev: null, me: null, personal: false, sheetUrl: "", plannerLinked: false, todosPulledAt: "", paymentsPulledAt: "",
+      paymentProblems: { at: "", list: [], more: 0 }, todoProblems: { at: "", list: [], more: 0 },
+      loadedAt: null, lastChange: null, notice: null, setAside: [],
+      history: { entries: [], more: false, loading: false, error: null },
+      cleared: had ? { kept: mine.length } : null,
+    });
+    historyLoaded = false;
+    emit();
+  }
+
+  // The link's own person, when load says so (also from the saved trip, so a
+  // phone with no signal is still that person). A line queued earlier under
+  // another name is still sent: the backend writes it as this link's person,
+  // who is the one holding the phone.
+  function takeIdentity(data) {
+    const personal = !!data && data.personal === true && typeof data.me === "string" && data.me !== "";
+    state.personal = personal;
+    if (personal && myName !== data.me) {
+      myName = data.me;
+      setItem("mat.me", myName);
     }
   }
 
@@ -421,6 +521,7 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
     appliedLoad = mine;
     const data = copy(r.data);
     base = data;
+    takeIdentity(data);
     for (const s of settled) if (s.seq > startSeq) putBase(s.kind, copy(s.item));
     settled = settled.filter((s) => s.seq > startSeq);
     state.rev = r.rev;
@@ -543,8 +644,42 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
     }
   }
 
-  async function boot() {
+  // candidate: a key that came in the address while another key is stored
+  // (fix round 1, C1). It is tried once, for this visit only, and kept only
+  // when the backend takes it AND it is a personal key or the stored key is
+  // not one (known from the saved trip). Refused, it is dropped and the
+  // phone carries on with its own key: only a refusal of the stored key
+  // takes the trip off. No signal: dropped, nothing stored.
+  async function tryCandidate(candidate) {
+    const storedPersonal = base ? base.personal === true : null;
+    let r;
+    try {
+      r = await api("load", {}, { key: candidate });
+    } catch (err) {
+      if (err && err.code === "bad_key") state.notice = ADDRESS_KEY_REFUSED;
+      return;
+    }
+    const personal = !!(r && r.data && r.data.personal === true);
+    if (!(personal || storedPersonal === false) || wiped) return;
+    setItem("mat.key", candidate);
+    // Fix round 2: the reply it already has is the phone's trip at once, so
+    // the saved trip says who this is even if the next load fails (else the
+    // old shared link could replace the key again from a stale saved trip).
+    if (isData(r.data)) {
+      base = copy(r.data);
+      takeIdentity(base);
+      state.rev = r.rev;
+      state.loadedAt = now();
+      state.status = "ready";
+      saveCache();
+      changed();
+    }
+  }
+
+  async function boot({ candidate = null } = {}) {
     state.keyRefused = false;
+    wiped = false;
+    state.cleared = null;
     const key = getItem("mat.key");
     myName = getItem("mat.me");
     const seen = Number(getItem("mat.seen"));
@@ -561,6 +696,8 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
       state.loadedAt = typeof cache.loadedAt === "number" ? cache.loadedAt : null;
       state.status = "ready";
     }
+    // Who you are, from the saved trip, until the load says again.
+    if (base) takeIdentity(base);
     // Whatever painting the cache does, the load still goes out.
     try {
       restoreQueue();
@@ -568,6 +705,7 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
     } catch {
       // a broken cache or queue: the load below replaces it
     }
+    if (typeof candidate === "string" && candidate !== "" && candidate !== key) await tryCandidate(candidate);
     if (await refresh()) await flush();
   }
 
@@ -1494,9 +1632,27 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
   // ---- small settings ----
 
   function setMe(name) {
+    // A phone on its own link is that person: no choice (security).
+    if (state.personal) return;
     myName = name;
     setItem("mat.me", name);
     changed();
+  }
+
+  // You → Forget this phone (after app.js cleared the storage, the caches
+  // and the worker): the same as a refused key, keeping nothing, and the
+  // no-key screen says only that the phone needs a link.
+  // How many entries not sent yet this phone holds (Forget this phone says so).
+  function unsentCount() {
+    return ops.filter(isLiveAdd).length + resolving.length;
+  }
+
+  function forgot() {
+    takeTripOff({ keep: false });
+    state.keyRefused = false;
+    state.cleared = null;
+    state.status = "nokey";
+    emit();
   }
 
   function markSeen() {
@@ -1534,7 +1690,7 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
       return () => subs.delete(fn);
     },
     boot, refresh, checkRev, flush, idle,
-    setMe, setPerson, markSeen, notify, clearNotice, claudeToken, syncPayments, autoPayments,
+    setMe, setPerson, markSeen, forgot, unsentCount, notify, clearNotice, claudeToken, syncPayments, autoPayments,
     syncTodos, tickTodo, claimTodo,
     pressStamp,
     addTicket, ticketOutcome, fetchTicket,

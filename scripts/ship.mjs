@@ -12,20 +12,29 @@
 // 2. If the live backend is not this commit's backend: clasp push, new version
 //    on the same deployment, then wait until the live backend answers with
 //    this commit's stamp.
-// 3. The live trip still loads with the trip's key (from ~/.config/mat/env).
+// 3. The live trip still loads, read with the release check's read-only key
+//    (MAT_CHECK_KEY from ~/.config/mat/env; MAT_KEY only when there is none).
 // 4. git push origin main (the push check runs again there).
 // 5. Wait until the site serves this version, then compare every file the
 //    phones cache, byte for byte, with this commit.
-// 6. Open the live site in a headless browser: it starts with no script error.
+// 6. Open the live site in a headless browser with the check key in the fragment
+//    (never in the query string): the trip loads and there is no script error.
+//
+// 7. dev is brought up to the release (or it says dev holds work not in it).
 //
 // It never prints a key. If a step fails it stops and says where things stand.
+//
+// Once issueLinks has run (the security release, 2026-11-18), never roll the
+// backend back past that version: an older backend knows only the shared key,
+// refuses every personal key, and each phone that hears that clears itself.
+// Fix forward.
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
-import { ROOT, SITE, call, git, gitOk, liveStamp, privateEnv, readConfig, readReceipt, writtenBackendStamp } from "./release-lib.mjs";
+import { ROOT, SITE, askUntil, call, checkKey, tripLoaded, git, gitOk, liveStamp, privateEnv, readConfig, readReceipt, withoutKeys, writtenBackendStamp } from "./release-lib.mjs";
 import { shellList } from "./stamp-sw.mjs";
 
 const check = process.argv.includes("--check");
@@ -47,9 +56,15 @@ const receipt = readReceipt(git(["rev-parse", "HEAD^{tree}"]));
 if (!receipt) stop("This commit has not passed the gate.", "Run `npm run gate` (about 15 minutes).");
 git(["fetch", "origin", "main"]);
 if (!gitOk(["merge-base", "--is-ancestor", "origin/main", "HEAD"])) stop("origin/main has commits this one does not.", "Merge them, then `npm run gate` again.");
+git(["fetch", "origin", "dev"]);
+if (gitOk(["rev-parse", "--verify", "-q", "origin/dev"]) && !gitOk(["merge-base", "--is-ancestor", "origin/dev", "HEAD"])) {
+  step("note: dev holds " + git(["rev-list", "--count", "HEAD..origin/dev"]) + " merged commit(s) that are not in this commit. They will not go out with this release.");
+}
 const cfg = readConfig();
 const env = privateEnv();
-if (!env.MAT_KEY) stop("No trip key to check the live trip with.", "Put MAT_KEY=... in ~/.config/mat/env (never in the repository).");
+const KEY = checkKey(env);
+if (!KEY) stop("No key to check the live trip with.", "Put MAT_CHECK_KEY=... in ~/.config/mat/env (never in the repository).");
+if (!env.MAT_CHECK_KEY) step("no MAT_CHECK_KEY: checking with the old shared MAT_KEY");
 step("commit " + head.slice(0, 7) + ", version " + cfg.appVersion + ", gate passed " + receipt.at + " (" + receipt.unit.pass + " unit, " + receipt.e2e.pass + " browser)");
 
 // 2 ---------------------------------------------------------------------------
@@ -66,7 +81,7 @@ if (live === want) {
     const clasp = (args) => spawnSync("npx", ["clasp", ...args], { cwd: ROOT, encoding: "utf8" });
     const before = clasp(["list-deployments"]);
     const was = ((before.stdout || "").split("\n").find((l) => l.includes(cfg.deployId)) || "").match(/@(\d+)/);
-    step("backend: live deployment is at version " + (was ? was[1] : "unknown") + " (the one to go back to if this goes wrong)");
+    step("backend: live deployment was at version " + (was ? was[1] : "unknown") + " (fix forward: once issueLinks has run, never roll back past the security release)");
     const push = clasp(["push", "-f"]);
     if (push.status !== 0) stop("clasp push failed.", (push.stderr || push.stdout || "").trim().split("\n").slice(-3).join("\n      "));
     const dep = clasp(["create-deployment", "-i", cfg.deployId, "-d", "v" + cfg.appVersion + " " + head.slice(0, 7)]);
@@ -91,8 +106,9 @@ if (migrate && !check) {
   let added = [];
   let settled = false;
   for (let i = 0; i < 6 && !settled; i++) {
-    const r = await call(cfg.apiUrl, env.MAT_KEY, "migrate");
-    if (!r || r.ok !== true) stop("migrate did not succeed (" + ((r && (r.message || r.error)) || "no answer") + ").", "The site was NOT published.");
+    // A request that lands on the old version refuses the check key: asked again.
+    const r = await askUntil(() => call(cfg.apiUrl, KEY, "migrate"), (x) => !!x && x.ok === true);
+    if (!r || r.ok !== true) stop("migrate did not succeed (" + withoutKeys((r && (r.message || r.error)) || "no answer", env) + ").", "The site was NOT published. Run `npm run ship` again in a minute; fix forward, do not roll the backend back.");
     const now = (r.data && r.data.added) || [];
     added = added.concat(now);
     settled = i > 0 && now.length === 0;
@@ -101,9 +117,12 @@ if (migrate && !check) {
   if (!settled) stop("migrate kept adding columns after six calls.", "Look at the Sheet. The site was NOT published.");
   step("backend: migrate ran" + (added.length ? ", added " + added.join(", ") : ", nothing to add"));
 }
-const load = await call(cfg.apiUrl, env.MAT_KEY, "load").catch(() => null);
-if (!load || load.ok !== true || !Array.isArray(load.data.days) || !load.data.days.length || !Array.isArray(load.data.stops)) {
-  stop("The live trip does not load (" + ((load && (load.message || load.error)) || "no answer") + ").", "The site was NOT published. Fix or roll back the backend first.");
+// Asked for about 30 seconds: right after a deploy a request can still land
+// on the old version, which refuses the check key.
+const load = await askUntil(() => call(cfg.apiUrl, KEY, "load"), tripLoaded);
+if (!tripLoaded(load)) {
+  stop("The live trip does not load (" + withoutKeys((load && (load.message || load.error)) || "no answer", env) + ").",
+    "The site was NOT published. Run `npm run ship` again in a minute. If it still does not load, fix forward: do not roll the backend back once issueLinks has run (every phone on a personal link would clear itself).");
 }
 step("live trip loads: " + load.data.days.length + " days, " + load.data.stops.length + " stops, rev " + load.rev);
 
@@ -156,15 +175,37 @@ const errors = [];
 try {
   const page = await browser.newPage({ viewport: { width: 393, height: 852 } });
   page.on("pageerror", (e) => errors.push(String(e.message || e)));
-  await page.goto(SITE + "?k=" + env.MAT_KEY, { waitUntil: "load", timeout: 45000 });
+  // The key goes in the fragment, as an invite link has it: a fragment is never
+  // sent to the site's server (a query string is, and until 2026-11-18 this
+  // step put the key in one). The app reads it there, so this is also the only
+  // way the check really signs in: it waits for the trip's own day count.
+  // The check key's phone has no one chosen (me is "") and shows the trip read-only.
+  await page.goto(SITE + "#k=" + encodeURIComponent(KEY), { waitUntil: "load", timeout: 45000 });
   await page.waitForSelector("#phone", { timeout: 20000 });
-  await sleep(4000);
+  await page.waitForSelector("#dayCount", { state: "visible", timeout: 30000 });
+  await sleep(2000);
 } catch (e) {
-  errors.push("the page did not start: " + String(e.message || e).split("\n")[0].replace(env.MAT_KEY, "(key)"));
+  errors.push("the page did not start: " + withoutKeys(String(e.message || e).split("\n")[0], env));
 } finally {
   await browser.close();
 }
-if (errors.length) stop("The live site started with " + errors.length + " error(s): " + errors.slice(0, 3).join(" | "), "This is live now. Fix forward or revert the commit and ship again.");
+if (errors.length) stop("The live site started with " + errors.length + " error(s): " + withoutKeys(errors.slice(0, 3).join(" | "), env), "This is live now. Fix forward or revert the commit and ship again.");
 step("live site starts with no script error");
+
+// 7 ---------------------------------------------------------------------------
+// dev (where reviewed pull requests wait) is brought up to what is now live,
+// so the next branch starts from it. If dev holds merged work that was not in
+// this release, it is left alone and said.
+git(["fetch", "origin", "dev"]);
+if (!gitOk(["rev-parse", "--verify", "-q", "origin/dev"])) {
+  step("dev: there is no dev branch on GitHub");
+} else if (git(["rev-parse", "origin/dev"]) === head) {
+  step("dev: already at this release");
+} else if (gitOk(["merge-base", "--is-ancestor", "origin/dev", "HEAD"])) {
+  const sync = spawnSync("git", ["push", "origin", "HEAD:refs/heads/dev"], { cwd: ROOT, encoding: "utf8" });
+  step(sync.status === 0 ? "dev: brought up to this release" : "dev: could NOT be brought up to this release (" + (sync.stderr || "").trim().split("\n").pop() + "). The release itself is live.");
+} else {
+  step("dev: holds " + git(["rev-list", "--count", "HEAD..origin/dev"]) + " merged commit(s) that are NOT in this release. Merge origin/dev into main for the next one.");
+}
 
 console.log("\nship: DONE. Version " + cfg.appVersion + " (" + head.slice(0, 7) + ") is live, backend " + want + ". Record it in the ledger and MEMORY.md.");

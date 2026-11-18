@@ -27,6 +27,23 @@ function tripKey_() {
   return key;
 }
 
+// Forgets the cached shared key, so a change to TRIP_KEY (or its deletion by
+// retireSharedLink) takes effect at once.
+function forgetTripKey_() {
+  CacheService.getScriptCache().remove("TRIP_KEY");
+}
+
+// SHA-256 of a text (UTF-8), as 64 lower-case hex characters (personal keys:
+// Keys.js). No new permission: Utilities needs none.
+function sha256Hex_(text) {
+  return hexOfBytes(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(text), Utilities.Charset.UTF_8));
+}
+
+// A new personal key: two UUIDs without their dashes, 64 hex characters.
+function newPersonKey_() {
+  return Utilities.getUuid().replace(/-/g, "") + Utilities.getUuid().replace(/-/g, "");
+}
+
 // Runs fn under the script lock. If the lock is not free within 8 seconds,
 // returns the busy envelope instead (handle_ adds rev). Sheet writes are
 // buffered: they are flushed before the lock is let go, so the next request
@@ -118,9 +135,6 @@ function plannerId_() {
   return getProp_("PLANNER_ID") || null;
 }
 
-function setPlannerId_(id) {
-  setProp_("PLANNER_ID", id);
-}
 
 // A tab's name as an A1 range prefix: 'Book Now'!
 function plannerA1_(tab) {

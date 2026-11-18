@@ -25,9 +25,15 @@ const path = require("path");
 const { chromium } = require("playwright-core");
 const { PORT, ORIGIN } = require("./helpers.cjs");
 const { takeTurn } = require("./queue.cjs");
+const { parseShard, shardFiles } = require("./shard.cjs");
 
 const ROOT = path.join(__dirname, "..", "..");
-const SHOTS = "/private/tmp/claude-501/mat-shots/failures";
+// Failure screenshots: MAT_SHOTS if set; on the owner's Mac where it has always
+// been; anywhere else (a GitHub runner) under the system temp folder.
+const MAC_TMP = "/private/tmp/claude-501";
+const SHOTS =
+  process.env.MAT_SHOTS ||
+  (fs.existsSync(MAC_TMP) ? path.join(MAC_TMP, "mat-shots", "failures") : path.join(require("os").tmpdir(), "mat-shots", "failures"));
 const CASE_TIMEOUT_MS = 30000;
 const CLOSE_TIMEOUT_MS = 8000;
 
@@ -177,16 +183,41 @@ async function runCase(browser, fileBase, c) {
 }
 
 async function main() {
-  const words = process.argv.slice(2);
-  const files = fs
+  // Arguments: words (file-name filters), --shard N/M (or --shard=N/M, or MAT_SHARD=N/M), --list.
+  const words = [];
+  let shardText = process.env.MAT_SHARD || "";
+  let listOnly = false;
+  const args = process.argv.slice(2);
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--list") listOnly = true;
+    else if (args[i] === "--shard") shardText = args[++i] === undefined ? "missing" : args[i];
+    else if (args[i].startsWith("--shard=")) shardText = args[i].slice(8);
+    else words.push(args[i]);
+  }
+  let files = fs
     .readdirSync(__dirname)
     .filter((f) => f.endsWith(".e2e.cjs"))
     .filter((f) => !words.length || words.some((w) => f.includes(w)))
-    .sort()
-    .map((f) => path.join(__dirname, f));
+    .sort();
+  if (shardText) {
+    let shard;
+    try {
+      shard = parseShard(shardText);
+    } catch (e) {
+      console.log(e.message);
+      process.exitCode = 1;
+      return;
+    }
+    files = shardFiles(files, shard.n, shard.m);
+  }
+  files = files.map((f) => path.join(__dirname, f));
   if (!files.length) {
-    console.log("No e2e files match " + JSON.stringify(words.join(" ")));
+    console.log("No e2e files match " + JSON.stringify(words.join(" ")) + (shardText ? " in shard " + shardText : ""));
     process.exitCode = 1;
+    return;
+  }
+  if (listOnly) {
+    for (const f of files) console.log(path.basename(f));
     return;
   }
 

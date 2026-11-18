@@ -5,6 +5,29 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { backendFiles, backendHash, config, judgePush, needsBump, stampIn, writtenBackendStamp } from "../scripts/release-lib.mjs";
 import { findings } from "../scripts/scan.mjs";
+import { readFileSync, readdirSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { askUntil, checkKey, ownerKey, tripLoaded, withoutKeys } from "../scripts/release-lib.mjs";
+
+test("I4: the live load is asked again for about 30 seconds; ship never advises rolling the backend back", async () => {
+  const waits = [];
+  const answers = [{ ok: false, error: "bad_key" }, null, { ok: true, data: { days: [1], stops: [] } }];
+  let n = 0;
+  const r = await askUntil(async () => answers[n++], tripLoaded, { sleep: async (ms) => waits.push(ms) });
+  assert.equal(tripLoaded(r), true);
+  assert.deepEqual(waits, [5000, 5000], "asked three times, five seconds apart");
+  let m = 0;
+  const never = await askUntil(async () => { m++; return { ok: false }; }, tripLoaded, { sleep: async (ms) => waits.push(ms) });
+  assert.equal(m, 7, "seven tries, about 30 seconds of waiting");
+  assert.equal(tripLoaded(never), false);
+  const ship = readFileSync(join(ROOT, "scripts", "ship.mjs"), "utf8");
+  assert.equal(/roll back the backend first|go back to if this goes wrong/.test(ship), false);
+  assert.match(ship, /never roll the\s*\n?\/\/ backend back|never roll back past/);
+  assert.match(ship, /askUntil\(\(\) => call\(cfg\.apiUrl, KEY, "load"\), tripLoaded\)/);
+  const readme = readFileSync(join(ROOT, "README.md"), "utf8");
+  assert.match(readme, /never roll the backend back/i);
+});
 
 const ok = { unit: { pass: 10, fail: 0 }, e2e: { pass: 5, fail: 0 } };
 const push = (over) => judgePush({ remoteRef: "refs/heads/main", localSha: "a".repeat(40), receipt: ok, commitStamp: "abc", live: "abc", ...over });
@@ -18,13 +41,26 @@ test("backend/Stamp.js matches the backend files (run npm run stamp)", () => {
 test("a push goes out only as main, with a receipt, behind its own backend", () => {
   assert.equal(push({}), null);
   assert.match(push({ remoteRef: "refs/original/refs/heads/main" }), /refs\/original/);
-  assert.match(push({ remoteRef: "refs/heads/ticks-build" }), /Only main/);
+  assert.match(push({ remoteRef: "refs/heads/ticks-build" }), /Only main and dev/);
+  // dev (reviewed work waiting for a release) goes out under the same checks.
+  assert.equal(push({ remoteRef: "refs/heads/dev" }), null);
+  assert.match(push({ remoteRef: "refs/heads/dev", receipt: null }), /npm run gate/);
+  assert.match(push({ remoteRef: "refs/heads/dev", localSha: "0".repeat(40) }), /never deleted/);
   assert.match(push({ localSha: "0".repeat(40) }), /never deleted/);
   assert.match(push({ receipt: null }), /npm run gate/);
   assert.match(push({ receipt: { unit: { pass: 9, fail: 1 }, e2e: { pass: 5, fail: 0 } } }), /failing tests/);
   assert.match(push({ receipt: { unit: { pass: 9, fail: 0 }, e2e: { pass: 5, fail: 2 } } }), /failing tests/);
   assert.match(push({ live: "old" }), /backend goes first/);
   assert.match(push({ live: "" }), /backend goes first/);
+  // ci/<name> only tries the checks on GitHub: no receipt, but the scan must be clean on exactly that commit.
+  const ci = (over) => judgePush({ remoteRef: "refs/heads/ci/browser-tests", localSha: "a".repeat(40), ci: { atHead: true, clean: true, found: 0, ...over } });
+  assert.equal(ci({}), null);
+  assert.match(ci({ found: 2 }), /private-data scan found 2/);
+  assert.match(ci({ clean: false }), /clean checkout/);
+  assert.match(ci({ atHead: false }), /clean checkout/);
+  assert.match(judgePush({ remoteRef: "refs/heads/ci/x", localSha: "a".repeat(40) }), /clean checkout/);
+  assert.match(push({ remoteRef: "refs/heads/ci/a/b" }), /Only main and dev/);
+  assert.match(push({ remoteRef: "refs/heads/cicada" }), /Only main and dev/);
   // A commit from before the stamp existed has nothing to compare.
   assert.equal(push({ commitStamp: "", live: "" }), null);
 });
@@ -61,4 +97,79 @@ test("the scan finds what must not be public and leaves examples alone", () => {
   assert.equal(findings("one\ntwo Secret Place\n", { words: ["secret place"] })[0].line, 2);
   // A finding never carries the text it matched.
   assert.deepEqual(Object.keys(findings("x " + "y@" + "real.org")[0]).sort(), ["line", "rule"]);
+});
+
+// ---- security (2026-11-18): a key never in an address, never in a log ----
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const filesIn = (dir, re) => readdirSync(join(ROOT, dir), { recursive: true }).filter((f) => re.test(f)).map((f) => join(dir, f));
+
+// Lines that put a key in a query string: "?k=" / "&k=", or a k parameter set on a URL.
+function keyInQuery(text) {
+  const out = [];
+  text.split("\n").forEach((line, i) => {
+    if (/[?&]k=/.test(line) || /searchParams\.(set|append)\(\s*["']k["']/.test(line) || /URLSearchParams\(\s*\{[^}]*\bk\s*:/.test(line)) out.push(i + 1);
+  });
+  return out;
+}
+
+test("no script or click-through test builds an address with a key in its query string", () => {
+  assert.deepEqual(keyInQuery('page.goto(SITE + "?k=" + key)'), [1], "the check catches one");
+  assert.deepEqual(keyInQuery('u.searchParams.set("k", key)'), [1]);
+  assert.deepEqual(keyInQuery('page.goto(SITE + "#k=" + key)'), [], "a fragment is fine");
+  const bad = [];
+  for (const f of [...filesIn("scripts", /\.(mjs|cjs|js)$/), ...filesIn("tests/e2e", /\.(cjs|js)$/)]) {
+    for (const line of keyInQuery(readFileSync(join(ROOT, f), "utf8"))) bad.push(f + ":" + line);
+  }
+  assert.deepEqual(bad, []);
+});
+
+// Backend log calls (Logger.log, console.*) whose arguments name a key or a
+// token, outside the owner's link functions (backend/Setup.js, item 8).
+const OWNER_FUNCTIONS = ["issueLinks", "newLinkFor_", "cancelLinkFor_", "linksStatus", "retireSharedLink", "showInvite", "logLink_"];
+function keyLogs(src) {
+  const out = [];
+  const heads = [...src.matchAll(/^function (\w+)\s*\(/gm)].map((m) => ({ name: m[1], at: m.index }));
+  for (const m of src.matchAll(/\b(Logger\.log|console\.(?:log|error|warn|info))\s*\(/g)) {
+    let depth = 1;
+    let i = m.index + m[0].length;
+    const start = i;
+    for (; i < src.length && depth > 0; i++) {
+      if (src[i] === "(") depth++;
+      else if (src[i] === ")") depth--;
+    }
+    const args = src.slice(start, i - 1).replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, '""');
+    const fn = heads.filter((h) => h.at < m.index).pop();
+    const name = fn ? fn.name : "(top)";
+    if (/key|token|secret|TRIP_KEY|CLAUDE_TOKEN|PLANNER_ID|plannerId_/i.test(args) && !OWNER_FUNCTIONS.includes(name)) out.push(name + ": " + m[1] + "(" + args.trim() + ")");
+  }
+  return out;
+}
+
+test("no backend file passes a key or token to Logger.log or console.*, outside the owner's link functions", () => {
+  assert.equal(keyLogs('function f() {\n  Logger.log("Trip key: " + tripKey_());\n}').length, 1, "the check catches one");
+  assert.equal(keyLogs('function g() {\n  console.error("x " + token);\n}').length, 1);
+  assert.equal(keyLogs('function issueLinks() {\n  Logger.log(name + key);\n}').length, 0, "allowed in an owner function");
+  assert.equal(keyLogs('function h() {\n  Logger.log("the key words in a sentence");\n}').length, 0, "words in a sentence are not a key");
+  const bad = [];
+  for (const f of readdirSync(join(ROOT, "backend")).filter((f) => f.endsWith(".js"))) {
+    for (const hit of keyLogs(readFileSync(join(ROOT, "backend", f), "utf8"))) bad.push(f + " " + hit);
+  }
+  assert.deepEqual(bad, []);
+});
+
+test("the release checks use the check key, the old shared key only without one, and never print either", () => {
+  const SHARED_NAME = "MAT_" + "KEY";
+  const S = "shared-" + "x".repeat(10), C = "check-" + "y".repeat(10), O = "owner-" + "z".repeat(10);
+  assert.equal(checkKey({ MAT_CHECK_KEY: C, [SHARED_NAME]: S }), C);
+  assert.equal(checkKey({ [SHARED_NAME]: S }), S);
+  assert.equal(checkKey({}), "");
+  assert.equal(ownerKey({ MAT_OWNER_KEY: O, [SHARED_NAME]: S, MAT_CHECK_KEY: C }), O);
+  assert.equal(ownerKey({ MAT_CHECK_KEY: C }), "", "never the check key: its load hides the addresses");
+  const env = { MAT_CHECK_KEY: C, [SHARED_NAME]: S };
+  assert.equal(withoutKeys("goto https://x/#k=" + C + " and " + encodeURIComponent(S), env), "goto https://x/#k=(key) and (key)");
+  const ship = readFileSync(join(ROOT, "scripts", "ship.mjs"), "utf8");
+  assert.equal(ship.split("env." + SHARED_NAME).length - 1, 0, "ship reads its key only through checkKey");
+  assert.match(ship, /const KEY = checkKey\(env\)/);
+  assert.match(ship, /"#k=" \+ encodeURIComponent\(KEY\)/);
 });

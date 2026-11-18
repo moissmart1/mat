@@ -113,7 +113,7 @@ module.exports = [
   {
     name: "Claude link: Getting… while the token comes, then Copied ✓, then Copy; a second tap meanwhile asks nothing; no signal says Not copied",
     async run({ page }) {
-      const backend = await ready(page);
+      const backend = await ready(page, { own: "Mo" });
       assert.equal(await page.getAttribute("#setClaudeV", "aria-live"), "polite");
       const h = hold(backend, "claudeLink");
       await page.click("#setClaude");

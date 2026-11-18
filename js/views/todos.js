@@ -33,6 +33,11 @@
 // the row stays where it was, stamped, until the backend has answered and a
 // moment has passed, then moves to the done group, which opens to show it.
 //
+// The look is a pad of reservation slips (予約票): a binding across the top,
+// each booking a slip with its counterfoil on the left (its number and who is
+// on it, behind a dotted tear line), the done ones torn off below a dashed
+// line (css/before.css). Only the look: every word and control is as before.
+//
 // Redrawing while someone is reading: a row that is drawn the same keeps its
 // node, so the open row, focus and a stamp landing all survive a sync.
 // Everything from the planner goes in with textContent; a link only through
@@ -44,7 +49,7 @@ import { paidStampSVG } from "../stamp.js";
 import { wetInk, rollingCount } from "../fx.js";
 import { thud, primeSound } from "../sound.js";
 import { clock as hhmm, localDay, dayHead } from "../format.js";
-import { homeToday, dueLine, byBookBy, doneTodos, isDone, plannerPending, tickedLine, isStale, showBeforeTab, todoProblemHead } from "../todos.js";
+import { homeToday, slipNo, dueLine, byBookBy, doneTodos, isDone, plannerPending, tickedLine, isStale, showBeforeTab, todoProblemHead } from "../todos.js";
 
 // How long a just-ticked row stays stamped in place, at the least.
 const HOLD_MS = 1600;
@@ -96,7 +101,7 @@ export function mountTodos(root, store, { clock, now = () => Date.now(), onState
   const band = el("div", "bw-band");
   const title = el("h2", "bw-title");
   title.id = "bwTitle";
-  title.append(el("span", "", "出発前"), el("i", "", "Before we go"));
+  title.append(el("span", "", "予約票"), el("i", "", "Reservation slips · Before we go"));
   const count = el("span", "num");
   band.append(title, count);
   const rows = el("div", "bw-rows");
@@ -117,11 +122,16 @@ export function mountTodos(root, store, { clock, now = () => Date.now(), onState
   const probs = el("div", "bw-pp");
   probs.id = "bwProblems";
   probs.hidden = true;
-  card.append(band, rows, perf, doneB, doneBox, foot, probs);
+  const bind = el("div", "rv-bind");
+  bind.setAttribute("aria-hidden", "true");
+  for (let i = 0; i < 6; i++) bind.append(el("i"));
+  card.classList.add("rv");
+  card.append(bind, band, rows, perf, doneB, doneBox, foot, probs);
   section.append(card);
   root.replaceChildren(section);
 
   let me = null;
+  let personal = false; // on your own link nobody else's claim can be taken over (security, 2026-11-18)
   let people = [];
   let openId = null; // the row opened by hand
   let doneOpen = false;
@@ -142,6 +152,14 @@ export function mountTodos(root, store, { clock, now = () => Date.now(), onState
     fillSeal(s, people.find((p) => p.name === name) || null, name);
     return s;
   }
+  // The counterfoil: the slip's number, and who is on it.
+  function stub(id, position, sealEl) {
+    const st = el("div", "rv-stub");
+    const no = el("i", "rv-no", slipNo(id, position));
+    no.setAttribute("aria-hidden", "true");
+    st.append(no, sealEl);
+    return st;
+  }
   const picKey = (name) => {
     const p = people.find((x) => x.name === name);
     const v = p && typeof p.photo === "string" ? p.photo : "";
@@ -159,14 +177,16 @@ export function mountTodos(root, store, { clock, now = () => Date.now(), onState
 
   const onText = (t) => (!t.claimedBy ? "" : t.claimedBy === me ? ", you’re on it" : ", " + t.claimedBy + " is on it");
 
-  function openRow(t, today) {
+  function openRow(t, today, position) {
     const r = el("div", "bw-r" + (t.pending ? " is-pending" : ""));
     r.dataset.id = t.id;
     const moreId = "bwm-" + t.id;
     const head = button("bw-b");
     head.dataset.act = "open";
     head.setAttribute("aria-controls", moreId);
-    head.append(el("span", "bw-n", t.item));
+    const label = el("span", "rv-l", "予約するもの Booking");
+    label.setAttribute("aria-hidden", "true");
+    head.append(label, el("span", "bw-n", t.item));
     const due = dueEl(t, today);
     if (due) head.append(due);
     if (t.claimedBy) head.append(el("span", "bw-vh", onText(t)));
@@ -199,16 +219,18 @@ export function mountTodos(root, store, { clock, now = () => Date.now(), onState
     const spot = el("span", "bw-spot");
     spot.append(el("span", "ghost", "済"));
     tick.append(el("span", "bw-tick-t", "Tick it off"), spot);
-    ctl.append(claim, tick);
+    // On your own link someone else's claim is theirs: no Take it over.
+    if (personal && t.claimedBy && !mine) ctl.append(tick);
+    else ctl.append(claim, tick);
     inner.append(ctl);
     more.append(inner);
-    r.append(seal(t.claimedBy, !t.claimedBy), head, more);
-    drawn.set(r, JSON.stringify(["o", t.id, t.item, t.bookBy, today, t.note, href, t.claimedBy, me, picKey(t.claimedBy), !!t.pending]));
+    r.append(stub(t.id, position, seal(t.claimedBy, !t.claimedBy)), head, more);
+    drawn.set(r, JSON.stringify(["o", t.id, slipNo(t.id, position), t.item, t.bookBy, today, t.note, href, t.claimedBy, me, personal, picKey(t.claimedBy), !!t.pending]));
     return r;
   }
 
   // A row just ticked here: stamped where the tap was, open, no controls.
-  function landedRow(t) {
+  function landedRow(t, position) {
     const r = el("div", "bw-r is-open is-landed");
     r.dataset.id = t.id;
     const head = el("div", "bw-b");
@@ -233,13 +255,13 @@ export function mountTodos(root, store, { clock, now = () => Date.now(), onState
     ctl.append(pl, spot);
     inner.append(ctl);
     more.append(inner);
-    r.append(seal(t.tickedBy), head, more);
+    r.append(stub(t.id, position, seal(t.tickedBy)), head, more);
     // Drawn once: only the pending line changes in place after that.
-    drawn.set(r, JSON.stringify(["l", t.id]));
+    drawn.set(r, JSON.stringify(["l", t.id, slipNo(t.id, position)]));
     return r;
   }
 
-  function doneRow(t) {
+  function doneRow(t, position) {
     const r = el("div", "bw-d");
     r.dataset.id = t.id;
     const main = el("div", "bw-dm");
@@ -247,8 +269,8 @@ export function mountTodos(root, store, { clock, now = () => Date.now(), onState
     if (plannerPending(t)) main.append(el("p", "bw-pl", PENDING));
     const mark = t.tickedBy ? seal(t.tickedBy) : el("span", "bw-seal is-booked", "済");
     mark.setAttribute("aria-hidden", "true");
-    r.append(mark, main);
-    drawn.set(r, JSON.stringify(["d", t.id, t.item, tickedLine(t), plannerPending(t), picKey(t.tickedBy)]));
+    r.append(stub(t.id, position, mark), main);
+    drawn.set(r, JSON.stringify(["d", t.id, slipNo(t.id, position), t.item, tickedLine(t), plannerPending(t), picKey(t.tickedBy)]));
     return r;
   }
 
@@ -350,6 +372,7 @@ export function mountTodos(root, store, { clock, now = () => Date.now(), onState
   function render() {
     const s = store.state;
     me = s.me;
+    personal = s.personal === true;
     people = list(s.people);
     const todos = list(s.todos).filter((t) => t && typeof t.id === "string" && t.id && typeof t.item === "string");
     // A row put back (a refused tick, an undo) is no longer stamped.
@@ -381,7 +404,7 @@ export function mountTodos(root, store, { clock, now = () => Date.now(), onState
     openRoll.set(stillOpen);
 
     const today = homeToday(now());
-    const fresh = shownOpen.map((t) => (landed.has(t.id) ? landedRow(t) : openRow(t, today)));
+    const fresh = shownOpen.map((t, i) => (landed.has(t.id) ? landedRow(t, i) : openRow(t, today, i)));
     if (!fresh.length) {
       const none = el("div", "bw-none");
       none.dataset.id = "-";
@@ -397,10 +420,10 @@ export function mountTodos(root, store, { clock, now = () => Date.now(), onState
     const done = doneTodos(todos.filter((t) => !landed.has(t.id)));
     doneB.hidden = !done.length;
     perf.hidden = !done.length;
-    doneB.textContent = "済 Done (" + done.length + ")";
+    doneB.textContent = "済 Torn off and done (" + done.length + ")";
     doneB.setAttribute("aria-expanded", String(doneOpen && done.length > 0));
     doneBox.hidden = !(doneOpen && done.length);
-    patch(doneBox, done.map(doneRow));
+    patch(doneBox, done.map((t, i) => doneRow(t, i)));
 
     at.textContent = fetchedText(s);
     drawProblems(s);

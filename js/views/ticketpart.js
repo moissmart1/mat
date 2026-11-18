@@ -343,14 +343,16 @@ export function mountTicketPart(box, store, keep) {
     const out = { saved: 0, waiting: 0, failed: 0 };
     stop = (store.state.stops || []).find((s) => s && s.id === stopId) || { id: stopId };
     const todo = picks.filter((p) => p.state !== "saved");
+    const at = keep.gen; // a wipe meanwhile: nothing more is kept or sent
     for (const p of todo) {
+      if (at !== keep.gen || store.state.status === "nokey") break;
       p.state = "saving";
       p.message = "";
       drawPicked();
       say.textContent = "Saving " + (todo.indexOf(p) + 1) + " of " + todo.length + "…";
       const id = newId();
       // On the phone first: a picture that has to wait for signal is sent from here later.
-      await keep.put(id, p.blob);
+      await keep.put(id, p.blob, { gen: at });
       const sameWho = liveOn(stopId).filter((t) => (t.who || "") === p.who).length;
       const token = store.addTicket({ id, stop: stopId, who: p.who, seat: p.seat.trim(), page: Math.min(LIMITS.perStop, Math.max(p.page, sameWho + 1)), mime: p.mime, w: p.w, h: p.h, data: p.data });
       const res = await store.ticketOutcome(token);

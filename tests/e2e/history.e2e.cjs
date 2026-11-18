@@ -130,10 +130,12 @@ module.exports = [
       const backend = await ready(page);
       // 01:00 on Dec 13 in Japan, still Dec 12 in UTC.
       backend.now = Date.parse("2026-12-12T16:00:00Z");
-      await otherPhone(backend, "updateExpense", { id: idOfSeed("Shibuya dinner"), patch: { title: "Shibuya dinner out" } }, { via: "claude" });
+      // Through the connector's own path (a phone saying via claude is ignored since the security fix round); it writes as the owner.
+      await backend.fake.claude("addExpense", { expense: { ...SHARED(1), id: "claudeline01", title: "Late ramen", day: "2026-12-12", paidBy: "Mo", splitMode: "equal", splitVals: [], note: "", kind: "" } });
+      await page.evaluate(() => globalThis.__matTest.store.refresh());
       await openTape(page, 11);
       const rows = await tape(page);
-      assert.equal(rows[0].sentence, "Ajen renamed Shibuya dinner to Shibuya dinner out (through Claude)");
+      assert.equal(rows[0].sentence, "Mo rang up Late ramen ¥101 (through Claude)");
       assert.equal(rows[0].time, "01:00");
       assert.ok(!rows[1].sentence.includes("through Claude"));
       assert.deepEqual(await days(page), ["Sun Dec 13 | 12月13日(日)", "Fri Nov 20 | 11月20日(金)"]);
@@ -403,7 +405,7 @@ module.exports = [
 module.exports.push({
   name: "a changed e-Transfer address shows on the tape as a sentence, without the address and with no Undo",
   async run({ page }) {
-    const backend = await ready(page);
+    const backend = await ready(page, { own: "Mo" });
     await page.click("#youBtn");
     await until(() => page.evaluate(() => document.getElementById("you").classList.contains("is-open")), "settings open");
     await page.fill("#setMail", "mo@example.test");

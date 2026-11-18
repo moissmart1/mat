@@ -67,6 +67,10 @@ function makeBackend(seed, { clock, now = Date.now() } = {}) {
 // - storage: more localStorage keys. Every key is only written when not set
 //   already, so a reload keeps whatever the app stored.
 // - hash: appended to the address (for example "#k=test-key").
+// - own: a person's name: the phone opens on that person's own link (a
+//   personal key made on the backend, kept as backend.ownKeys[name], so two
+//   pages on one backend share it) in place of the shared key; me is then
+//   theirs (security, 2026-11-18).
 // - tab: the screen the app last showed, put into localStorage as mat.tab,
 //   with mat.tabDay the Japan date of nowMs (as if it was shown today), so
 //   the app opens on it. Default "money"; "days" for the Days screen; null
@@ -75,8 +79,12 @@ function makeBackend(seed, { clock, now = Date.now() } = {}) {
 // built here starts its clock (backend.now) at nowMs too. Neither moves on
 // its own: call advance(page, backend, ms) to move both together, so the
 // backend never dates a write ahead of (or behind) what the page shows.
-async function open(page, { seed = SEED, key = "test-key", me = "Mo", how = "1", nowMs = NOON12, storage = {}, backend, hash = "", tab = "money" } = {}) {
+async function open(page, { seed = SEED, key = "test-key", me = "Mo", how = "1", nowMs = NOON12, storage = {}, backend, hash = "", tab = "money", own = null } = {}) {
   const be = backend || makeBackend(seed, { now: nowMs });
+  if (own) {
+    key = ownKey(be, own);
+    me = own;
+  }
 
   await page.exposeFunction("__matBridge", async (body) => {
     try {
@@ -93,22 +101,41 @@ async function open(page, { seed = SEED, key = "test-key", me = "Mo", how = "1",
     };
   });
 
-  const own = { "mat.key": key, "mat.me": me, "mat.how": how, "mat.tab": tab, "mat.tabDay": tab === null ? null : japanDate(nowMs) };
-  const entries = Object.entries({ ...own, ...storage })
+  const kept = { "mat.key": key, "mat.me": me, "mat.how": how, "mat.tab": tab, "mat.tabDay": tab === null ? null : japanDate(nowMs) };
+  const entries = Object.entries({ ...kept, ...storage })
     .filter(([, v]) => v !== null && v !== undefined)
     .map(([k, v]) => [k, String(v)]);
-  await page.addInitScript((pairs) => {
+  // Seeded once per tab (a sessionStorage mark): a reload after the app took
+  // the trip off the phone (a refused key, Forget this phone) must not put
+  // the key back.
+  const mark = "e2e.seeded." + ++seedCount;
+  await page.addInitScript(([pairs, mark]) => {
+    try {
+      if (sessionStorage.getItem(mark) !== null) return;
+      sessionStorage.setItem(mark, "1");
+    } catch {
+      // no session storage: seed as before
+    }
     try {
       for (const [k, v] of pairs) if (localStorage.getItem(k) === null) localStorage.setItem(k, v);
     } catch {
       // about:blank and the like have no storage
     }
-  }, entries);
+  }, [entries, mark]);
 
   await page.clock.install({ time: nowMs });
   await page.clock.pauseAt(nowMs);
   await page.goto(ORIGIN + "/" + hash);
   return be;
+}
+
+let seedCount = 0;
+
+// Person `name`'s own key on this backend (made once, as issueLinks would).
+function ownKey(backend, name) {
+  backend.ownKeys = backend.ownKeys || {};
+  if (!backend.ownKeys[name]) backend.ownKeys[name] = backend.fake.personKey(name);
+  return backend.ownKeys[name];
 }
 
 // Moves the page's clock (running any timers due) and the backend's clock
@@ -165,4 +192,4 @@ function visible(page, selector) {
   }, selector);
 }
 
-module.exports = { PORT, ORIGIN, SEED, PLAN, WITH_PLAN, NOON12, SEEDED_AT, makeBackend, open, advance, until, text, expectText, visible };
+module.exports = { PORT, ORIGIN, SEED, PLAN, WITH_PLAN, NOON12, SEEDED_AT, makeBackend, open, ownKey, advance, until, text, expectText, visible };

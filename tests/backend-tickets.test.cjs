@@ -310,12 +310,15 @@ test("the Claude connector reads the facts with the stop but no pictures, and ca
   const call = trip();
   await call("updateStop", { id: SKY, patch: { tkRef: "REF-0002" } });
   const t = (await add(call)).data.ticket;
-  const via = { via: "claude" };
-  assert.equal((await call("addTicket", { ticket: pic() }, "Mo", via)).ok, false);
-  assert.equal((await call("removeTicket", { id: t.id }, "Mo", via)).ok, false);
-  assert.equal((await call("ticket", { id: t.id }, "Mo", via)).ok, false);
+  // The connector's own path (security, 2026-11-18): a phone's via is ignored.
+  const claude = call.fake.claude;
+  assert.equal((await claude("addTicket", { ticket: pic() })).ok, false);
+  assert.equal((await claude("removeTicket", { id: t.id })).ok, false);
+  assert.equal((await claude("ticket", { id: t.id })).ok, false);
   const h = (await call("history")).data.entries;
-  assert.equal((await call("undo", { logId: h[0].id }, "Mo", via)).ok, false);
+  assert.equal((await claude("undo", { logId: h[0].id })).ok, false);
+  assert.equal(call.fake.tables.Tickets.length, 1);
+  assert.equal(call.fake.tables.Tickets[0].gone, "");
   const params = { t: "claude-token", as: "Mo" };
   const list = call.fake.mcp({ jsonrpc: "2.0", id: 1, method: "tools/list" }, params);
   const getTrip = list.result.tools.find((x) => x.name === "get_trip");
@@ -399,4 +402,48 @@ test("Sheets.js: appendObjs_ writes one block, columnValues_ and cellsAt_ read i
   ctx.deleteRowsAt_("TicketData", [2, 3, 4, 6]);
   assert.deepEqual(calls.deleteRows, [[6, 1], [2, 3]]);
   assert.deepEqual(Array.from(ctx.columnValues_("TicketData", "ticket")), ["bbbbbbbb"]);
+});
+
+// ---------- who is calling (security, 2026-11-18) ----------
+
+test("under a personal key the picture is the key's person's, whatever actor the phone sends", async () => {
+  const call = trip();
+  const key = call.fake.personKey("Ajen");
+  const r = await call.fake({ key, actor: "Mo", action: "addTicket", args: { ticket: pic() } });
+  assert.equal(r.ok, true, r.message);
+  assert.equal(r.data.ticket.by, "Ajen");
+  const rm = await call.fake({ key, actor: "Trenton", action: "removeTicket", args: { id: r.data.ticket.id } });
+  assert.equal(rm.ok, true);
+  const h = (await call.fake({ key, action: "history", args: {} })).data.entries;
+  assert.deepEqual(h.slice(0, 2).map((e) => e.who), ["Ajen", "Ajen"]);
+  const u = await call.fake({ key, actor: "Mo", action: "undo", args: { logId: h[0].id } });
+  assert.equal(u.ok, true);
+  assert.equal(call.fake.tables.Log[call.fake.tables.Log.length - 1].who, "Ajen");
+});
+
+test("the check key may not add, remove, undo or read a picture; its load has no booking ref or name", async () => {
+  const call = trip();
+  await call("updateStop", { id: SKY, patch: { tkRef: "REF-0009", tkName: "MO", tkPeople: "3", tkSeat: "Car 7" } });
+  const t = (await add(call)).data.ticket;
+  const check = (action, args) => call.fake({ key: call.fake.CHECK_KEY, action, args });
+  for (const [action, args] of [["addTicket", { ticket: pic() }], ["removeTicket", { id: t.id }], ["ticket", { id: t.id }], ["undo", { logId: 1 }]]) {
+    const r = await check(action, args);
+    assert.equal(r.ok, false, action);
+    assert.equal(r.error, "bad_input", action);
+  }
+  assert.equal(call.fake.tables.Tickets.length, 1);
+  assert.equal(call.fake.tables.Tickets[0].gone, "");
+  const sky = (await check("load", {})).data.stops.find((s) => s.id === SKY);
+  assert.deepEqual([sky.tkRef, sky.tkName, sky.tkPeople, sky.tkSeat], ["", "", "3", "Car 7"]);
+  // A person's load has them.
+  const mine = (await call.fake({ key: call.fake.personKey("Mo"), action: "load", args: {} })).data.stops.find((s) => s.id === SKY);
+  assert.deepEqual([mine.tkRef, mine.tkName], ["REF-0009", "MO"]);
+});
+
+test("under the shared key the ticket actions work as before (until it is retired)", async () => {
+  const call = trip();
+  const r = await call("addTicket", { ticket: pic() }, "Trenton");
+  assert.equal(r.ok, true);
+  assert.equal(r.data.ticket.by, "Trenton");
+  assert.equal((await call("ticket", { id: r.data.ticket.id })).ok, true);
 });

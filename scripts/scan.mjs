@@ -5,6 +5,10 @@
 // rebuilds it from the live trip).
 //
 //   npm run scan
+//   node scripts/scan.mjs --patterns-only   where there is no private list (the
+//                                           pull request check): the address
+//                                           and id rules only. The release
+//                                           gate always uses the full list.
 //
 // It never prints what it found, only where.
 
@@ -45,8 +49,8 @@ export function findings(text, { deployId = "", words = [] } = {}) {
 }
 
 // [{ file, rule, line }] for every tracked file.
-export function scanTree(root = ROOT) {
-  const words = privateWords();
+export function scanTree(root = ROOT, { patternsOnly = false } = {}) {
+  const words = patternsOnly ? privateWords() || [] : privateWords();
   if (words === null) {
     return [{ file: "(setup)", rule: "the private list is missing: run `npm run private` (it needs ~/.config/mat/env)", line: 0 }];
   }
@@ -61,9 +65,10 @@ export function scanTree(root = ROOT) {
 }
 
 function main() {
-  const found = scanTree();
+  const patternsOnly = process.argv.includes("--patterns-only");
+  const found = scanTree(ROOT, { patternsOnly });
   if (!found.length) {
-    console.log("scan: nothing private in the tracked files");
+    console.log("scan: nothing private in the tracked files" + (patternsOnly && privateWords() === null ? " (address and id rules only: no private list here)" : ""));
     return;
   }
   for (const f of found) console.log("scan: " + f.file + ":" + f.line + "  " + f.rule);

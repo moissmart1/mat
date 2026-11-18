@@ -18,6 +18,12 @@ export const HOW_LINES = ["Ring up what you paid.", "The slip says who pays whom
 const HOW_HOME = "Add it to your Home Screen from You 設定, so this phone stays signed in.";
 const NO_KEY = "This phone needs the trip link. Open it from your chat again, or paste it here.";
 const KEY_REFUSED = "That trip link didn’t work. Ask Mo for the current one.";
+// After a refused key the trip is taken off the phone (js/store.js), and the screen says so.
+const CLEARED = "The trip was taken off this phone.";
+export function clearedText(kept) {
+  if (!(kept > 0)) return CLEARED;
+  return CLEARED + (kept === 1 ? " Your unsent line is kept: it goes out once you open your new link." : " Your " + kept + " unsent lines are kept: they go out once you open your new link.");
+}
 const NOT_CONNECTED = "This app isn’t connected yet.";
 const BAD_PASTE = "That doesn’t look like a trip link.";
 const KEY_SHAPE = /^[A-Za-z0-9_-]{6,200}$/;
@@ -205,7 +211,8 @@ export function mountFirst(root, store, { connected = true, storage = defaultSto
 
   function render(s) {
     const keyless = connected && s.status === "nokey";
-    const blocked = !connected ? NOT_CONNECTED : keyless ? (s.keyRefused ? KEY_REFUSED : NO_KEY) : null;
+    const refused = s.keyRefused ? KEY_REFUSED + (s.cleared ? " " + clearedText(s.cleared.kept) : "") : NO_KEY;
+    const blocked = !connected ? NOT_CONNECTED : keyless ? refused : null;
     gate.hidden = !blocked;
     if (blocked) gateText.textContent = blocked;
     paste.hidden = !keyless;

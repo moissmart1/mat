@@ -716,6 +716,88 @@ function sameKey(given, key) {
   return diff === 0;
 }
 
+// ---- personal keys (security, 2026-11-18) ----
+
+// Bytes as lower-case hex. Apps Script's computeDigest gives signed bytes
+// (-128..127); each is taken as its low 8 bits.
+function hexOfBytes(bytes) {
+  var out = "";
+  for (var i = 0; i < bytes.length; i++) out += ("0" + (bytes[i] & 0xff).toString(16)).slice(-2);
+  return out;
+}
+
+var KEY_HASH_RE_ = /^[0-9a-f]{64}$/;
+
+// PERSON_KEYS as stored ({ "<name>": { hash, at } }), keeping only entries
+// whose hash is 64 hex characters. Anything else (missing, not JSON, not an
+// object) is no personal keys at all.
+function personKeysFrom(raw) {
+  var out = {};
+  if (typeof raw !== "string" || raw === "") return out;
+  var obj;
+  try {
+    obj = JSON.parse(raw);
+  } catch (e) {
+    return out;
+  }
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return out;
+  Object.keys(obj).forEach(function (name) {
+    var v = obj[name];
+    if (name !== "" && name !== "__proto__" && v && typeof v === "object" && typeof v.hash === "string" && KEY_HASH_RE_.test(v.hash)) {
+      out[name] = { hash: v.hash, at: typeof v.at === "string" ? v.at : "" };
+    }
+  });
+  return out;
+}
+
+// Whether a stored PERSON_KEYS can be read: absent or empty (no personal
+// keys yet), or a JSON object. Anything else (broken JSON, an array, null, a
+// string) is a property someone broke by hand: not readable.
+function personKeysReadable(raw) {
+  if (raw === null || raw === undefined || raw === "") return true;
+  if (typeof raw !== "string") return false;
+  try {
+    var obj = JSON.parse(raw);
+    return !!obj && typeof obj === "object" && !Array.isArray(obj);
+  } catch (e) {
+    return false;
+  }
+}
+
+// Who holds a key: { kind: "person", name } | { kind: "check" } |
+// { kind: "shared" } | null. given is the key as sent, givenHash its SHA-256
+// in hex, shared the shared trip key (null or "" once retired: then nothing
+// matches it), people PERSON_KEYS as personKeysFrom reads it, checkHash the
+// release check's key hash. Every stored hash is compared, the same way
+// whatever matches (no early exit), and an empty key never matches anything.
+function keyHolder(given, givenHash, shared, people, checkHash) {
+  if (typeof given !== "string" || given === "" || typeof givenHash !== "string" || !KEY_HASH_RE_.test(givenHash)) return null;
+  var person = null;
+  var names = Object.keys(people || {});
+  for (var i = 0; i < names.length; i++) {
+    var hit = sameKey(givenHash, people[names[i]].hash);
+    if (hit && person === null) person = names[i];
+  }
+  var check = typeof checkHash === "string" && KEY_HASH_RE_.test(checkHash) && sameKey(givenHash, checkHash);
+  var isShared = typeof shared === "string" && shared !== "" && sameKey(given, shared);
+  if (person !== null) return { kind: "person", name: person };
+  if (check) return { kind: "check" };
+  if (isShared) return { kind: "shared" };
+  return null;
+}
+
+// Text for the owner's log with anything secret blanked: each of `secrets`
+// (keys, tokens, ids of 5 characters or more) wherever it appears, and any
+// run of 20 or more letters, digits, - or _ (the shape of a key, a token or
+// a spreadsheet id) in case one was not on the list.
+function blankSecrets(text, secrets) {
+  var s = String(text);
+  (secrets || []).forEach(function (x) {
+    if (typeof x === "string" && x.length >= 5) s = s.split(x).join("(hidden)");
+  });
+  return s.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g, "(hidden)").replace(/[A-Za-z0-9_-]{20,}/g, "(hidden)");
+}
+
 // Whether to fetch today's rate: only when today's is not stored yet and the
 // last failed fetch (failAtIso) was not within the past hour.
 function shouldFetchRate(todayKeyValue, failAtIso, nowIso) {
@@ -1458,5 +1540,5 @@ function ticketSnap_(t, stopTitle) {
 }
 
 if (typeof module !== "undefined") {
-  module.exports = { TABS, KINDS, isTextColumn, sanitizeCell, unsanitizeCell, rowToObj, objToRow, validateExpense, validatePayment, validatePersonPatch, validateStop, validateStay, validateDayPatch, DAY_PATCH_KEYS, safeUrl, safeHttpsUrl, dayLabel, stopFromRow, stopToRow, stayFromRow, stayToRow, dayFromRow, dayToRow, expenseFromRow, paymentFromRow, personFromRow, cellDate_, cellStamp_, summarize, undoTarget, canUndo, entryFromRow, parseLogRow, expenseToRow, paymentToRow, setupSeedRows, shouldFetchRate, rateSource, sameKey, paymentsFromRows, expenseFromPayment, paymentIdOf, todosFromRows, bookByDay, todoFromRow, isBooked, colLetter, changeLogRow, shortDay_, stampWindow, pressRefusal, stampDefFromRow, stampFromRow, stampSnap_, plannerWhat_, coordsOf_, pointFromLink, metresBetween_, TICKET_LIMITS, validateTicket, ticketChunks, joinTicketChunks, ticketFromRow, ticketSnap_ };
+  module.exports = { TABS, KINDS, isTextColumn, sanitizeCell, unsanitizeCell, rowToObj, objToRow, validateExpense, validatePayment, validatePersonPatch, validateStop, validateStay, validateDayPatch, DAY_PATCH_KEYS, safeUrl, safeHttpsUrl, dayLabel, stopFromRow, stopToRow, stayFromRow, stayToRow, dayFromRow, dayToRow, expenseFromRow, paymentFromRow, personFromRow, cellDate_, cellStamp_, summarize, undoTarget, canUndo, entryFromRow, parseLogRow, expenseToRow, paymentToRow, setupSeedRows, shouldFetchRate, rateSource, sameKey, hexOfBytes, personKeysFrom, personKeysReadable, keyHolder, blankSecrets, paymentsFromRows, expenseFromPayment, paymentIdOf, todosFromRows, bookByDay, todoFromRow, isBooked, colLetter, changeLogRow, shortDay_, stampWindow, pressRefusal, stampDefFromRow, stampFromRow, stampSnap_, plannerWhat_, coordsOf_, pointFromLink, metresBetween_, TICKET_LIMITS, validateTicket, ticketChunks, joinTicketChunks, ticketFromRow, ticketSnap_ };
 }

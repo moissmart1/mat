@@ -330,4 +330,53 @@ cases.push({
   },
 });
 
+// What the phone's picture keep holds (opening it makes an empty one if it is gone).
+const keptIds = (page) => page.evaluate(() => new Promise((resolve) => {
+  const r = indexedDB.open("mat-tickets", 1);
+  r.onupgradeneeded = () => r.result.createObjectStore("pics");
+  r.onsuccess = () => {
+    const db = r.result;
+    const q = db.transaction("pics", "readonly").objectStore("pics").getAllKeys();
+    q.onsuccess = () => { db.close(); resolve(q.result.length); };
+    q.onerror = () => { db.close(); resolve(-1); };
+  };
+  r.onerror = () => resolve(-1);
+}));
+
+cases.push({
+  name: "version 28: a refused key takes every ticket picture off the phone",
+  async run({ page }) {
+    const backend = await ticketed();
+    await ready(page, { backend, own: "Ajen" });
+    await allKept(page);
+    assert.equal(await keptIds(page), 6);
+    backend.fake.world.cancelLinkForPerson2(); // Ajen
+    await page.evaluate(() => globalThis.__matTest.store.checkRev());
+    await until(() => page.evaluate(() => { const g = document.getElementById("gate"); return !!g && !g.hidden; }), "the no-key screen shows");
+    await until(async () => (await keptIds(page)) === 0, "no picture is left on the phone");
+    // No picture is drawn anywhere. (The Days rail under the no-key screen is
+    // left as it was drawn: version 28's own behaviour, reported, not changed here.)
+    assert.equal(await page.evaluate(() => document.querySelectorAll("img[src^='blob:']").length), 0);
+    assert.equal(await page.evaluate(() => document.getElementById("tix").hidden), true);
+  },
+});
+
+cases.push({
+  name: "version 28: Forget this phone takes every ticket picture off, with the stub up",
+  async run({ page }) {
+    const backend = await ticketed();
+    await ready(page, { backend, own: "Mo" });
+    await allKept(page);
+    await showTicket(page, SKY);
+    await page.keyboard.press("Escape");
+    await page.dispatchEvent("#youBtn", "click");
+    await until(() => page.evaluate(() => document.getElementById("you").classList.contains("is-open")), "You opens");
+    await page.dispatchEvent("#setForget", "click");
+    await page.dispatchEvent("#setForget", "click");
+    await until(() => page.evaluate(() => { const g = document.getElementById("gate"); return !!g && !g.hidden; }), "the no-key screen shows");
+    await until(async () => (await keptIds(page)) === 0, "no picture is left on the phone");
+    assert.equal(await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("mat.")).length), 0);
+  },
+});
+
 module.exports = cases;

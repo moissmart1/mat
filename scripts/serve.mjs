@@ -36,4 +36,5 @@ createServer(async (req, res) => {
   } catch {
     send(res, 404, "Not found");
   }
-}).listen(PORT, () => console.log(`Serving ${ROOT} at http://localhost:${PORT}`));
+// Loopback only: nothing else on the network can read the checkout while tests run.
+}).listen(PORT, "localhost", () => console.log(`Serving ${ROOT} at http://localhost:${PORT}`));

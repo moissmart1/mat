@@ -45,7 +45,8 @@ test("doPost answers a body that is not JSON-RPC exactly as before the connector
   assert.deepEqual(JSON.parse(JSON.stringify(w.seen.handle.slice(1))), [null, [1], { jsonrpc: "1.0", key: "k" }]);
 
   const boom = world({ handle: () => { throw new Error("kaput"); } });
-  assert.equal(boom.doPost(post("{}")).text, '{"ok":false,"error":"server","message":"Something went wrong on our side. Try again. (kaput)"}');
+  // Security (2026-11-18): the plain sentence only, never the thrown error's text.
+  assert.equal(boom.doPost(post("{}")).text, '{"ok":false,"error":"server","message":"Something went wrong on our side. Try again."}');
   assert.equal(world({}).doGet().text, '{"ok":true,"rev":0,"data":{"name":"mat","stamp":""}}');
   assert.equal(world({ stamp: "0a1b2c3d4e" }).doGet().text, '{"ok":true,"rev":0,"data":{"name":"mat","stamp":"0a1b2c3d4e"}}');
 });

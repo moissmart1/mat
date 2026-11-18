@@ -4,7 +4,7 @@
 // tests/fake-backend.cjs):
 //   readTable_, appendObj_, updateById_, updateWhere_, ensureColumns_, hasColumn_,
 //   getProp_, setProp_, delProp_, withLock_, getRate_, getRateInfo_, tripKey_, nowIso_, sheetUrl_,
-//   claudeToken_, ensureClaudeToken_, newId_, plannerId_, setPlannerId_, plannerRows_,
+//   claudeToken_, ensureClaudeToken_, newId_, plannerId_, plannerRows_, holderOf_ (Keys.js),
 //   hasTab_, plannerTab_, plannerSetCell_, plannerAppendRow_, torontoNow_, withPlannerLock_,
 //   appendObjs_, columnValues_, cellsAt_, deleteRowsAt_ (ticket pictures)
 // It also uses the pure helpers from Pure.js.
@@ -35,8 +35,6 @@ var MSG_ = {
   noClaude: "The Claude link isn’t set up yet. Ask Mo to run migrate.",
   noPlanner: "No planner sheet is linked yet. Ask Mo to link it.",
   plannerUnreadable: "Couldn’t read the planner sheet. Ask Mo to check its permission.",
-  badPlannerId: "That isn’t a spreadsheet id.",
-  plannerLinked: "A planner is already linked.",
   needsMigrate: "The trip sheet needs updating first. Ask Mo to run migrate.",
   notInPlanner: "That payment isn’t in the planner any more.",
   twoLines: "Two lines carry this payment’s id.",
@@ -60,11 +58,15 @@ var MSG_ = {
   ticketsPerStop: "A stop can hold at most 8 ticket pictures.",
   ticketsPerTrip: "The trip can hold at most 120 ticket pictures.",
   claudeTicket: "Ticket pictures are added and removed in the app.",
+  // Security (2026-11-18).
+  checkOnly: "This key can only read the trip.",
+  claudeOwnerOnly: "Only {owner} can copy the Claude link.",
+  notYours: "You can only change your own settings.",
+  ownLink: "Open your own link to change an e-Transfer address.",
+  notYourClaim: "Someone else is on this one. Ask them to hand it back first.",
 };
 var STAMP_REFUSALS_ = { not_open: "stampNotOpen", closed: "stampClosed", late: "stampLate", future: "stampFuture" };
 
-// A Google spreadsheet id, as linkPlanner takes it.
-var PLANNER_SHEET_ID_RE_ = /^[A-Za-z0-9_-]{20,80}$/;
 // The most expenses one pull adds or changes (R40), so it never holds the lock long.
 var PLANNER_MAX_WRITES_ = 10;
 // "Before we go" (Task 19, R45, R49): a pull reads the planner at most once
@@ -100,28 +102,81 @@ function planKind_(kind) {
 
 var EXPENSE_PATCH_KEYS_ = ["title", "amount", "currency", "paidBy", "split", "splitMode", "splitVals", "day", "note", "kind"];
 
+// Security (2026-11-18): who is calling is decided first, from the key alone
+// (holderOf_, Keys.js), before anything else is read or done. A person's key
+// makes the request theirs; the release check's key may only read; the old
+// shared key works as before (with the e-Transfer rule in setPerson_) until
+// it is retired. A request that is not one of these is bad_key, as before.
 function handle_(body) {
   if (!isObj_(body)) return err_("bad_input", MSG_.badRequest);
-  if (!sameKey(body.key, tripKey_())) return err_("bad_key", MSG_.badKey);
+  var holder;
+  try {
+    holder = holderOf_(body.key);
+  } catch (e) {
+    // PERSON_KEYS broken by hand (fix round 1): nobody in, and not bad_key,
+    // which would make every phone clear itself.
+    reportError_("holderOf_", e, [body.key]);
+    return err_("server", MSG_.server);
+  }
+  if (!holder) return err_("bad_key", MSG_.badKey);
+  return handleAs_(holder, body);
+}
+
+// The rest of a request once its holder is known: { kind: "person", name },
+// { kind: "check" }, { kind: "shared" }, or { kind: "claude", name } (the
+// Claude connector, Mcp.js, after its own token check: never reachable from
+// outside, and it does not need the shared key to exist).
+// A thrown error answers the plain server sentence only; its detail goes to
+// the owner's log with anything secret blanked (reportError_).
+function handleAs_(holder, body) {
   var env;
   try {
-    env = dispatch_(body);
+    // A person's key whose name is no longer on the trip opens nothing.
+    if (holder.kind === "person" && peopleNames_().indexOf(holder.name) === -1) env = err_("bad_key", MSG_.badKey);
+    else env = dispatch_(body, holder);
   } catch (e) {
-    env = err_("server", MSG_.server + " (" + String((e && e.message) || e) + ")");
+    reportError_("handle_", e, [body && body.key]);
+    env = err_("server", MSG_.server);
   }
   if (typeof env.rev !== "number") env.rev = rev_();
   return env;
 }
 
-function dispatch_(body) {
+// The detail of an error, for the owner only (the script's executions log),
+// with every key, token and id blanked: the "anywhere" list the connector
+// keeps out of its replies (mcpSecrets_ in Mcp.js) plus `extra` (the key
+// that came with the request). Never in a reply.
+function reportError_(where, e, extra) {
+  try {
+    var secrets = secretsAnywhere_().concat((extra || []).filter(function (x) { return typeof x === "string"; }));
+    var text = blankSecrets(String((e && e.stack) || (e && e.message) || e), secrets);
+    if (typeof console !== "undefined" && console.error) console.error(where + ": " + text);
+  } catch (e2) {
+    // the log is best effort: the reply is the same either way
+  }
+}
+
+// What the check key and the connector may ask for; a person's key and the
+// shared key may ask for anything. The check key reads only what a phone's
+// start needs, and runs migrate.
+var CHECK_ACTIONS_ = ["load", "rev", "history", "migrate"];
+// The connector reads and writes through its tools only.
+var CLAUDE_ACTIONS_ = ["load", "history", "syncPayments", "addExpense", "addStop", "updateStop", "deleteStop", "saveStay", "deleteStay", "setDay", "undo",
+  // Listed only so they answer their own "do this one in the app" sentence.
+  "pressStamp", "tickTodo"];
+
+function dispatch_(body, holder) {
   var args = body.args === undefined || body.args === null ? {} : body.args;
   if (!isObj_(args)) return err_("bad_input", MSG_.badRequest);
   var action = body.action;
-  if (action === "load") return load_();
+  if (holder.kind === "check" && CHECK_ACTIONS_.indexOf(action) === -1) return err_("bad_input", MSG_.checkOnly);
+  if (holder.kind === "claude" && CLAUDE_ACTIONS_.indexOf(action) === -1) return err_("bad_input", MSG_.badAction);
+  if (action === "load") return load_(holder);
   if (action === "rev") return ok_({}, rev_());
   if (action === "history") return history_(args);
   // One ticket picture's data, for a phone to keep: a read, no lock, no Log.
-  if (action === "ticket") return body.via === "claude" ? err_("bad_input", MSG_.claudeTicket) : ticket_(args);
+  // (The check key and the connector never get here: neither may ask for it.)
+  if (action === "ticket") return ticket_(args);
   if (action === "migrate") {
     return withLock_(function () {
       var added = ensureColumns_();
@@ -129,22 +184,17 @@ function dispatch_(body) {
       return ok_({ added: added }, rev_());
     });
   }
-  // Where things are: run from a terminal like migrate (trip key only).
+  // Where things are: run from a terminal like migrate.
   if (action === "locate") return withLock_(locate_);
-  // The Claude connector's token, for Settings to copy into a link. Never logged.
+  // The Claude connector's token, for Settings to copy into a link. Never
+  // logged. Only for the trip's first person (the owner), on their own key.
   if (action === "claudeLink") {
+    var owner = peopleNames_()[0];
+    if (holder.kind !== "person" || holder.name !== owner) return err_("bad_input", MSG_.claudeOwnerOnly.replace("{owner}", owner || "the trip’s organiser"));
     var token = claudeToken_();
     return token ? ok_({ token: token }, rev_()) : err_("not_found", MSG_.noClaude);
   }
-  // The planner sheet's id (R39), run once from a terminal. Not logged, never
-  // given back. Only while none is linked (R40): changing it means deleting
-  // PLANNER_ID in the script editor.
-  if (action === "linkPlanner") {
-    if (plannerId_()) return err_("bad_input", MSG_.plannerLinked);
-    if (typeof args.id !== "string" || !PLANNER_SHEET_ID_RE_.test(args.id)) return err_("bad_input", MSG_.badPlannerId);
-    setPlannerId_(args.id);
-    return ok_({ linked: true }, rev_());
-  }
+  // (linkPlanner is gone: the owner sets PLANNER_ID in Script Properties.)
 
   var write;
   switch (action) {
@@ -175,8 +225,15 @@ function dispatch_(body) {
     default: return err_("bad_input", MSG_.badAction);
   }
   var names = peopleNames_();
-  if (typeof body.actor !== "string" || names.indexOf(body.actor) === -1) return err_("bad_input", MSG_.badActor);
-  var ctx = { actor: body.actor, via: body.via === "claude" ? "claude" : "app", names: names };
+  // Who the write is made as: a person's key is that person whatever the
+  // phone says (an old phone's queued write still carries an actor: it is
+  // written as the key's person); the connector is the name Mcp.js gives;
+  // only the shared key still takes the phone's word, as before.
+  var actor = holder.kind === "person" || holder.kind === "claude" ? holder.name : body.actor;
+  if (typeof actor !== "string" || names.indexOf(actor) === -1) return err_("bad_input", MSG_.badActor);
+  // Only the connector's own path is "through Claude" (fix round 1).
+  var via = holder.kind === "claude" ? "claude" : "app";
+  var ctx = { actor: actor, via: via, names: names, holder: holder.kind };
   // Reads the planner first, then takes the lock itself.
   if (action === "syncPayments") return syncPayments_(args, ctx);
   if (action === "syncTodos") return syncTodos_(args, ctx);
@@ -295,15 +352,31 @@ function tripInfo_() {
   return trip;
 }
 
-function load_() {
+// holder: who asked (handle_). me is the key's person ("" for the shared or
+// check key) and personal whether it is a person's own key, so a phone on
+// its own link is that person and offers no choice. Under the check key
+// the e-Transfer addresses are left out: it only checks a release.
+function load_(holder) {
   var rev = rev_();
   var rate = getRateInfo_();
   var book = stampBook_();
   var data = {
     trip: tripInfo_(),
-    people: peopleRows_().map(personFromRow),
+    people: peopleRows_().map(personFromRow).map(function (p) {
+      if (holder && holder.kind === "check") p.etransfer = "";
+      return p;
+    }),
+    me: holder && holder.kind === "person" ? holder.name : "",
+    personal: !!holder && holder.kind === "person",
     days: readTable_("Days").filter(function (r) { return cellDate_(r.date) !== ""; }).map(dayFromRow),
-    stops: readTable_("Stops").filter(function (r) { return cellText_(r.id) !== ""; }).map(stopFromRow),
+    stops: readTable_("Stops").filter(function (r) { return cellText_(r.id) !== ""; }).map(stopFromRow).map(function (st) {
+      // The release check's key reads no booking reference and no name on a booking (as no address).
+      if (holder && holder.kind === "check") {
+        st.tkRef = "";
+        st.tkName = "";
+      }
+      return st;
+    }),
     stays: readTable_("Stays").filter(function (r) { return cellText_(r.id) !== ""; }).map(stayFromRow),
     expenses: readTable_("Expenses").filter(function (r) { return cellText_(r.id) !== ""; }).map(expenseFromRow),
     payments: readTable_("Settlements").filter(function (r) { return cellText_(r.id) !== ""; }).map(paymentFromRow),
@@ -649,10 +722,14 @@ function setPerson_(args, ctx) {
     if (args.name !== ctx.actor) return err_("bad_input", MSG_.notYourPicture);
     if (!hasColumn_("People", "photo")) return err_("needs_migrate", MSG_.needsMigrate);
   }
+  // Security (2026-11-18): on a person's own key, only their own row; on the
+  // shared key, no e-Transfer address changes at all (open your own link).
+  if (ctx.holder === "person" && args.name !== ctx.actor) return err_("bad_input", MSG_.notYours);
   var row = null;
   peopleRows_().forEach(function (r) { if (!row && cellText_(r.name) === args.name) row = r; });
   if (!row) return err_("not_found", MSG_.noPerson);
   var cur = personFromRow(row);
+  if (ctx.holder !== "person" && "etransfer" in v.value && v.value.etransfer !== cur.etransfer) return err_("bad_input", MSG_.ownLink);
   var changed = Object.keys(v.value).some(function (k) { return cur[k] !== v.value[k]; });
   if (!changed) return ok_({ person: cur }, rev_());
   var saved = personFromRow(updateWhere_("People", "name", args.name, v.value));
@@ -1584,6 +1661,9 @@ function claimTodo_(args, ctx) {
   if (got.env) return got.env;
   var cur = got.todo;
   if (args.on && cur.done) return err_("bad_input", MSG_.todoDone);
+  // Security (2026-11-18): on a person's own key, nobody takes over someone
+  // else's claim (it is theirs); the shared key keeps "Take it over".
+  if (args.on && ctx.holder === "person" && cur.claimedBy !== "" && cur.claimedBy !== ctx.actor) return err_("bad_input", MSG_.notYourClaim);
   // On: the actor takes it, from anyone. Off: only the one on it hands it back.
   var next = args.on ? ctx.actor : "";
   if (cur.claimedBy === next || (!args.on && cur.claimedBy !== ctx.actor)) return ok_({ todo: cur, logId: null }, rev_());
@@ -1625,6 +1705,12 @@ function undoTodo_(entry, rows, ctx) {
   var claimedBy = text(target.claimedBy), tickedBy = text(target.tickedBy), tickedAt = text(target.tickedAt), tickedItem = text(target.tickedItem);
   var known = function (v) { return v === "" || ctx.names.indexOf(v) !== -1; };
   if (!known(claimedBy) || !known(tickedBy) || typeof tickedAt !== "string" || typeof tickedItem !== "string") return err_("stale", MSG_.cantUndo);
+  // Security (2026-11-18, fix round 1): on a person's own key, and through
+  // the connector (the owner's), an undo may move a claim only between
+  // nobody and the one asking: never take someone else's off, never put
+  // someone else on, whatever kind of entry is undone.
+  var others = function (v) { return v !== "" && v !== ctx.actor; };
+  if ((ctx.holder === "person" || ctx.holder === "claude") && claimedBy !== cur.claimedBy && (others(claimedBy) || others(cur.claimedBy))) return err_("bad_input", MSG_.notYourClaim);
   if (tickedBy !== "" && tickedItem === "") tickedItem = cur.item;
   var untick = cur.tickedBy !== "" && tickedBy === "";
   var retick = cur.tickedBy === "" && tickedBy !== "";

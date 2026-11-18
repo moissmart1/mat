@@ -201,7 +201,7 @@ test("the connector reads coordinates but cannot set them", async () => {
   const d = (await call("load")).data;
   assert.equal(stopById(d, "planstop1203").lat, "35.6585");
   // Straight through handle_ as the connector: refused.
-  const e = await call("updateStop", { id: "planstop1203", patch: { lat: "1", lng: "1" } }, { via: "claude" });
+  const e = await call.fake.claude("updateStop", { id: "planstop1203", patch: { lat: "1", lng: "1" } });
   assert.equal(e.error, "bad_input");
 });
 
@@ -324,7 +324,7 @@ test("(c) a stay whose address, name or place changes loses its coordinates; oth
   assert.equal(u.data.stay.lat, "35.7119", "undoing the change brings them back");
   // Through the connector (merge) too.
   at();
-  const m = await call("saveStay", { stay: { id: "planstay0001", addressJp: "別の住所" }, merge: true }, { via: "claude" });
+  const m = await call.fake.claude("saveStay", { stay: { id: "planstay0001", addressJp: "別の住所" }, merge: true });
   assert.equal(m.data.stay.lat, "");
 });
 
@@ -364,8 +364,10 @@ test("(d) an expense edit never runs the coordinates check nor answers with a st
     const e = await call("updateExpense", { id: "exp0000001", patch: { lat: "1", lng: "2" } }, { via });
     assert.deepEqual([e.ok, e.message], [false, "Only a line’s details can be changed."], via);
   }
-  const ok = await call("updateExpense", { id: "exp0000001", patch: { title: "Ramen bar" } }, { via: "claude" });
+  const ok = await call("updateExpense", { id: "exp0000001", patch: { title: "Ramen bar" } });
   assert.equal(ok.ok, true);
+  // The connector has no expense edit (its tools don't make one).
+  assert.equal((await call.fake.claude("updateExpense", { id: "exp0000001", patch: { title: "x" } })).ok, false);
 });
 
 // ---- undo of a position edit that locate has answered since ----

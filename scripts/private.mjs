@@ -9,15 +9,18 @@
 
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { PRIVATE_DIR, call, privateEnv, readConfig } from "./release-lib.mjs";
+import { KEY_NAMES, PRIVATE_DIR, call, ownerKey, privateEnv, readConfig } from "./release-lib.mjs";
 
 const env = privateEnv();
-if (!env.MAT_KEY) {
-  console.error("private: no MAT_KEY (set it, or put MAT_KEY=... in " + join(PRIVATE_DIR, "env") + ")");
+// The whole trip is read with the owner's own key (MAT_OWNER_KEY), else the
+// old shared MAT_KEY: the check key's load leaves out e-Transfer addresses.
+const key = ownerKey(env);
+if (!key) {
+  console.error("private: no MAT_OWNER_KEY or MAT_KEY (put one in " + join(PRIVATE_DIR, "env") + ")");
   process.exit(1);
 }
 
-const res = await call(readConfig().apiUrl, env.MAT_KEY, "load");
+const res = await call(readConfig().apiUrl, key, "load");
 if (!res || res.ok !== true) {
   console.error("private: the live trip did not answer (" + ((res && res.error) || "no answer") + ")");
   process.exit(1);
@@ -29,8 +32,7 @@ const add = (s, min = 6) => {
   if (typeof s === "string" && s.trim().length >= min) out.add(s.trim());
 };
 
-add(env.MAT_KEY);
-add(env.DESK_KEY);
+for (const k of KEY_NAMES) add(env[k]);
 for (const m of String(d.sheetUrl || "").matchAll(/[A-Za-z0-9_-]{25,}/g)) add(m[0]);
 for (const p of d.people || []) {
   add(p.etransfer);

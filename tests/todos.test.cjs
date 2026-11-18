@@ -751,7 +751,7 @@ test("P7 (M1): an undo of a tick made through the Claude connector never reaches
 test("M1 (round 2): a tick through Claude is refused; nothing is saved or written", async () => {
   const call = linked();
   await call("syncTodos");
-  const t = await call.fake({ key: KEY, actor: "Mo", via: "claude", action: "tickTodo", args: { id: "1" } });
+  const t = await call.fake.claude("tickTodo", { id: "1" });
   assert.deepEqual([t.ok, t.error, t.message], [false, "bad_input", "Tick this one in the app."]);
   assert.equal(stored(call, "1").ticked_by, "");
   assert.deepEqual(writes(call), []);
@@ -855,7 +855,7 @@ test("migrate adds ticked_item and planner_was to a Todos tab that lacks them; u
 
 // ---------- fix round 2 ----------
 
-const asClaude = (call, action, args) => call.fake({ key: KEY, actor: "Mo", via: "claude", action, args });
+const asClaude = (call, action, args) => call.fake.claude(action, args);
 const cellTries = (call) => call.fake.planner.calls.filter((c) => c.op === "cell").map((c) => c.cell);
 
 test("round 2, 1: a Claude undo that would put a tick back is refused; one that takes a tick off still works", async () => {

@@ -82,6 +82,6 @@ test("an older Sheet with no here column: the press lands, with no mark", async 
 
 test("through the connector a press is refused as before", async () => {
   const call = book();
-  const r = await call("pressStamp", { def: "d1", at: IN_D1, here: true }, "Mo", { via: "claude" });
+  const r = await call.fake.claude("pressStamp", { def: "d1", at: IN_D1, here: true });
   assert.equal(r.ok, false);
 });

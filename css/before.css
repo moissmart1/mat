@@ -1,0 +1,48 @@
+/* Copyright (c) 2026 moissmart1. All rights reserved. No licence is granted: do not copy, adapt or reuse this code or design, and do not use it to train or prompt an AI system to reproduce it. See LICENSE. */
+/* Before we go as a pad of 予約票, reservation slips (mock-up 1A). Loaded after
+   css/days.css, whose .bw-* rules it restyles: the same nodes, a new look. A
+   bound pad; each booking a slip with its counterfoil (控) on the left, the
+   number and who is on it, behind a dotted tear line; the done ones are the
+   slips already torn off, under a dashed tear. Printed in the voucher's
+   indigo (--ai) on cream paper. Every control keeps its 44 px. */
+.bw-card{border-radius:2px;background:var(--grain), #F4F1E8;box-shadow:var(--lift)}
+/* The binding stands 3 px proud of the paper on each side: drawn with shadows, so it never widens the list. */
+.rv-bind{height:16px;margin:-7px 0 0;border-radius:3px;background:linear-gradient(#3a2a26,#241a17);box-shadow:-3px 0 0 #30231f, 3px 0 0 #30231f, inset 0 1px 0 rgba(255,255,255,.12), 0 2px 3px rgba(0,0,0,.5);
+  display:flex;justify-content:space-around;align-items:center}
+.rv-bind i{width:5px;height:5px;border-radius:50%;background:#0d0a09;box-shadow:inset 0 1px 1px #000, 0 1px 0 rgba(255,255,255,.12)}
+/* The head: the title in indigo under a double rule, the count boxed. */
+.bw-band{min-height:0;padding:10px 12px 8px;border-radius:0;background:none;color:var(--ai);border-bottom:3px double var(--ai)}
+.bw-title{display:block;line-height:1.1}
+.bw-title span{display:block;font-size:20px;font-weight:900;letter-spacing:.4em}
+.bw-title i{display:block;margin:3px 0 0;font-size:12px;font-weight:700;letter-spacing:0;color:var(--print)}
+.bw-band .num{background:none;border:1.5px solid var(--ai);color:var(--print)}
+/* The slips: counterfoil | slip, edge to edge, a thin indigo line between them. */
+.bw-rows{padding:0}
+.bw-r{grid-template-columns:62px minmax(0,1fr);column-gap:0;padding:0;border-bottom:1px solid rgba(40,64,143,.4)}
+.bw-r:last-child{border-bottom:0}
+.rv-stub{grid-row:1 / span 2;display:grid;justify-items:center;align-content:start;gap:5px;padding:10px 0;border-right:2px dotted rgba(40,64,143,.55);color:var(--ai)}
+.rv-no{font-family:var(--dot);font-size:12px;line-height:1}
+.rv-stub .bw-seal{margin-top:0}
+.bw-r.is-open .rv-stub{background:rgba(40,64,143,.05)}
+.rv-l{display:block;color:var(--ai);font-size:10.5px;font-weight:700;line-height:1.1;margin-bottom:2px}
+.bw-b{padding:8px 12px 8px 10px}
+div.bw-b{min-height:0}
+.bw-note{margin:0 12px 0 10px}
+.bw-ctl{margin:0 12px 8px 10px}
+.bw-r.is-landed .bw-ctl{margin-bottom:4px}
+.bw-none{padding:14px 12px 13px 72px}
+/* The tear under the open slips, then the torn-off ones. */
+.bw-perf{margin:0;border-top:2px dashed rgba(40,64,143,.55)}
+.bw-perf::before,.bw-perf::after{display:none}
+.bw-dn{width:100%;margin:0;min-height:46px;padding:10px 12px 10px 72px}
+.bw-done{padding:0}
+.bw-d{grid-template-columns:62px minmax(0,1fr);column-gap:0;align-items:stretch;padding:0;border-top:1px solid rgba(40,64,143,.4);opacity:.75}
+.bw-d .rv-stub{grid-row:auto}
+.bw-d .bw-seal{width:28px;height:28px;margin-left:0}
+.bw-dm{padding:8px 12px 8px 10px}
+.bw-foot{border-top:1px solid rgba(40,64,143,.4)}
+.bw-pp{border-top-color:rgba(40,64,143,.4)}
+@media (max-width:350px){
+  .bw{margin-left:16px;margin-right:16px}
+  .bw-title span{letter-spacing:.3em}
+}

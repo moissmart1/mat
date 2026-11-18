@@ -34,7 +34,14 @@ const badArgs = (fake, name, args) => {
   assert.equal(r.error && r.error.code, -32602, JSON.stringify(r));
   return r.error.message;
 };
-const app = (fake, action, args, actor = "Mo") => fake({ key: "test-key", actor, action, args });
+// A phone on its own link (a personal key): e-Transfer addresses can only be
+// changed that way (security, 2026-11-18).
+const own = (fake, name) => {
+  fake.keys = fake.keys || {};
+  if (!fake.keys[name]) fake.keys[name] = fake.personKey(name);
+  return fake.keys[name];
+};
+const app = (fake, action, args, actor = "Mo") => fake({ key: own(fake, actor), action, args });
 const NAMES = ["Mo", "Ajen", "Trenton"];
 
 // ---------- the brief's tests ----------
@@ -57,13 +64,13 @@ test("every tool has a name, a description and a schema", () => {
   }
 });
 
-test("Claude adds a stop: validated, logged as Claude, undoable", async () => {
+test("Claude adds a stop: validated, logged as Claude (as the owner, whatever `as` says), undoable", async () => {
   const fake = createFakeBackend({});
   const r = fake.mcp(rpc("tools/call", { name: "add_stop", arguments: { date: "2026-12-12", title: "Shibuya Sky", time: "14:00", travel_min: 30, sign_jp: "渋谷" } }), { ...T, as: "Ajen" });
   const stop = body(r).stop;
   assert.deepEqual([stop.title, stop.travelMin, stop.signJp], ["Shibuya Sky", 30, "渋谷"]);
   const log = fake.tables.Log.at(-1);
-  assert.deepEqual([log.who, log.via], ["Ajen", "claude"]);
+  assert.deepEqual([log.who, log.via], ["Mo", "claude"]);
   const u = fake.mcp(rpc("tools/call", { name: "undo", arguments: { log_id: body(r).log_id } }), T);
   assert.equal(body(u).stop.deleted, true);
 });
@@ -101,10 +108,17 @@ test("no reply ever holds the trip key or the token", () => {
   assert.equal(all.includes("test-key") || all.includes("claude-token"), false);
 });
 
-test("claudeLink hands the token to a key holder only", async () => {
+test("claudeLink hands the token only to the trip's first person, on their own link (security)", async () => {
   const fake = createFakeBackend({});
-  assert.equal((await fake({ key: "test-key", action: "claudeLink", args: {} })).data.token, "claude-token");
+  assert.equal((await fake({ key: own(fake, "Mo"), action: "claudeLink", args: {} })).data.token, "claude-token");
+  const other = await fake({ key: own(fake, "Ajen"), action: "claudeLink", args: {} });
+  assert.deepEqual([other.ok, other.error, other.message, other.data], [false, "bad_input", "Only Mo can copy the Claude link.", undefined]);
+  const shared = await fake({ key: "test-key", actor: "Mo", action: "claudeLink", args: {} });
+  assert.deepEqual([shared.ok, shared.error, shared.data], [false, "bad_input", undefined]);
+  const check = await fake({ key: fake.CHECK_KEY, action: "claudeLink", args: {} });
+  assert.deepEqual([check.ok, check.error, check.data], [false, "bad_input", undefined]);
   assert.equal((await fake({ key: "wrong", action: "claudeLink", args: {} })).error, "bad_key");
+  assert.equal(JSON.stringify([other, shared, check]).includes("claude-token"), false);
 });
 
 // ---------- the handshake, the token and malformed messages ----------
@@ -242,16 +256,16 @@ test("a time is trimmed before it is handed on; an empty one is no time", () => 
 
 // ---------- writes go through the app's own actions ----------
 
-test("writes are made as the person `as` names (any case, spaces trimmed), else the first person, always via claude (R35)", () => {
+test("writes are made as the first person (the owner) whatever `as` names, always via claude, never with a key (R35, security)", () => {
   const fake = createFakeBackend({});
-  for (const [as, who] of [["Trenton", "Trenton"], ["ajen", "Ajen"], [" Ajen ", "Ajen"], [undefined, "Mo"]]) {
+  for (const [as, who] of [["Trenton", "Mo"], ["ajen", "Mo"], [" Ajen ", "Mo"], [undefined, "Mo"]]) {
     ok(fake, "add_stop", { date: "2026-12-11", title: "With " + as }, as === undefined ? T : { ...T, as });
     const log = fake.tables.Log.at(-1);
     assert.deepEqual([log.who, log.via], [who, "claude"], String(as));
   }
   const viaApp = fake.requests.filter((r) => r.via === "claude");
-  assert.equal(viaApp.length, 4, "each went through handle_ with via claude");
-  assert.ok(viaApp.every((r) => r.key === "test-key"), "with the real trip key");
+  assert.equal(viaApp.length, 4, "each went through handleAs_ with via claude");
+  assert.ok(viaApp.every((r) => r.key === undefined && r.holder === "claude" && r.actor === "Mo"), "as the connector, without a key");
 });
 
 test("the write tools map their arguments to the API and answer { <kind>, log_id }", () => {
@@ -488,11 +502,11 @@ test("the connector never logs: no console or Logger in Mcp.js, and setup never 
 
 test("claudeLink needs no actor, says nothing of the token when there is none, and is not a write", async () => {
   const fake = createFakeBackend({});
-  const r = await fake({ key: "test-key", action: "claudeLink" });
+  const r = await fake({ key: own(fake, "Mo"), action: "claudeLink" });
   assert.deepEqual([r.ok, r.data.token, r.rev], [true, "claude-token", 0]);
   assert.equal(fake.tables.Log.length, 0);
   delete fake.props.CLAUDE_TOKEN;
-  const none = await fake({ key: "test-key", action: "claudeLink", args: {} });
+  const none = await fake({ key: own(fake, "Mo"), action: "claudeLink", args: {} });
   assert.deepEqual([none.ok, none.error, none.message], [false, "not_found", "The Claude link isn’t set up yet. Ask Mo to run migrate."]);
   assert.equal("CLAUDE_TOKEN" in fake.props, false, "asking does not make one");
 });
@@ -792,13 +806,16 @@ test("get_trip says who has a picture, never the picture; undoing one answers wi
   assert.deepEqual(t.has_picture, { Mo: false, Ajen: true, Trenton: false });
   const h = ok(fake, "get_history", {}).entries;
   assert.equal(h[0].sentence, "Ajen set a picture");
-  const u = ok(fake, "undo", { log_id: h[0].id }, { ...T, as: "Ajen" });
-  assert.deepEqual(u.person, { name: "Ajen", has_picture: false });
+  // The connector always acts as the owner (security): even with as=Ajen it
+  // cannot undo Ajen's picture, and it can undo the owner's.
+  const theirs = call(fake, "undo", { log_id: h[0].id }, { ...T, as: "Ajen" });
+  assert.equal(theirs.result.isError, true, "the connector, acting as Mo, cannot change Ajen's");
+  assert.match(theirs.result.content[0].text, /own picture/);
   await app(fake, "setPerson", { name: "Mo", patch: { photo: JPEG } });
   const mine = ok(fake, "get_history", {}).entries[0];
-  const theirs = call(fake, "undo", { log_id: mine.id }, { ...T, as: "Ajen" });
-  assert.equal(theirs.result.isError, true, "Claude acting as Ajen cannot change Mo's");
-  assert.match(theirs.result.content[0].text, /own picture/);
+  const u = ok(fake, "undo", { log_id: mine.id }, { ...T, as: "Ajen" });
+  assert.deepEqual(u.person, { name: "Mo", has_picture: false });
+  await app(fake, "setPerson", { name: "Mo", patch: { photo: JPEG } });
   const seen = [];
   for (const name of ["get_trip", "get_history"]) seen.push(JSON.stringify(call(fake, name, {})));
   seen.push(JSON.stringify(call(fake, "undo", { log_id: mine.id })));

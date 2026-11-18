@@ -177,3 +177,80 @@ test("(a) a request the phone never answers stops blocking after 15 seconds", ()
   g.give(0, 35, 135, 40, t);
   assert.ok(w.current());
 });
+
+// ---- the Location row after a refusal (found on a real iPhone, 2026-11-18) ----
+
+test("refused, then allowed in Settings: coming back to the app turns it on and a position is asked for", async () => {
+  const g = phone();
+  const d = doc();
+  let state = "denied";
+  let queries = 0;
+  const permissions = { query: () => { queries++; return Promise.resolve({ state }); } };
+  const w = createWhere({ ...T, storage: mem({ "mat.where": "refused" }), geolocation: g, permissions, now: () => NOW, doc: d });
+  w.start();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(w.state(), "refused");
+  assert.equal(g.calls.length, 0);
+  d.visibilityState = "hidden";
+  d.fire();
+  state = "granted"; // turned on in iPhone Settings meanwhile
+  d.visibilityState = "visible";
+  d.fire();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(queries, 2, "looked again only on coming back on screen");
+  assert.equal(w.state(), "on");
+  assert.equal(g.calls.length, 1, "a position is asked for");
+});
+
+for (const [what, permissions] of [
+  ["prompt", { query: () => Promise.resolve({ state: "prompt" }) }],
+  ["denied", { query: () => Promise.resolve({ state: "denied" }) }],
+  ["no permissions API", undefined],
+  ["a query that fails", { query: () => Promise.reject(new Error("no")) }],
+]) {
+  test("refused, back on screen with " + what + ": stays refused, quietly, and the phone is never asked", async () => {
+    const g = phone();
+    const d = doc();
+    let told = 0;
+    const w = createWhere({ ...T, storage: mem({ "mat.where": "refused" }), geolocation: g, permissions, now: () => NOW, doc: d });
+    w.subscribe(() => told++);
+    w.start();
+    for (const v of ["hidden", "visible", "hidden", "visible"]) {
+      d.visibilityState = v;
+      d.fire();
+    }
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(w.state(), "refused");
+    assert.equal(g.calls.length, 0, "getCurrentPosition is not called");
+    assert.equal(told, 0, "nothing to tell anyone");
+  });
+}
+
+test("why(): the phone's answer to a refusal, cut to 80, memory only; cleared by a position and by turning off", () => {
+  const s = mem();
+  const g = phone();
+  let t = NOW;
+  const w = createWhere({ ...T, storage: s, geolocation: g, now: () => t, doc: doc() });
+  assert.equal(w.why(), null);
+  w.ask();
+  g.calls[0].no({ code: 1, message: "User denied <b>Geolocation</b> " + "x".repeat(100) });
+  assert.equal(w.state(), "refused");
+  assert.deepEqual(w.why(), { code: 1, message: ("User denied <b>Geolocation</b> " + "x".repeat(100)).slice(0, 80) });
+  assert.equal(w.why().message.length, 80);
+  assert.equal([...s.m.values()].join().includes("denied"), false, "never stored");
+  t += ASK_GAP_MS;
+  w.ask();
+  g.give(1, 35, 135);
+  assert.equal(w.why(), null, "cleared by a position");
+  t += ASK_GAP_MS;
+  w.ask();
+  g.calls[2].no({ code: 1 });
+  assert.deepEqual(w.why(), { code: 1, message: "" });
+  w.turnOff();
+  assert.equal(w.why(), null, "cleared by turning off");
+  // Another error (a timeout) neither refuses nor sets it.
+  w.ask();
+  g.calls[3].no({ code: 3, message: "Timeout expired" });
+  assert.equal(w.state(), "on");
+  assert.equal(w.why(), null);
+});

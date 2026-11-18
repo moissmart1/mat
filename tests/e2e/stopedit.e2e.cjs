@@ -251,7 +251,8 @@ module.exports = [
     name: "a stop added by Claude says so in History",
     async run({ page }) {
       const backend = await ready(page);
-      const env = await backend.handle({ key: "test-key", actor: "Mo", via: "claude", action: "addStop", args: { stop: { id: "claudestop01", date: D12, time: "16:30", title: "Tokyu Hands" } } });
+      // The connector's own path (a phone saying via claude is ignored since the security fix round).
+      const env = await backend.fake.claude("addStop", { stop: { id: "claudestop01", date: D12, time: "16:30", title: "Tokyu Hands" } });
       assert.equal(env.ok, true, JSON.stringify(env));
       await openHistory(page);
       const top = (await tape(page))[0];

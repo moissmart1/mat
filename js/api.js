@@ -24,8 +24,10 @@ export const API_TIMEOUT_MS = 30000;
 const BAD_REPLY = "The trip sheet sent back something unexpected.";
 
 export function createApi({ url, getKey, getActor, fetchImpl, timeoutMs = API_TIMEOUT_MS, isOnline = phoneOnline }) {
-  return async function api(action, args = {}, { actor } = {}) {
-    const body = { key: getKey(), actor: actor || getActor(), via: "app", action, args };
+  // key: another key than the phone's own, for one request (a key that came
+  // in the address is tried this way before it is kept: js/store.js boot).
+  return async function api(action, args = {}, { actor, key } = {}) {
+    const body = { key: key || getKey(), actor: actor || getActor(), via: "app", action, args };
     if (!isOnline()) throw fail("network", UNREACHABLE, true);
     let env;
     const fake = globalThis.MAT_FAKE_API;

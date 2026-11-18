@@ -6,7 +6,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { LIMITS, sniff, shrink, createKeep, fetchMissing, toBase64, fromBase64, ticketKinds, ticketMark } from "../js/tickets.js";
+import { LIMITS, sniff, shrink, createKeep, fetchMissing, toBase64, fromBase64, ticketKinds, ticketMark, fetchMode, setFetchMode, fetchesAll } from "../js/tickets.js";
 import { createApi } from "../js/api.js";
 import { createStore } from "../js/store.js";
 import { changeText } from "../js/format.js";
@@ -127,7 +127,7 @@ test("toBase64 and fromBase64 carry the bytes both ways, and fromBase64 checks t
 // ---------- the keep (IndexedDB) ----------
 
 // Enough of IndexedDB for js/tickets.js: one database, one object store.
-function fakeIndexedDB({ fails = false, fullAfter = Infinity } = {}) {
+function fakeIndexedDB({ fails = false, fullAfter = Infinity, hangs = false } = {}) {
   const data = new Map();
   const req = (run) => {
     const r = { result: undefined, error: null, onsuccess: null, onerror: null };
@@ -163,8 +163,17 @@ function fakeIndexedDB({ fails = false, fullAfter = Infinity } = {}) {
   const db = { objectStoreNames: { contains: () => true }, createObjectStore() {}, transaction: tx, close() {} };
   return {
     data,
+    deleted: 0,
+    deleteDatabase() {
+      const r = { onsuccess: null, onerror: null, onblocked: null };
+      this.deleted++;
+      data.clear();
+      queueMicrotask(() => r.onsuccess && r.onsuccess());
+      return r;
+    },
     open() {
       const r = { result: db, error: null, onsuccess: null, onerror: null, onupgradeneeded: null };
+      if (hangs) return r; // a known WebKit fault: never success, error or blocked
       queueMicrotask(() => {
         if (fails) {
           r.error = new Error("SecurityError");
@@ -367,12 +376,13 @@ function memStorage(init = {}) {
 function phone({ fake, storage, ticketData = async () => null, afterLoad } = {}) {
   fake = fake || createFakeBackend({ ...PLAN });
   storage = storage || memStorage({ "mat.key": KEY, "mat.me": "Mo" });
-  const net = { offline: false, sent: [] };
+  const net = { offline: false, sent: [], override: null, lose: new Set() };
   const fetchImpl = async (url, init) => {
     const body = JSON.parse(init.body);
     net.sent.push(body);
     if (net.offline) throw new TypeError("Failed to fetch");
-    const env = await fake(body);
+    const env = (net.override && net.override(body)) || (await fake(body));
+    if (net.lose.has(body.action)) throw new TypeError("Load failed");
     return { ok: true, status: 200, text: async () => JSON.stringify(env) };
   };
   const api = createApi({ url: "https://example.test/exec", getKey: () => storage.getItem("mat.key"), getActor: () => storage.getItem("mat.me"), fetchImpl });
@@ -511,4 +521,85 @@ test("pdf.js is not in the offline shell, and is the pinned build with its licen
   assert.match(fs.readFileSync(new URL("../vendor/pdfjs/LICENSE", import.meta.url), "utf8"), /Apache License/);
   const pkg = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"));
   assert.equal(JSON.stringify(pkg).includes("pdfjs"), false, "not a dependency");
+});
+
+// ---------- the merge with version 28: a refused key and Forget take every picture off ----------
+
+test("keep.wipe: every picture off the phone, the database deleted; a put begun before it never lands; usable after", async () => {
+  const idb = fakeIndexedDB();
+  const keep = createKeep({ indexedDB: idb });
+  await keep.ready;
+  await keep.put("a", blobOf(PNG, 10, "image/png"));
+  const before = keep.gen;
+  let told = 0;
+  keep.subscribe(() => told++);
+  await keep.wipe();
+  assert.equal(keep.have("a"), false);
+  assert.equal(await keep.get("a"), null);
+  assert.equal(idb.deleted, 1);
+  assert.equal(idb.data.size, 0);
+  assert.ok(told >= 1);
+  assert.equal(await keep.put("late", blobOf(PNG, 10), { gen: before }), false, "a reply from before the wipe is not kept");
+  assert.equal(keep.have("late"), false);
+  assert.equal(await keep.put("b", blobOf(PNG, 10)), true);
+  assert.equal(keep.have("b"), true);
+});
+
+test("a fetch on its way when the phone is wiped keeps nothing", async () => {
+  const keep = createKeep({ indexedDB: fakeIndexedDB() });
+  await keep.ready;
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  const { store } = fakeStore({ tickets: [T("t1", "soon0001")], stops: STOPS, answer: async (id) => { await gate; return { id, mime: "image/png", data: pngData }; } });
+  const run = fetchMissing(store, keep, { now: () => NOW12 });
+  await new Promise((r) => setTimeout(r, 5));
+  await keep.wipe();
+  release();
+  await run;
+  assert.equal(keep.have("t1"), false);
+});
+
+test("I3 (merged here): an IndexedDB that never answers is given up on; pictures are kept in memory", async () => {
+  const keep = createKeep({ indexedDB: fakeIndexedDB({ hangs: true }), openWaitMs: 30 });
+  const t0 = Date.now();
+  await keep.ready;
+  assert.ok(Date.now() - t0 < 1000);
+  assert.equal(keep.lasting, false);
+  assert.equal(await keep.put("a", blobOf(PNG, 10)), true);
+  assert.equal(keep.have("a"), true);
+  await keep.wipe();
+  assert.equal(keep.have("a"), false);
+});
+
+test("store: a refused key takes every waiting picture out of mat.queue, and keeps the person's own lines", async () => {
+  const p = phone();
+  await p.store.boot();
+  p.net.offline = true;
+  await p.store.checkRev();
+  p.store.addTicket(picture());
+  p.store.addExpense({ day: "2026-12-12", title: "Tea", amount: 500, currency: "JPY", paidBy: "Mo", split: ["Mo", "Ajen", "Trenton"] });
+  const q0 = JSON.parse(p.storage.getItem("mat.queue"));
+  assert.equal(q0.length, 2);
+  p.fake.props.TRIP_KEY = "another-key";
+  p.net.offline = false;
+  await p.store.checkRev();
+  assert.equal(p.store.state.status, "nokey");
+  const q = JSON.parse(p.storage.getItem("mat.queue") || "[]");
+  assert.equal(q.some((e) => e.ticket), false, "no picture is kept");
+  assert.equal(q.some((e) => e.expense), true, "the person's own line is kept");
+  assert.deepEqual(p.store.state.tickets, []);
+});
+
+test("the You setting: every picture by default, only when opened on a choice; anything odd reads as the default", () => {
+  const mem = memStorage();
+  assert.equal(fetchMode(mem), "all");
+  assert.equal(fetchesAll(mem), true);
+  setFetchMode("open", mem);
+  assert.equal(mem.getItem("mat.tixFetch"), "open");
+  assert.equal(fetchesAll(mem), false);
+  mem.setItem("mat.tixFetch", "sometimes");
+  assert.equal(fetchMode(mem), "all");
+  const broken = { getItem() { throw new Error("blocked"); }, setItem() { throw new Error("blocked"); } };
+  assert.equal(fetchMode(broken), "all");
+  setFetchMode("open", broken);
 });

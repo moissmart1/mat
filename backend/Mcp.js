@@ -4,8 +4,11 @@
 // Script Properties) and as (who the writes are made as).
 //
 // - initialize needs no token; every other method checks t with sameKey.
-// - Every write goes through handle_ with the real trip key, as the app's
-//   do, so it is validated, logged (via "claude") and undoable. Nothing here
+// - Every request goes through handleAs_ (Actions.js) as the holder
+//   { kind: "claude" }, after the token check here: it is validated, logged
+//   (via "claude") and undoable as the app's are, and it needs no trip key
+//   (the shared key may be retired). Every write is made as the trip's first
+//   person, the owner (security, 2026-11-18). Nothing here
 //   touches the Sheet itself; the reads are handle_'s load and history, and
 //   People for who the writes are made as.
 // - A reply never holds the trip key, the token, the planner sheet's id, an
@@ -82,7 +85,9 @@ function mcpCall_(id, p, query) {
     var args = mcpArgs_(tool, raw);
     var actor = mcpActor_(query.as, names);
     if (actor === null && tool.write) mcpBad_("the name in this link (as) isn’t one of the people on this trip.");
-    out = tool.run(args, { actor: actor === null ? names[0] : actor, names: names });
+    // Security (2026-11-18): the one token is the owner's, so every write is
+    // made as the owner whatever `as` says; `as` only picks whose reads.
+    out = tool.run(args, { actor: tool.write ? names[0] : actor === null ? names[0] : actor, names: names });
   } catch (e) {
     if (e && typeof e.mcpBadArgs === "string") return mcpError_(id, -32602, e.mcpBadArgs);
     throw e;
@@ -156,7 +161,7 @@ function mcpCamel_(k) {
 
 // ---- talking to the actions ----
 
-// One request through handle_, exactly as the app sends it but via "claude".
+// One request through handleAs_, as the connector (never with a key), via "claude".
 // Gives { ok: true, data } or { ok: false, message } (the backend's own
 // sentence; a "server" error without the thrown error's text). Claude often
 // calls tools side by side: a write that finds the lock held is tried again
@@ -166,7 +171,7 @@ function mcpAsk_(action, args, actor) {
   var start = clockMs_();
   var env;
   for (;;) {
-    env = handle_({ key: tripKey_(), actor: actor, via: "claude", action: action, args: args });
+    env = handleAs_({ kind: "claude", name: actor }, { action: action, args: args });
     if (env.ok || env.error !== "busy" || clockMs_() - start + MCP_LOCK_TRY_MS_ > MCP_BUSY_WAIT_MS_) break;
   }
   if (env.ok) return { ok: true, data: env.data };
@@ -190,8 +195,15 @@ function mcpWrite_(kind, action, args, who) {
 // wherever it appears). whole: every stored e-Transfer address, hidden when a
 // whole text is that address (an address like "Tokyo" must not hide the word
 // in "Tokyo Tower").
+// The secrets hidden wherever they appear, in a connector reply or in the
+// owner's error log (reportError_ in Actions.js): the shared key while it
+// exists, the token and the planner's id.
+function secretsAnywhere_() {
+  return [tripKey_(), claudeToken_(), plannerId_()].filter(function (s) { return typeof s === "string" && s !== ""; });
+}
+
 function mcpSecrets_(people) {
-  var anywhere = [tripKey_(), claudeToken_(), plannerId_()];
+  var anywhere = secretsAnywhere_();
   var whole = [];
   people.forEach(function (p) {
     var a = String(p.etransfer || "").trim();

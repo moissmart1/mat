@@ -100,11 +100,62 @@ module.exports = [
       assert.equal(await calls(page), 1);
       await openYou(page);
       assert.equal(await text(page, "#setWhereV"), "Phone said no");
-      assert.equal(await text(page, "#setWhereS"), "To change it: iPhone Settings, Apps, Safari, Location.");
+      assert.equal(await text(page, "#setWhereS"), "To change it: iPhone Settings, Apps, Safari, Location. Then tap here to try again.");
       assert.equal(await page.evaluate(() => getComputedStyle(document.getElementById("setWhereV")).color), "rgb(214, 60, 30)");
       await shot(page, "6-you-phone-said-no");
       // Nothing says no on the ticket or anywhere else: no notice.
       assert.equal(await page.evaluate(() => !!document.querySelector(".ubar:not([hidden])") && document.querySelector(".ubar").textContent.includes("location")), false);
+    },
+  },
+  {
+    name: "refused, then allowed in Settings: tapping the row tries again and turns it On; coming back on screen alone never prompts",
+    async run({ page }) {
+      await geoStub(page, { mode: "refused", permission: "denied" });
+      await ready(page, { storage: { "mat.where": "refused" } });
+      await openYou(page);
+      assert.equal(await text(page, "#setWhereV"), "Phone said no");
+      assert.equal(await text(page, "#setWhereS"), "To change it: iPhone Settings, Apps, Safari, Location. Then tap here to try again.");
+      // Back on screen with Settings still saying no: nothing is asked, nothing pops up.
+      await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+      assert.equal(await calls(page), 0, "the phone is never asked by itself");
+      assert.equal(await text(page, "#setWhereV"), "Phone said no");
+      assert.equal(await page.evaluate(() => !!document.querySelector(".ubar:not([hidden])")), false, "no notice");
+      // Turned on in Settings, but the phone's permission reads "prompt" (Safari asks per site): the row's tap tries again.
+      await page.evaluate(() => window.__geoSet({ mode: "granted", permission: "prompt" }));
+      await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+      assert.equal(await calls(page), 0);
+      await page.dispatchEvent("#setWhere", "click");
+      await until(async () => (await text(page, "#setWhereV")) === "On", "the row says On");
+      assert.equal(await choice(page), "on");
+      assert.equal(await calls(page), 1);
+    },
+  },
+  {
+    name: "refused: the row shows the phone's own answer as plain text, in memory only",
+    async run({ page }) {
+      await geoStub(page, { mode: "refused", message: "Denied <b>by</b> the user" });
+      const backend = await ready(page);
+      await openYou(page);
+      assert.equal(await page.isHidden("#setWhereWhy"), true, "nothing before a refusal");
+      await page.dispatchEvent("#setWhere", "click");
+      await until(async () => (await text(page, "#setWhereV")) === "Phone said no", "refused");
+      assert.equal(await text(page, "#setWhereWhy"), "Phone’s answer: Denied <b>by</b> the user (code 1)");
+      assert.equal(await page.locator("#setWhereWhy b").count(), 0, "not markup");
+      const kept = await page.evaluate(() => JSON.stringify({ ...localStorage }) + JSON.stringify({ ...sessionStorage }));
+      assert.equal(kept.includes("Denied"), false, "never stored");
+      assert.equal(JSON.stringify(backend.requests).includes("Denied"), false, "never sent");
+    },
+  },
+  {
+    name: "refused, then allowed in Settings (granted): coming back on screen turns it On without a tap",
+    async run({ page }) {
+      await geoStub(page, { mode: "granted", permission: "denied" });
+      await ready(page, { storage: { "mat.where": "refused" } });
+      await until(async () => (await choice(page)) === "refused", "still refused at start");
+      await page.evaluate(() => window.__geoSet({ permission: "granted" }));
+      await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+      await until(async () => (await choice(page)) === "on", "on once Settings says granted");
+      assert.equal(await calls(page), 1, "a position is asked for");
     },
   },
   {
@@ -122,7 +173,7 @@ module.exports = [
       assert.equal(await askShown(page), false);
       await openYou(page);
       assert.equal(await text(page, "#setWhereV"), "Off");
-      assert.equal(await text(page, "#setWhere > span"), "現在地Location" + "For leave-by, distances and the stamp. It stays on this phone, never sent to the Sheet.");
+      assert.equal(await text(page, "#setWhere > span"), "現在地Location" + "For leave-by, distances and the stamp. Your position stays on this phone. A stamp pressed in the day’s place gets a small mark the others can see.");
       await shot(page, "6-you-off");
       await page.click("#setWhere");
       await until(async () => (await text(page, "#setWhereV")) === "On", "On");

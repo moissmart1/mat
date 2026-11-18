@@ -4,6 +4,7 @@
 // those in order; this is what stops a push made any other way.
 
 import { config, git, judgePush, liveStamp, readReceipt, stampIn } from "./release-lib.mjs";
+import { scanTree } from "./scan.mjs";
 
 const here = process.cwd();
 let input = "";
@@ -20,6 +21,17 @@ const show = (sha, path) => {
 for (const line of input.split("\n").filter(Boolean)) {
   const [, localSha, remoteRef] = line.split(" ");
   const zero = /^0+$/.test(localSha);
+  if (/^refs\/heads\/ci\//.test(remoteRef)) {
+    // The scan reads the files of this checkout, so they must be the commit.
+    const ci = zero ? null : { atHead: git(["rev-parse", "HEAD"], here) === localSha, clean: git(["status", "--porcelain"], here) === "", found: 0 };
+    if (ci && ci.atHead && ci.clean) ci.found = scanTree(here).length;
+    const whyCi = judgePush({ remoteRef, localSha, ci });
+    if (whyCi) {
+      console.error("\npush refused: " + whyCi + "\n");
+      process.exit(1);
+    }
+    continue;
+  }
   const commitStamp = zero ? "" : stampIn(show(localSha, "backend/Stamp.js"));
   const why = judgePush({
     remoteRef,

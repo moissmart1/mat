@@ -122,11 +122,10 @@ function plannerWorld({ props = {}, get, tabs = ["Payments"], noAccess = false, 
   return { ctx, logged, asked, props };
 }
 
-test("plannerRows_ asks the Sheets service for the whole Payments tab, unformatted, dates as shown; setPlannerId_ keeps the id in PLANNER_ID", () => {
-  const w = plannerWorld({ props: {}, get: () => ({ values: [PHEAD] }) });
-  assert.equal(w.ctx.plannerId_(), null);
-  w.ctx.setPlannerId_(PLANNER_ID);
-  assert.equal(w.props.PLANNER_ID, PLANNER_ID);
+test("plannerRows_ asks the Sheets service for the whole Payments tab, unformatted, dates as shown; the id is PLANNER_ID, set by the owner", () => {
+  assert.equal(plannerWorld({ props: {}, get: () => ({ values: [PHEAD] }) }).ctx.plannerId_(), null);
+  const w = plannerWorld({ props: { PLANNER_ID }, get: () => ({ values: [PHEAD] }) });
+  assert.equal(typeof w.ctx.setPlannerId_, "undefined", "nothing sets it from outside (linkPlanner is gone)");
   assert.deepEqual(JSON.parse(JSON.stringify(w.ctx.plannerRows_())), [PHEAD]);
   // Wave A item 8: the whole tab, so a column after R is read (was: Payments!A1:R).
   assert.deepEqual(JSON.parse(JSON.stringify(w.asked)), [[PLANNER_ID, "'Payments'", { valueRenderOption: "UNFORMATTED_VALUE", dateTimeRenderOption: "FORMATTED_STRING" }]]);
@@ -176,7 +175,7 @@ test("checkPlanner logs the row count or the problem, never a value or the id", 
 
   const none = plannerWorld({ props: {}, get: () => { throw new Error("not called"); } });
   none.ctx.checkPlanner();
-  assert.deepEqual(none.logged, ["Planner: not linked yet. Link it with linkPlanner first."]);
+  assert.deepEqual(none.logged, ["Planner: not linked yet. Set the Script Property PLANNER_ID to the planner’s spreadsheet id first."]);
 
   const all = [good, missing, fails, noTab, none].flatMap((w) => w.logged).join("\n");
   assert.equal(all.includes(PLANNER_ID), false);

@@ -6,7 +6,7 @@ A phone web app for three friends splitting the costs of one trip. You ring up w
 
 - **Front end:** plain HTML, CSS and ES modules. No build step. Served by GitHub Pages from the root of `main`.
 - **Backend:** one Google Apps Script web app bound to a Google Sheet (`backend/`). The Sheet is the database.
-- **Access:** a trip key, carried in the invite link after `#k=`. The key lives only in the script's Script Properties and in the links people are sent. It is never in this repo.
+- **Access:** each person has their own link, carrying their own key after `#k=`. The backend keeps only each key's SHA-256 (Script Property `PERSON_KEYS`), so it knows who is calling; no key is ever in this repo. See [Personal links](#personal-links) for how they are made, replaced and cancelled, and for retiring the old shared link.
 
 The trip side: **Days** shows one ticket per trip day (its stops, the hotel for the night, a hotel card to show a taxi driver) and a stop sheet to add, change or remove stops. Settings has **Try another day**, a demo clock that shows Days as it will look on a chosen day; a reload or Stop ends it.
 
@@ -42,7 +42,7 @@ clasp create-deployment -i <deployment id> -d "what changed"
 
 Deploy to the same deployment id every time, or the address in `js/config.js` stops matching.
 
-First-time setup on a new Sheet: run `setup` once from the script editor (it creates the tabs, the people, the days and the trip key), then `showInvite` to read the key from the log.
+First-time setup on a new Sheet: run `setup` once from the script editor (it creates the tabs and the people and the days), then `issueLinks` to make each person's link (below).
 
 `backend/Money.js` is generated from `js/money.js` by `npm run stamp`. Do not edit it by hand; `npm test` fails if it has drifted.
 
@@ -50,32 +50,33 @@ First-time setup on a new Sheet: run `setup` once from the script editor (it cre
 
 `migrate` brings an older Sheet up to date: it adds any column the code expects that a tab's header row lacks (at the end, bold, formatted as setup formats it) and creates the Claude connector's token if there is none. It never changes what is in a data row and does not move `rev`. It is safe to run twice: the second run adds nothing and answers `[]`.
 
-Run it once after pushing new backend code, from a terminal, with the trip key in an environment variable (never typed into a file or a script):
+`npm run ship -- --migrate` runs it with the release check's read-only key (`MAT_CHECK_KEY`). By hand, from a terminal, with a key in an environment variable (never typed into a file or a script, never in the address):
 
 ```bash
-read -rs MAT_KEY && export MAT_KEY        # paste the trip key, then Enter
+read -rs MAT_CHECK_KEY && export MAT_CHECK_KEY   # paste the check key, then Enter
 curl -sL -H 'Content-Type: text/plain;charset=utf-8' \
-  --data "{\"key\":\"$MAT_KEY\",\"action\":\"migrate\"}" \
+  --data "{\"key\":\"$MAT_CHECK_KEY\",\"action\":\"migrate\"}" \
   "https://script.google.com/macros/s/<deployment id>/exec"
-unset MAT_KEY
+unset MAT_CHECK_KEY
 ```
 
 It answers `{"ok":true,...,"data":{"added":[...]}}` with the columns it added, for example `["Stays.deleted_at"]`.
 
 ### locate (where things are)
 
-`Stops`, `Stays` and `Days` each have `lat` and `lng` (numbers kept as text, empty when not known); `migrate` adds the columns. `locate` fills them in with Apps Script's own geocoder (the Maps service: no key, no Cloud project), for every stop, stay and day that has none: a stop by its `place` (a Maps link with a position in it is read without asking), else its `title` with its day's `city`; a stay by its `address_jp`, else its `name` with its `place`; a day by its `city`. At most 40 lookups a call; it answers `{"found":n,"missing":n,"more":true|false}`. Run it after `migrate`, the same way, with `"action":"locate"`, and again while `more` is true. A lookup that finds nothing leaves the cells empty and is tried again on the next call. It writes no History; phones pick the positions up on their next check. A stop's position is cleared when its place changes, and can be set in the app (the stop's Edit sheet: paste a Google Maps link); the Claude connector shows positions but cannot set them. These are places' positions only: the phone's own position never leaves the phone.
+`Stops`, `Stays` and `Days` each have `lat` and `lng` (numbers kept as text, empty when not known); `migrate` adds the columns. `locate` fills them in with Apps Script's own geocoder (the Maps service: no key, no Cloud project), for every stop, stay and day that has none: a stop by its `place` (a Maps link with a position in it is read without asking), else its `title` with its day's `city`; a stay by its `address_jp`, else its `name` with its `place`; a day by its `city`. At most 40 lookups a call; it answers `{"found":n,"missing":n,"more":true|false}`. Run it after `migrate`, the same way but with your own key (the check key only reads), with `"action":"locate"`, and again while `more` is true. A lookup that finds nothing leaves the cells empty and is tried again on the next call. It writes no History; phones pick the positions up on their next check. A stop's position is cleared when its place changes, and can be set in the app (the stop's Edit sheet: paste a Google Maps link); the Claude connector shows positions but cannot set them. These are places' positions only: the phone's own position never leaves the phone. (A stamp pressed in the day's place does carry a small mark, `here`, that the others can see: whether it was pressed there, never where the phone was.)
 
 ## The Claude connector
 
 The backend is also an MCP server, so someone's Claude can read the trip and make changes in it.
 
+- **It acts as the owner.** The one token belongs to the trip's first person (the lowest `order`): every change it makes is written as them, whatever `as=` says.
 - **It can:** read the trip (`get_trip`), explain who owes whom and why (`explain_debt`), add an expense, add, change or remove stops, save or remove a stay, change a day's ticket (`set_day`), read History and undo an entry, and bring in payments from the planner sheet (`sync_payments`, below). Every change goes through the same checks as the app, is logged in History marked "(through Claude)", and can be undone.
 - **It cannot:** add, read or remove ticket pictures (it sees a stop's ticket facts), stamp payments, see or change e-Transfer addresses or emails, see or set anyone's picture (`get_trip` only says `has_picture` for each person), see the trip key or its own token, copy invite links, or change who is on the trip. (Its undo works on any History entry, as Undo in the app does, except a change to someone else's picture.) Replies never contain the key, the token, an e-Transfer address or an email.
-- **The link:** Settings → Claude link → Copy. Anyone who has the invite link can copy it, and everyone's Claude link carries the same token: one token for the whole trip.
+- **The link:** Settings → Claude link → Copy, shown only to the owner on their own link. The backend gives the token to no one else (not to the others' links, not to the old shared link). One token for the whole trip.
 - **The token sits in the connector's address** (`?t=…`). Treat the Claude link like the invite link: whoever has it can change the plan and add expenses.
-- **`as=`** in the link names who the changes are logged as (the person who copied it). A name that matches no one on the trip blocks every write until the link is copied again; with no `as=`, changes are logged as the first person.
-- **Changing the token:** in the script editor, Project Settings → Script Properties, either edit `CLAUDE_TOKEN` to a new long random value, or delete it and run `migrate` (above) to make a new one. Every Claude link copied before stops working; each person copies theirs again from Settings.
+- **`as=`** in an older link no longer changes who writes are logged as (always the owner). A name that matches no one on the trip still blocks every write; with no `as=`, nothing changes.
+- **Changing the token:** in the script editor, Project Settings → Script Properties, either edit `CLAUDE_TOKEN` to a new long random value, or delete it and run `migrate` (above) to make a new one. Every Claude link copied before stops working; the owner copies it again from Settings.
 
 ## Payments from a planner sheet
 
@@ -91,21 +92,10 @@ The app can bring in payments kept in a separate Google Sheet (the "planner"), o
 2. In the script editor, run `checkPlanner` once. Google asks for the Sheets permission (`spreadsheets`, below) for the account the web app runs as, which must be able to open the planner; the log then says no planner is linked yet.
 3. Update the deployment (`clasp create-deployment -i <deployment id> ...`, above).
 4. Run `migrate` (above): it adds the `planner_id` column to the Expenses tab. Until then a pull is refused with "The trip sheet needs updating first."
-5. Send `linkPlanner` from a terminal, with the trip key and the planner's spreadsheet id (the long part of its address between `/d/` and `/edit`) in environment variables, never typed into a file:
-
-   ```bash
-   read -rs MAT_KEY && export MAT_KEY          # paste the trip key, then Enter
-   read -rs PLANNER_ID && export PLANNER_ID    # paste the planner's spreadsheet id, then Enter
-   curl -sL -H 'Content-Type: text/plain;charset=utf-8' \
-     --data "{\"key\":\"$MAT_KEY\",\"action\":\"linkPlanner\",\"args\":{\"id\":\"$PLANNER_ID\"}}" \
-     "https://script.google.com/macros/s/<deployment id>/exec"
-   unset MAT_KEY PLANNER_ID
-   ```
-
-   It answers `{"ok":true,...,"data":{"linked":true}}`. The id is kept only in the Script Property `PLANNER_ID`: never in a reply, the Log or History. `linkPlanner` works only while no planner is linked; it answers "A planner is already linked." otherwise.
+5. In the script editor, Project Settings → Script Properties → Add script property: name `PLANNER_ID`, value the planner's spreadsheet id (the long part of its address between `/d/` and `/edit`). The id is kept only there: never in a reply, the Log or History. (There is no action that sets it from outside: the old `linkPlanner` is gone.)
 6. Run `checkPlanner` again: the log says how many payment rows and Book Now items it found, or which column is missing, and whether the Change Log is there.
 
-**Changing or unlinking it.** In the script editor, Project Settings → Script Properties, delete `PLANNER_ID` (then `linkPlanner` again to link another sheet). With none linked, the Settings row goes away on the next load; expenses already brought in stay.
+**Changing or unlinking it.** In the script editor, Project Settings → Script Properties, change or delete `PLANNER_ID`. With none linked, the Settings row goes away on the next load; expenses already brought in stay.
 
 ## Before we go (bookings and prep from the planner)
 
@@ -135,7 +125,7 @@ The app's "Before we go" list is the planner's `Book Now` tab: bookings and prep
 2. The owner runs `checkPlanner` in the script editor and approves the Sheets permission; running it again logs the Book Now count, how many Status cells are formulas (a formula in the cell, or a value spilled into it by an array formula in another cell; if a cell can't be checked it says so instead of a count), and whether the Change Log was found. Pre-flight, before going on: the Book Now count equals the real tab; `checkPlanner` reports 0 formula Status cells (or the owner accepts that those items stay untouched: the app never writes over a formula, it records the tick in the app only, answers `planner: "kept"` and History says "The planner worked out this one’s Status itself when it was ticked, so the app left it alone." (nothing writes that row later, even if the formula is replaced by text)); and the Change Log has no blank rows (the row is added with Sheets' own append, which never overwrites a row, but a blank row inside the Change Log can take the new row: keep the log free of blank rows).
 3. Update the deployment on the same deployment id (`clasp create-deployment -i <deployment id> ...`).
 4. Run `migrate` (above): it adds the `Todos` tab (or its `ticked_item` and `planner_was` columns). Until then `syncTodos`, `tickTodo` and `claimTodo` are refused with "The trip sheet needs updating first."
-5. Pull once: `syncTodos` with `{"force":true}` (the app's Fetch, or curl as for `migrate`, with an `actor`).
+5. Pull once: `syncTodos` with `{"force":true}` (the app's Fetch, or curl as for `migrate` with your own key).
 6. Check a real write: add a test row to the planner's Book Now tab, fetch, tick it in the app, then undo the tick. Look at the planner: the row's Status should read `Booked` after the tick and its old value after the undo, and the Change Log should have exactly two new rows, directly under the last one. Then delete the test row from the planner by hand.
 7. Last: publish the front end (merge to `main` / push to Pages, `APP_VERSION` 6) only after the backend's new version is live, `migrate` has run and one forced `syncTodos` has answered.
 
@@ -177,7 +167,7 @@ A stop can carry its real ticket: pictures of the codes (a screenshot, a photo, 
 
 - Once the trip is live, do not delete rows by hand. Deleted expenses, stops and stays and removed payments stay as rows with a date in `deleted_at` / `removed_at`; clear that cell, or use History in the app, to bring one back. To take a row out by hand, put any date in its `deleted_at` instead of deleting it.
 - Text columns are stored as plain text, so a title like `=SUM(1)` or `1/2 price ramen` stays exactly as typed.
-- To change the trip key: delete `TRIP_KEY` in Script Properties, run `setup`, then `showInvite`. Old links stop working.
+- To change someone's link: run `newLinkForPerson1` (2, 3, …) in the script editor (see [Personal links](#personal-links)).
 
 ### Typing into the Stops, Stays and Days tabs by hand
 
@@ -194,3 +184,39 @@ The plan can be built in the app, through Claude, or by typing into the Sheet. T
 - **Do not change the Trip tab's `tz`** (`Asia/Tokyo`): every "today", "next" and "leave by" depends on it.
 - **A hand edit does not reach phones that are already open** until someone taps You → Last updated, or makes any change in the app. A phone opened afterwards sees it at once.
 - **Never delete rows:** put a date in `deleted_at` instead (see above).
+
+## Personal links
+
+Each person opens the app from their own link, `https://<site>/#k=<their key>`. The key is 64 random hex characters; the backend keeps only its SHA-256 in the Script Property `PERSON_KEYS` (`{ "<name>": { "hash", "at" } }`, read afresh on every request, so a change takes effect on the next one) and so knows who is calling: the phone's own claim to be someone is ignored. On your own link you can change only your own e-Transfer address, Simplify and picture, and only you can take back your claim on a Before item; everything people do for each other (ringing up what someone else paid, splits, settling, ticking off) works as before. The Claude link is the owner's only (the trip's first person).
+
+**The owner's functions,** run from the script editor (pick the function, Run, then View → Executions or the run log). No menu or dialog, no new permission.
+
+- `issueLinks`: makes a link for everyone who has none and writes each new link **once** to that run's log (which only the script's owner can open): copy it from there and send it to that person. With the Script Property `SITE_URL` set to the app's address (`https://…/`) the log shows the whole link; otherwise it shows `#k=<key>` and says to put the address in front. Anyone who already has a link is listed as "already has a link (issued <date>)", without a key.
+- `newLinkForPerson1`, `newLinkForPerson2`, … (up to 6, in the People tab's `order`): replaces that person's link; the old one stops working at once. The new one is logged once.
+- `cancelLinkForPerson1`, … : that person's link stops working. Only their name is logged.
+- `linksStatus`: who has a link and since when, and whether the old shared link still works. Never a key.
+- `retireSharedLink`: deletes the old shared key (`TRIP_KEY`), only once everyone has a personal link; it refuses otherwise. After it only the personal links, the release check's key and the Claude link work.
+- `showInvite`: prints the old shared key while it exists (and says personal links replace it); after `retireSharedLink` it says there is none.
+
+**The shared link, until it is retired,** still opens the trip as before (the phone says who it is), except that no e-Transfer address can be changed through it ("Open your own link to change an e-Transfer address."), the Claude link is not given out, and `linkPlanner` is gone. `setup` never makes a new shared key once anyone has a personal link.
+
+**The release check's key** (`MAT_CHECK_KEY` in the owner's private env file, never in this repo; `backend/CheckKey.js` holds only its hash) can `load`, `rev`, `history` and `migrate`, nothing else, and its `load` leaves out the e-Transfer addresses.
+
+**On the phone.** A phone on a personal link is that person: You shows who you are, with no choice. A key the backend refuses (a cancelled or replaced link) clears the trip off the phone (the saved trip, the key, the pictures in it, every small setting) and shows the no-key screen; only that person's own unsent lines are kept, and they go out once their new link is opened (they survive any number of refusals until then). A key that comes in the address while the phone already holds another (an old Home Screen icon, an old invite link, any link someone sends) is tried for that visit only: it is kept only if the trip takes it and it is a personal key (or the phone's own key is the old shared one); refused, it is dropped and the phone stays on its own key, saying "That link didn’t work. This phone stays on the link it already had." It never clears the phone. You → Forget this phone clears everything by hand (it says first how many entries not sent yet would be lost), and also removes the app's offline copy.
+
+**People's names.** A link belongs to a name in the People tab. Renaming, blanking or removing a person there makes their link refused at once, and their phone clears itself; run `issueLinks` to make a link for the new name (it also removes the old name's link, and `linksStatus` lists such leftovers).
+
+**If `PERSON_KEYS` is broken** (edited by hand into something that is not what `issueLinks` writes): every request answers "Something went wrong on our side. Try again.", so nobody gets in but no phone clears itself, and `linksStatus` says so. If only its punctuation is broken (a quote, brace or comma), mend the text in Script Properties: every link keeps working. Deleting or emptying it cancels every personal link: each phone then clears itself and needs a new link (`issueLinks`, then send everyone theirs). One entry that is unusable (a hash cut short) is listed by `linksStatus` as "unreadable entry"; `newLinkForPersonN` gives that person a new link. `issueLinks` changes nothing while the People tab lists nobody.
+
+**Never roll the backend back past this version once `issueLinks` has run.** An older backend knows only the shared key: it refuses every personal key, and every phone on a personal link would clear itself. Fix forward. (`npm run ship` asks the live trip again for about 30 seconds after a deploy, since a request can still land on the old version for a moment.)
+
+**Errors.** A request that fails on the backend answers only "Something went wrong on our side. Try again."; the detail goes to the script's executions log (`console.error`), with every key, token and id blanked.
+
+**Cut-over, in order.**
+
+0. Check who can edit the Sheet (Share). Anyone who can edit it can open the script editor, read Script Properties and run these functions, so personal links only keep apart people who cannot edit it.
+1. Release as usual (`npm run gate`, then `npm run ship`): the backend goes first. From this moment the shared link still works for everyone, but nobody can change an e-Transfer address through it, and the Claude link row is gone for everyone (it comes back for the owner on his own link).
+2. In the script editor: set the Script Property `SITE_URL` to the app's address (optional), then run `issueLinks`. Copy each link from the run log and send each person theirs, privately. Open your own on your phone.
+3. After opening your own link: remove the old Home Screen icon and add it again from the app's You screen (Add to Home Screen); force-quit the app and open it again, and check You still says "This phone is". Ask the others to do the same. When each person has done that, run `linksStatus`, then `retireSharedLink`. From then on the old shared link is refused: a phone still on it clears the trip and asks for a link.
+4. Copy the Claude link again from You on your own link, if you use it (the token is the same; the old link keeps working).
+5. From step 2 on, never roll the backend back past this version (above): fix forward.

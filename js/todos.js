@@ -125,6 +125,14 @@ export function untickOutcome(before, data) {
   return null;
 }
 
+// The number printed on a slip's counterfoil in the pad (the Before list's
+// look): the planner's own # (two digits at the least), or, for an id that
+// is not a short whole number, the slip's place in the pad (`position`, from 0).
+export function slipNo(id, position = 0) {
+  const s = typeof id === "string" ? id.trim() : String(id == null ? "" : id);
+  return "No." + (/^\d{1,3}$/.test(s) ? s : String(position + 1)).padStart(2, "0");
+}
+
 // The first line of a Book Now item a pull could not read: "#4 · row 7 ·
 // Made-up item". Each part is left out when the backend had none.
 export function todoProblemHead({ id, row, what } = {}) {

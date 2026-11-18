@@ -7,6 +7,7 @@
 // - ageMs: how old the position is when it comes (stale: more than 3 min);
 //   accuracy in metres (rough: more than 300).
 // - permission: what permissions.query says for geolocation ("prompt" by default).
+// - message: the refusal's message (default "User denied Geolocation").
 // In the page: window.__geoCalls (each request's options), window.__geoWatch
 // (watchPosition calls), window.__geoSet(patch) to change the answer later.
 
@@ -30,7 +31,7 @@ async function geoStub(page, cfg = {}) {
         if (g.mode === "silent") return;
         // A microtask, not a timer: the tests pause the page's clock.
         Promise.resolve().then(() => {
-          if (g.mode === "refused") no({ code: 1, message: "User denied Geolocation" });
+          if (g.mode === "refused") no({ code: 1, message: typeof g.message === "string" ? g.message : "User denied Geolocation" });
           else ok({ coords: { latitude: g.lat, longitude: g.lng, accuracy: g.accuracy }, timestamp: Date.now() - g.ageMs });
         });
       },

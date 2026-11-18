@@ -15,7 +15,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const QUEUE = process.env.MAT_E2E_QUEUE || "/tmp/mat-e2e-queue";
+const QUEUE = process.env.MAT_E2E_QUEUE || path.join(fs.existsSync("/tmp") ? "/tmp" : require("os").tmpdir(), "mat-e2e-queue");
 const POLL_MS = 2000;
 const WAIT_MAX_MS = 60 * 60 * 1000; // give up after an hour in line
 const HEAD_OLD_MS = 40 * 60 * 1000; // the run in front has been going this long: say so

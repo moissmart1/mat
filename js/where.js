@@ -23,6 +23,11 @@
 //   A request the phone never answers (a suspended page) is given up after
 //   STUCK_MS, so it cannot block asking for the rest of the visit.
 // - subscribe(fn): fn() when the choice or the position changes.
+// - why(): the phone's own answer to the last refused request, { code,
+//   message } (message cut to 80 characters), or null. Memory only, like a
+//   position: never stored, sent or logged. Cleared by a position that comes
+//   while on, and by turning it off. Only code 1 (permission denied) makes
+//   the choice "refused".
 
 import { usable } from "./geo.js";
 
@@ -40,6 +45,7 @@ export function createWhere({ storage, geolocation, permissions, now = () => Dat
   let asking = false;
   let askNo = 0; // which request `asking` is about
   let timer = null;
+  let reason = null; // { code, message } of the last refusal: memory only
 
   const read = () => {
     try {
@@ -87,12 +93,14 @@ export function createWhere({ storage, geolocation, permissions, now = () => Dat
           if (!c || choice !== "on") return;
           const t = Number(p.timestamp);
           pos = { lat: Number(c.latitude), lng: Number(c.longitude), at: Number.isFinite(t) ? t : now(), accuracy: Number(c.accuracy) };
+          reason = null;
           tell();
         },
         (e) => {
           done();
           if (e && e.code === DENIED) {
             pos = null;
+            reason = { code: DENIED, message: typeof e.message === "string" ? e.message.slice(0, 80) : "" };
             write("refused");
             tell();
           }
@@ -136,8 +144,17 @@ export function createWhere({ storage, geolocation, permissions, now = () => Dat
     }
   }
 
+  // Back on screen: ask again if due, and when the phone said no, look once
+  // more at what Settings says now (someone may have turned it on there).
+  // Only the permission is read: a "granted" turns it on; anything else
+  // leaves it refused, and the phone's own prompt never comes up by itself.
+  function onShown() {
+    if (choice === "refused" && visible()) checkPermission();
+    tick();
+  }
+
   function start() {
-    if (doc) doc.addEventListener("visibilitychange", tick);
+    if (doc) doc.addEventListener("visibilitychange", onShown);
     checkPermission();
     tick();
   }
@@ -155,6 +172,7 @@ export function createWhere({ storage, geolocation, permissions, now = () => Dat
     turnOff() {
       write("off");
       pos = null;
+      reason = null;
       tick();
       tell();
     },
@@ -164,6 +182,7 @@ export function createWhere({ storage, geolocation, permissions, now = () => Dat
     subscribe(f) {
       fns.push(f);
     },
+    why: () => (reason ? { ...reason } : null),
     start,
   };
 }

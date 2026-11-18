@@ -122,7 +122,7 @@ test("a press with no usable time is refused as a bad request", async () => {
 
 test("through the connector a press is refused with exactly: Press this one in the app.", async () => {
   const call = book();
-  const r = await call("pressStamp", { def: "d1", at: IN_D1 }, "Mo", { via: "claude" });
+  const r = await call.fake.claude("pressStamp", { def: "d1", at: IN_D1 });
   assert.deepEqual([r.ok, r.message], [false, "Press this one in the app."]);
   assert.equal(rows(call).length, 0);
   assert.equal(lines(call).length, 0);
@@ -184,7 +184,7 @@ test("undoing a lift inside the window puts the stamp back as it was; Claude can
   const call = book();
   const first = (await call("pressStamp", { def: "d1", at: IN_D1, seed: 777 })).data;
   const lift = await call("undo", { logId: first.logId });
-  const viaClaude = await call("undo", { logId: lift.data.logId }, "Mo", { via: "claude" });
+  const viaClaude = await call.fake.claude("undo", { logId: lift.data.logId });
   assert.deepEqual([viaClaude.ok, viaClaude.message], [false, "Press this one in the app."]);
   const back = await call("undo", { logId: lift.data.logId });
   assert.equal(back.ok, true);
@@ -195,7 +195,7 @@ test("undoing a lift inside the window puts the stamp back as it was; Claude can
 test("Claude can lift a stamp through undo (lifting is not pressing)", async () => {
   const call = book();
   const first = (await call("pressStamp", { def: "d1", at: IN_D1 })).data;
-  const r = await call("undo", { logId: first.logId }, "Mo", { via: "claude" });
+  const r = await call.fake.claude("undo", { logId: first.logId });
   assert.equal(r.ok, true);
 });
 
@@ -225,17 +225,18 @@ test("nobody acts on someone else's stamp: Mo cannot lift Ajen's press, nor put 
   assert.equal(rows(call)[0].gone, "");
 });
 
-test("the Claude connector obeys the same rule: a link acting as Mo cannot undo Ajen's stamp", async () => {
+test("the Claude connector obeys the same rule: it acts as the owner (Mo), so it cannot undo Ajen's stamp, whatever `as` says", async () => {
   const call = book();
   const press = (await call("pressStamp", { def: "d1", at: IN_D1 }, "Ajen")).data;
-  const r = await call("undo", { logId: press.logId }, "Mo", { via: "claude" });
+  const r = await call.fake.claude("undo", { logId: press.logId });
   assert.deepEqual([r.ok, r.message], [false, "You can only change your own stamp."]);
   const viaTool = call.fake.mcp({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "undo", arguments: { log_id: press.logId } } }, { t: "claude-token", as: "Mo" });
   assert.match(JSON.stringify(viaTool), /own stamp/);
   assert.equal(rows(call)[0].gone, "");
-  const own = call.fake.mcp({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "undo", arguments: { log_id: press.logId } } }, { t: "claude-token", as: "Ajen" });
-  assert.doesNotMatch(JSON.stringify(own), /own stamp/);
-  assert.equal(rows(call)[0].gone, "yes");
+  // Security (2026-11-18): every connector write is the owner's.
+  const asAjen = call.fake.mcp({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "undo", arguments: { log_id: press.logId } } }, { t: "claude-token", as: "Ajen" });
+  assert.match(JSON.stringify(asAjen), /own stamp/);
+  assert.equal(rows(call)[0].gone, "");
 });
 
 test("load lists the definitions in full and everyone's stamps without the lifted ones", async () => {

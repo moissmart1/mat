@@ -141,9 +141,12 @@ module.exports = [
       assert.match(after[1], /^Trenton rang up /);
 
       // A change made through Claude, seen from another phone, is marked as such.
-      await otherPhone(backend, "updateExpense", { id: idOfSeed("Shibuya dinner"), patch: { title: "Shibuya dinner out" } }, "claude");
+      // Through the connector's own path (it writes as the owner; a phone's via claude is ignored since the security fix round).
+      const lastEdit = Number(backend.fake.tables.Log.filter((r) => r.ref === idOfSeed("Shibuya dinner")).at(-1).id);
+      const u = await backend.fake.claude("undo", { logId: lastEdit });
+      assert.equal(u.ok, true, JSON.stringify(u));
       await page.evaluate(() => document.getElementById("fresh").click());
-      await waitSentences(page, (s) => s[0] && s[0].endsWith("(through Claude)") && s[0].startsWith("Ajen renamed"), "the Claude sentence appears");
+      await waitSentences(page, (s) => s[0] && s[0].endsWith("(through Claude)") && s[0].startsWith("Mo undid"), "the Claude sentence appears");
     },
   },
   {

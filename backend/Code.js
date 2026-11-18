@@ -31,6 +31,9 @@ function doPost(e) {
   try {
     return json_(handle_(body));
   } catch (err) {
-    return json_({ ok: false, error: "server", message: "Something went wrong on our side. Try again. (" + String((err && err.message) || err) + ")" });
+    // The plain sentence only; the detail goes to the owner's log, with any
+    // key, token or id blanked (reportError_, Actions.js).
+    if (typeof reportError_ === "function") reportError_("doPost", err, [body && typeof body === "object" ? body.key : null]);
+    return json_({ ok: false, error: "server", message: "Something went wrong on our side. Try again." });
   }
 }

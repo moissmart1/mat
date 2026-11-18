@@ -184,6 +184,7 @@ export function mountStub(root, store, keep) {
   async function fetchNow() {
     if (fetching) return;
     fetching = true;
+    const at = keep.gen;
     try {
       for (const t of picsOf()) {
         if (!isOpen() || keep.have(t.id) || failedNow.has(t.id)) continue;
@@ -196,7 +197,7 @@ export function mountStub(root, store, keep) {
           continue;
         }
         const blob = got && got.id === t.id && got.mime === t.mime ? fromBase64(got.data, got.mime) : null;
-        if (!blob || !(await keep.put(t.id, blob))) failedNow.add(t.id);
+        if (!blob || !(await keep.put(t.id, blob, { gen: at }))) failedNow.add(t.id);
       }
     } finally {
       fetching = false;

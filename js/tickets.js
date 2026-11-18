@@ -207,13 +207,17 @@ export async function pdfPages(file, { max = LIMITS.perStop } = {}) {
 
 // ---------- the keep ----------
 
-export function createKeep({ indexedDB = globalThis.indexedDB, name = "mat-tickets" } = {}) {
+export const OPEN_WAIT_MS = 3000;
+
+export function createKeep({ indexedDB = globalThis.indexedDB, name = "mat-tickets", openWaitMs = OPEN_WAIT_MS } = {}) {
   const STORE = "pics";
   const known = new Set();
   const mem = new Map();
   const subs = new Set();
   let db = null;
   let lasting = false;
+  // One per wipe: a put begun before a wipe never lands after it.
+  let gen = 0;
   const tell = () => {
     for (const fn of [...subs]) {
       try {
@@ -244,34 +248,72 @@ export function createKeep({ indexedDB = globalThis.indexedDB, name = "mat-ticke
       tx.onerror = () => reject(tx.error || new Error("IndexedDB"));
       tx.onabort = () => reject(tx.error || new Error("IndexedDB"));
     });
-  const ready = (async () => {
-    if (!indexedDB || typeof indexedDB.open !== "function") return;
-    try {
-      db = await new Promise((resolve, reject) => {
-        const r = indexedDB.open(name, 1);
-        r.onupgradeneeded = () => {
-          const d = r.result;
-          if (!d.objectStoreNames.contains(STORE)) d.createObjectStore(STORE);
-        };
-        r.onsuccess = () => resolve(r.result);
-        r.onerror = () => reject(r.error || new Error("IndexedDB"));
-        r.onblocked = () => reject(new Error("IndexedDB blocked"));
-      });
-      const keys = await run("readonly", (s) => s.getAllKeys());
-      for (const k of keys || []) known.add(String(k));
-      lasting = true;
-      // Views drawn before this (the 券 boxes) look again.
-      if (known.size) tell();
-    } catch {
-      db = null;
-      lasting = false;
-    }
-  })();
+  // Opens the database; one that never answers (a known WebKit fault) is
+  // given up on after openWaitMs and the pictures are kept in memory instead.
+  function open() {
+    const mine = gen;
+    return (async () => {
+      if (!indexedDB || typeof indexedDB.open !== "function") return;
+      try {
+        const opened = await new Promise((resolve, reject) => {
+          let r;
+          const timer = setTimeout(() => reject(new Error("IndexedDB did not answer")), openWaitMs);
+          const done = (f) => (v) => {
+            clearTimeout(timer);
+            f(v);
+          };
+          try {
+            r = indexedDB.open(name, 1);
+          } catch (e) {
+            done(reject)(e);
+            return;
+          }
+          r.onupgradeneeded = () => {
+            const d = r.result;
+            if (!d.objectStoreNames.contains(STORE)) d.createObjectStore(STORE);
+          };
+          r.onsuccess = () => {
+            // Answered after the wait was over: close it, the memory keep is in use.
+            if (r.result && late) {
+              try { r.result.close(); } catch { /* nothing */ }
+              return;
+            }
+            done(resolve)(r.result);
+          };
+          r.onerror = done(() => reject(r.error || new Error("IndexedDB")));
+          r.onblocked = done(() => reject(new Error("IndexedDB blocked")));
+          let late = false;
+          setTimeout(() => { late = true; }, openWaitMs);
+        });
+        if (mine !== gen) {
+          try { opened.close(); } catch { /* nothing */ }
+          return;
+        }
+        db = opened;
+        const keys = await run("readonly", (st) => st.getAllKeys());
+        if (mine !== gen) return;
+        for (const k of keys || []) known.add(String(k));
+        lasting = true;
+        // Views drawn before this (the 券 boxes) look again.
+        if (known.size) tell();
+      } catch {
+        db = null;
+        lasting = false;
+      }
+    })();
+  }
+  let ready = open();
 
   return {
-    ready,
+    get ready() {
+      return ready;
+    },
     get lasting() {
       return lasting;
+    },
+    // The wipe number now: pass it to put so a picture begun before a wipe is not kept after it.
+    get gen() {
+      return gen;
     },
     have: (id) => known.has(id) || mem.has(id),
     async get(id) {
@@ -279,7 +321,7 @@ export function createKeep({ indexedDB = globalThis.indexedDB, name = "mat-ticke
       if (mem.has(id)) return mem.get(id);
       if (!db) return null;
       try {
-        const v = await run("readonly", (s) => s.get(id));
+        const v = await run("readonly", (st) => st.get(id));
         if (v && v.bytes && typeof v.type === "string") return new Blob([v.bytes], { type: v.type });
       } catch {
         // evicted or broken: as if it was never kept
@@ -287,8 +329,10 @@ export function createKeep({ indexedDB = globalThis.indexedDB, name = "mat-ticke
       if (known.delete(id)) tell();
       return null;
     },
-    async put(id, blob) {
+    async put(id, blob, { gen: at = gen } = {}) {
+      if (at !== gen) return false;
       await ready;
+      if (at !== gen) return false;
       if (!db) {
         mem.set(id, blob);
         tell();
@@ -296,7 +340,9 @@ export function createKeep({ indexedDB = globalThis.indexedDB, name = "mat-ticke
       }
       try {
         const bytes = await blob.arrayBuffer();
-        await run("readwrite", (s) => s.put({ type: blob.type, bytes }, id));
+        if (at !== gen || !db) return false;
+        await run("readwrite", (st) => st.put({ type: blob.type, bytes }, id));
+        if (at !== gen) return false;
         known.add(id);
         tell();
         return true;
@@ -309,12 +355,48 @@ export function createKeep({ indexedDB = globalThis.indexedDB, name = "mat-ticke
       const had = mem.delete(id) || known.delete(id);
       if (db) {
         try {
-          await run("readwrite", (s) => s.delete(id));
+          await run("readwrite", (st) => st.delete(id));
         } catch {
           // nothing to do
         }
       }
       if (had) tell();
+    },
+    // What is kept (ids).
+    ids: () => [...new Set([...known, ...mem.keys()])],
+    // Every picture off this phone (a refused key, Forget this phone): the
+    // database deleted, memory emptied, and anything still on its way
+    // refused. The keep then starts again, empty, for a new link.
+    async wipe() {
+      gen++;
+      known.clear();
+      mem.clear();
+      lasting = false;
+      const was = db;
+      db = null;
+      if (was) {
+        try { was.close(); } catch { /* nothing */ }
+      }
+      tell();
+      if (indexedDB && typeof indexedDB.deleteDatabase === "function") {
+        await new Promise((done) => {
+          let req;
+          const t = setTimeout(done, openWaitMs);
+          try {
+            req = indexedDB.deleteDatabase(name);
+          } catch {
+            clearTimeout(t);
+            done();
+            return;
+          }
+          req.onsuccess = req.onerror = req.onblocked = () => {
+            clearTimeout(t);
+            done();
+          };
+        });
+      }
+      ready = open();
+      await ready;
     },
     subscribe(fn) {
       subs.add(fn);
@@ -322,6 +404,30 @@ export function createKeep({ indexedDB = globalThis.indexedDB, name = "mat-ticke
     },
   };
 }
+
+// ---------- the You setting: which pictures this phone fetches ----------
+// "all" (the default): every picture, in the background, whenever the app is
+// open with signal. "open": only a picture being shown (the stub fetches its
+// own). Kept in mat.tixFetch; anything else there reads as the default.
+const FETCH_KEY = "mat.tixFetch";
+const local = (storage) => storage || globalThis.localStorage || null;
+export function fetchMode(storage) {
+  try {
+    const s = local(storage);
+    return s && s.getItem(FETCH_KEY) === "open" ? "open" : "all";
+  } catch {
+    return "all";
+  }
+}
+export function setFetchMode(mode, storage) {
+  try {
+    const s = local(storage);
+    if (s) s.setItem(FETCH_KEY, mode === "open" ? "open" : "all");
+  } catch {
+    // private mode or full: it lasts this visit only (the default comes back)
+  }
+}
+export const fetchesAll = (storage) => fetchMode(storage) === "all";
 
 // ---------- fetching what this phone lacks ----------
 
@@ -366,6 +472,8 @@ export function fetchMissing(store, keep, { now = () => Date.now() } = {}) {
   const p = (async () => {
     await keep.ready;
     if (!keep.lasting) return;
+    // A wipe (a refused key, Forget this phone) while this runs: nothing it fetched is kept.
+    const at = keep.gen;
     const tried = new Set();
     for (;;) {
       const s = store.state;
@@ -387,7 +495,8 @@ export function fetchMissing(store, keep, { now = () => Date.now() } = {}) {
         failed.set(next.id, now());
         continue;
       }
-      if (!(await keep.put(next.id, blob))) return; // the phone is full: try again after the next load
+      if (at !== keep.gen) return;
+      if (!(await keep.put(next.id, blob, { gen: at }))) return; // the phone is full: try again after the next load
     }
   })().finally(() => running.delete(store));
   running.set(store, p);
