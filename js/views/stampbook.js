@@ -360,7 +360,20 @@ export function mountStampBook(root, store, { now = () => Date.now(), where = nu
     // A held stamp is put back first.
     if (!closeLook(true)) close();
   });
-  store.subscribe(render);
+  store.subscribe((s) => {
+    // The trip was taken off this phone: the book closes and nothing of it stays drawn.
+    if (s && s.status === "nokey") {
+      close(false);
+      grid.replaceChildren();
+      sigs.clear();
+      hitId = null;
+      landed = { id: null, at: 0 };
+      for (const id of ["bookSpan", "bookN", "bookSay", "bookTH", "bookWho"]) $(id).replaceChildren();
+      $("bookToday").hidden = true;
+      return;
+    }
+    render(s);
+  });
 
   return { open, close: (restoreFocus) => close(restoreFocus), isOpen: () => opened };
 }

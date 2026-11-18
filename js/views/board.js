@@ -3,7 +3,7 @@
 // lettering on black, the second line green (mock-up 4B). What it says comes
 // from js/board.js; this only draws it.
 //
-// mountBoard({ storage, now }) -> { el, update(model, tz) }
+// mountBoard({ storage, now }) -> { el, update(model, tz), clear() }
 // - el: the board's box (place it in Days, between the bar and the rail).
 // - update(model, tz): model is what boardFor gives, or null (no board). The
 //   board is there when there is a model and it was not closed today (the trip
@@ -11,6 +11,8 @@
 //   closed on). Called on every Days redraw: a text that is the same is left
 //   alone, so the lines fill in once, when the board appears, and never on a
 //   minute's change. Under reduced motion there is no fill and no fold.
+// - clear(): the trip was taken off the phone: out of the page at once with
+//   every word taken off it (update(null) leaves the last words in the page).
 // - The × closes it for today (44 px wide). A closed board is not in the
 //   page's tab order. now(): the real time, never the demo's.
 // Every word on it is set with textContent.
@@ -144,5 +146,15 @@ export function mountBoard({ storage = null, now = () => Date.now() } = {}) {
     show(false);
   });
 
-  return { el: wrap, update };
+  function clear() {
+    clearTimeout(foldTimer);
+    shown = false;
+    wrap.inert = true;
+    wrap.hidden = true;
+    wrap.classList.add("is-shut");
+    for (const n of [small, unit, l1, l2]) n.textContent = "";
+    bigN.data = "";
+  }
+
+  return { el: wrap, update, clear };
 }
