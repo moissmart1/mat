@@ -14,6 +14,8 @@
 // - onAllDays(): the counter was tapped. onStay(stayId): a ticket's stay row
 //   was tapped. onAddStop(date): a ticket's ＋ Add a stop was tapped.
 //   onStop(stopId): an open stop's Edit was tapped.
+// - tickets: { mark(stop, state), subscribe(fn) } (the 券 box and Show ticket,
+//   js/tickets.js), or null; onTicket(stopId, button): Show ticket was tapped.
 // - held(): true while a sheet over Days is in use (the stop sheet): coming
 //   back to the screen then does not move the rail (R32).
 // - goDay(index, smooth): bring that day's ticket into view. day(): the date
@@ -135,7 +137,7 @@ function patchTicket(old, fresh) {
   return old;
 }
 
-export function mountDays(root, store, { clock, where = null, storage = null, onAllDays = () => {}, onStay = () => {}, onStop = () => {}, onAddStop = () => {}, onStampBook = () => {}, held = () => false } = {}) {
+export function mountDays(root, store, { clock, where = null, storage = null, onAllDays = () => {}, onStay = () => {}, onStop = () => {}, onAddStop = () => {}, onStampBook = () => {}, held = () => false, tickets = null, onTicket = () => {} } = {}) {
   const count = el("button", "bar-t");
   count.type = "button";
   count.id = "dayCount";
@@ -419,6 +421,12 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
       onAddStop(add.dataset.date);
       return;
     }
+    const show = ev.target.closest(".r-tk");
+    if (show) {
+      const r = show.closest(".r[data-id]");
+      if (r) onTicket(r.dataset.id, show);
+      return;
+    }
     const edit = ev.target.closest(".r-edit");
     if (edit) {
       const r = edit.closest(".r[data-id]");
@@ -599,6 +607,15 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
         const near = nearStops(dayStops, here);
         if (Object.keys(near).length) model.near = near;
       }
+      // The stops with a ticket: the 券 box and Show ticket. None, no key at all.
+      if (tickets) {
+        const tix = {};
+        for (const st of dayStops) {
+          const m = tickets.mark(st, s);
+          if (m) tix[st.id] = m;
+        }
+        if (Object.keys(tix).length) model.tix = tix;
+      }
       // Asked once, on today's ticket, the first time a day has a next stop.
       if (nextId && where && where.supported() && where.state() === "unset") model.ask = true;
       const sig = JSON.stringify(model);
@@ -686,6 +703,8 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
   render(store.state);
   store.subscribe(render);
   if (where) where.subscribe(() => render(store.state));
+  // A picture reaching this phone turns its 券 box solid.
+  if (tickets && tickets.subscribe) tickets.subscribe(() => render(store.state));
   // Starting or stopping a demo is a deliberate jump: the rail goes to the
   // day the clock now says is today, whatever R32 would otherwise hold.
   let demoWas = clock.demoDay();
