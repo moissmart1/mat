@@ -21,6 +21,11 @@ const waitHist = (page) =>
     "the history sheet opens",
   );
 const waitHistClosed = (page) => until(async () => !(await isOpen(page, "hist")), "the history sheet closes");
+const waitCachedHistory = (page) =>
+  until(() => page.evaluate(() => {
+    const { entries, loading } = globalThis.__matTest.store.state.history;
+    return entries.length > 0 && !loading;
+  }), "History is cached");
 const histRequests = (backend) => backend.requests.filter((r) => r.action === "history").length;
 const undoRequests = (backend) => backend.requests.filter((r) => r.action === "undo").length;
 const idle = (page) => page.evaluate(() => globalThis.__matTest.store.idle());
@@ -294,19 +299,21 @@ module.exports = [
     },
   },
   {
-    name: "with no signal the tape says it needs a connection; opening again with signal loads it",
+    name: "with no signal the tape keeps its last loaded entries; opening again refreshes them",
     async run({ page }) {
       const backend = await ready(page);
+      await waitCachedHistory(page);
       backend.failWith = "network";
       await page.click("#histBtn");
       await waitHist(page);
-      await expectText(page, "#tape", "History needs a connection.");
-      assert.equal(await page.locator("#tape .tp-row").count(), 0);
+      await expectText(page, "#tape .tp-msg", "Showing the last loaded history. History needs a connection.");
+      assert.equal(await page.locator("#tape .tp-row").count(), 10);
       await page.click("#histDone");
       await waitHistClosed(page);
 
       backend.failWith = null;
       await openTape(page, 10);
+      await until(async () => (await page.locator("#tape .tp-msg").count()) === 0, "the stale notice clears");
       assert.equal(histRequests(backend), 2, "the one after starting and this one: the failed one never reached the backend");
     },
   },
@@ -314,10 +321,11 @@ module.exports = [
     name: "any other trouble loading says so, not that there is no connection",
     async run({ page }) {
       const backend = await ready(page);
+      await waitCachedHistory(page);
       backend.failWith = "server";
       await page.click("#histBtn");
       await waitHist(page);
-      await expectText(page, "#tape", "Couldn’t load the history.");
+      await expectText(page, "#tape .tp-msg", "Showing the last loaded history. Couldn’t load the history.");
     },
   },
   {

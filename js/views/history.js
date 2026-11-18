@@ -15,6 +15,7 @@ import { clock, dayHead, localDay, viaText } from "../format.js";
 const LOADING = "…";
 const NO_HISTORY = "History needs a connection.";
 const HISTORY_FAILED = "Couldn’t load the history.";
+const LAST_LOADED = "Showing the last loaded history.";
 const NOTHING_YET = "Nothing has changed yet.";
 const INTRO = "Every change, newest first. Undo is on the latest change to each item.";
 
@@ -81,16 +82,17 @@ export function mountHistory(root, store) {
       tape.replaceChildren(el("p", "tp-msg", LOADING));
       return;
     }
-    // The fetch for this opening failed: whatever is left from an earlier opening is not shown.
-    if (phase === "failed") {
-      tape.replaceChildren(el("p", "tp-msg", h.error === "network" ? NO_HISTORY : HISTORY_FAILED));
-      return;
-    }
+    const error = h.error ? (h.error === "network" ? NO_HISTORY : HISTORY_FAILED) : "";
     if (!h.entries.length) {
-      tape.replaceChildren(el("p", "tp-msg", NOTHING_YET));
+      tape.replaceChildren(el("p", "tp-msg", error || NOTHING_YET));
       return;
     }
     const nodes = [];
+    if (error && phase === "failed") {
+      const notice = el("p", "tp-msg", LAST_LOADED + " " + error);
+      notice.setAttribute("role", "status");
+      nodes.push(notice);
+    }
     let last = null;
     for (const en of h.entries) {
       const day = localDay(Date.parse(en.at));
@@ -113,7 +115,7 @@ export function mountHistory(root, store) {
       more.setAttribute("aria-busy", h.loading ? "true" : "false");
       nodes.push(more);
     }
-    if (h.error) nodes.push(el("p", "tp-msg", h.error === "network" ? NO_HISTORY : HISTORY_FAILED)); // older entries would not load
+    if (error && phase !== "failed") nodes.push(el("p", "tp-msg", error));
     tape.replaceChildren(...nodes);
   }
 
