@@ -249,12 +249,12 @@ function start() {
     },
     afterLoad: () => {
       pruneKeep(store, keep);
-      if (fetchesAll(raw)) fetchMissing(store, keep);
+      if (fetchesAll(raw)) fetchMissing(store, keep, { allowed: () => fetchesAll(raw) });
     },
   });
   // A picture just kept may unblock the next one once saving ends: look again then.
   store.subscribe(() => {
-    if (!store.busy() && store.state.ticketsReady && fetchesAll(raw)) fetchMissing(store, keep);
+    if (!store.busy() && store.state.ticketsReady && fetchesAll(raw)) fetchMissing(store, keep, { allowed: () => fetchesAll(raw) });
   });
 
   // Where the phone is: kept in memory only, never sent or stored (js/where.js).
@@ -358,7 +358,7 @@ function start() {
     },
     // Ticket pictures: back to every one, the fetching starts at once.
     onTixMode: (mode) => {
-      if (mode === "all" && store.state.ticketsReady) fetchMissing(store, keep);
+      if (mode === "all" && store.state.ticketsReady) fetchMissing(store, keep, { allowed: () => fetchesAll(raw) });
     },
     // Forget this phone: the trip, the key and every setting, the offline
     // copy and the worker, then the no-key screen.

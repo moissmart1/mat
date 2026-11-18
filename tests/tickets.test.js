@@ -755,3 +755,25 @@ test("N1: a connection told of a version change (a deletion by someone else) clo
   assert.equal(idb.db.closed, 1);
   assert.equal(keep.lasting, false);
 });
+
+test("N2: switching to Only when I open one stops a running pass at the next picture", async () => {
+  const keep = createKeep({ indexedDB: fakeIndexedDB() });
+  await keep.ready;
+  const mem = memStorage();
+  let n = 0;
+  const { store, calls } = fakeStore({
+    tickets: [T("t1", "soon0002"), T("t2", "soon0001"), T("t3", "late0001"), T("t4", "past0001")],
+    stops: STOPS,
+    answer: (id) => {
+      if (++n === 2) setFetchMode("open", mem); // the person changes the setting while the pass runs
+      return { id, mime: "image/png", data: pngData };
+    },
+  });
+  await fetchMissing(store, keep, { now: () => NOW12, allowed: () => fetchesAll(mem) });
+  assert.deepEqual(calls.ids, ["t1", "t2"], "no third picture is asked for");
+  assert.equal(keep.have("t3"), false);
+  // Without the option the pass is unchanged.
+  const { store: other, calls: c2 } = fakeStore({ tickets: [T("t9", "soon0002")], stops: STOPS, answer: (id) => ({ id, mime: "image/png", data: pngData }) });
+  await fetchMissing(other, keep, { now: () => NOW12 });
+  assert.equal(c2.ids.length, 1);
+});

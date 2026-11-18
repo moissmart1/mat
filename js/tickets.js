@@ -507,7 +507,9 @@ const running = new WeakMap();
 export const RETRY_MS = 10 * 60 * 1000;
 const failures = new WeakMap(); // store -> Map(id -> when it failed)
 
-export function fetchMissing(store, keep, { now = () => Date.now() } = {}) {
+// allowed(): asked at the top of every picture, so a change of the You setting
+// stops a pass at the next one.
+export function fetchMissing(store, keep, { now = () => Date.now(), allowed = () => true } = {}) {
   const cur = running.get(store);
   if (cur) return cur;
   if (!failures.has(store)) failures.set(store, new Map());
@@ -520,7 +522,7 @@ export function fetchMissing(store, keep, { now = () => Date.now() } = {}) {
     const tried = new Set();
     for (;;) {
       const s = store.state;
-      if (!s.ticketsReady || s.online === false || store.busy()) return;
+      if (!allowed() || !s.ticketsReady || s.online === false || store.busy()) return;
       const t0 = now();
       const next = fetchOrder(s, t0).find((t) => !keep.have(t.id) && !tried.has(t.id) && !(failed.has(t.id) && t0 - failed.get(t.id) < RETRY_MS));
       if (!next) return;
