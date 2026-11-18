@@ -155,6 +155,32 @@ module.exports = [
     },
   },
   {
+    name: "the signal strip warns when the phone cannot save the queue",
+    async run({ page }) {
+      const backend = await ready(page);
+      await page.evaluate(() => {
+        const save = Storage.prototype.setItem;
+        Storage.prototype.setItem = function (key, value) {
+          if (key === "mat.queue") throw new DOMException("Storage full", "QuotaExceededError");
+          return save.call(this, key, value);
+        };
+      });
+
+      backend.failWith = "network";
+      await advance(page, backend, POLL_MS);
+      await expectText(page, "#net", NO_SIGNAL);
+      await ringUp(page, "Onigiri", "4 5 0");
+      await page.click("#regDone");
+      await waitClosed(page);
+      await expectText(page, "#net", "Couldn’t save unsent changes on this device. Keep the app open to avoid losing them. 1 to send.");
+
+      backend.failWith = null;
+      await signalBack(page);
+      await waitRow(page, "Onigiri", (r) => !r.cls.includes("is-pending"), "sent");
+      await until(async () => !(await visible(page, "#net")), "the queue warning goes away");
+    },
+  },
+  {
     name: "one check at a time: a check that never answers is not joined by more",
     async run({ page }) {
       const backend = await ready(page);

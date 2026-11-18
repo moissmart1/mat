@@ -42,10 +42,10 @@ function phoneStorage() {
   try {
     const s = globalThis.localStorage;
     s.getItem("mat.key");
-    return s;
+    return { storage: s, durableStorage: true };
   } catch {
     const mem = new Map();
-    return {
+    const storage = {
       getItem: (k) => (mem.has(k) ? mem.get(k) : null),
       setItem: (k, v) => mem.set(k, String(v)),
       removeItem: (k) => mem.delete(k),
@@ -54,6 +54,7 @@ function phoneStorage() {
         return mem.size;
       },
     };
+    return { storage, durableStorage: false };
   }
 }
 
@@ -214,7 +215,7 @@ function mountTabs(store, storage) {
 }
 
 function start() {
-  const raw = phoneStorage();
+  const { storage: raw, durableStorage } = phoneStorage();
   const taken = takeKey(raw);
   let keyHere = taken.key;
   const storage = withKey(raw, () => keyHere);
@@ -232,6 +233,7 @@ function start() {
   store = createStore({
     api,
     storage,
+    durableStorage,
     clear: (queue) => {
       keyHere = null;
       clearTrip(raw, { queue });
@@ -547,8 +549,8 @@ function start() {
     if (store.state.status === "ready") store.loadHistory();
   });
   // A new release reloads the page only when nothing would be lost (js/update.js).
-  // Nothing unsent or still sending, and no notice waiting to be read (it would be wiped).
-  nothingUnsent = () => store.outbox().unsent === 0 && !store.busy() && !store.state.notice;
+  nothingUnsent = () =>
+    store.outbox().unsent === 0 && !store.busy() && !store.state.notice && !store.state.queueStorageFailed;
   if (document.visibilityState !== "hidden") startChecking();
 }
 

@@ -158,7 +158,7 @@ function isData(d) {
 // A key that came in the address and the trip refused (the phone keeps its own).
 const ADDRESS_KEY_REFUSED = "That link didn’t work. This phone stays on the link it already had.";
 
-export function createStore({ api, storage, now = () => Date.now(), wait = defaultWait, clear = (queue) => clearTrip(storage, { queue }) }) {
+export function createStore({ api, storage, durableStorage = true, now = () => Date.now(), wait = defaultWait, clear = (queue) => clearTrip(storage, { queue }) }) {
   // Set once the trip was taken off this phone: nothing more is written to
   // storage or sent with the refused key until boot() starts again.
   let wiped = false;
@@ -175,11 +175,12 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
     }
   };
   const setItem = (k, v) => {
-    if (wiped) return;
+    if (wiped) return false;
     try {
       storage.setItem(k, v);
+      return true;
     } catch {
-      // private mode or full: the app keeps working without it
+      return false;
     }
   };
   const getJson = (k) => {
@@ -198,7 +199,7 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
     loadedAt: null, seenAt: null, lastChange: null, notice: null, setAside: [], keyRefused: false,
     // personal: this phone opened its own person's link (load said so); me is then theirs.
     // cleared: the trip was taken off this phone after its key was refused ({ kept: own unsent lines kept }).
-    personal: false, cleared: null,
+    personal: false, cleared: null, queueStorageFailed: false,
     history: { entries: [], more: false, loading: false, error: null },
   };
 
@@ -318,7 +319,9 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
           },
     );
     const undos = resolving.map((op) => ({ undo: true, kind: op.kind, args: op.args, logId: op.logId, actor: op.actor || null }));
-    setItem("mat.queue", JSON.stringify(live.concat(undos)));
+    const queue = live.concat(undos);
+    const saved = setItem("mat.queue", JSON.stringify(queue));
+    state.queueStorageFailed = !wiped && queue.length > 0 && (!saved || !durableStorage);
   }
 
   // ---- talking to the backend ----
@@ -407,6 +410,7 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
       loadedAt: null, lastChange: null, notice: null, setAside: [],
       history: { entries: [], more: false, loading: false, error: null },
       cleared: had ? { kept: mine.length } : null,
+      queueStorageFailed: false,
     });
     historyLoaded = false;
     emit();
@@ -530,6 +534,8 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
   }
 
   async function checkRev() {
+    // Storage can recover even while the backend is still unreachable.
+    if (state.queueStorageFailed && durableStorage) saveQueue();
     let r;
     try {
       r = await call("rev", {});

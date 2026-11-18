@@ -44,7 +44,7 @@ function memStorage(init = {}) {
 //   net.garble         actions that reach the backend but get a non-envelope reply
 //   net.knownOffline   the phone itself says it has no network: nothing is sent
 //   timeoutMs          how long the api waits for a reply (the app's own 30 s by default)
-function phone({ seed, fake, storage, me = "Mo", nowMs = NOW, clock, timeoutMs } = {}) {
+function phone({ seed, fake, storage, me = "Mo", durableStorage = true, nowMs = NOW, clock, timeoutMs } = {}) {
   fake = fake || createFakeBackend(seed);
   storage = storage || memStorage({ "mat.key": KEY, "mat.me": me });
   const net = { offline: false, knownOffline: false, failing: new Set(), lose: new Set(), garble: new Set(), override: null, holds: [], sent: [] };
@@ -71,7 +71,7 @@ function phone({ seed, fake, storage, me = "Mo", nowMs = NOW, clock, timeoutMs }
   };
   const api = createApi({ url: URL, getKey: () => storage.getItem("mat.key"), getActor: () => storage.getItem("mat.me"), fetchImpl, isOnline: () => !net.knownOffline, ...(timeoutMs ? { timeoutMs } : {}) });
   const waits = [];
-  const store = createStore({ api, storage, now: clock || (() => nowMs), wait: async (ms) => { waits.push(ms); } });
+  const store = createStore({ api, storage, durableStorage, now: clock || (() => nowMs), wait: async (ms) => { waits.push(ms); } });
   return { fake, storage, net, api, store, waits };
 }
 
@@ -403,6 +403,69 @@ test("Offline queue survives a reload", async () => {
   await three.store.boot();
   await three.store.idle();
   assert.equal(sent(one.fake, "addExpense"), 1);
+});
+
+test("An unsent expense warns until its queue can be saved, even offline", async () => {
+  const p = phone();
+  await p.store.boot();
+  p.net.offline = true;
+  await p.store.checkRev();
+
+  const save = p.storage.setItem;
+  p.storage.setItem = (key, value) => {
+    if (key === "mat.queue") throw new Error("QuotaExceededError");
+    save(key, value);
+  };
+  p.store.addExpense(draft());
+  const id = idOf(p.store);
+  await p.store.idle();
+  assert.equal(p.store.state.queueStorageFailed, true);
+  assert.equal(byId(p.store.state.expenses, id).pending, true);
+  assert.deepEqual(queueOf(p.storage), []);
+
+  p.storage.setItem = save;
+  await p.store.checkRev();
+  assert.equal(p.store.state.online, false);
+  assert.equal(p.store.state.queueStorageFailed, false);
+  assert.deepEqual(queueOf(p.storage).map((q) => q.expense.id), [id]);
+});
+
+test("The in-memory fallback warns even when it accepts a queue write", async () => {
+  const p = phone({ durableStorage: false });
+  await p.store.boot();
+  p.net.offline = true;
+  await p.store.checkRev();
+
+  p.store.addExpense(draft());
+  const id = idOf(p.store);
+  await p.store.idle();
+  assert.deepEqual(queueOf(p.storage).map((q) => q.expense.id), [id]);
+  assert.equal(p.store.state.queueStorageFailed, true);
+
+  assert.equal(p.store.discard(id), true);
+  assert.equal(p.store.state.queueStorageFailed, false);
+});
+
+test("An expense can sync and clear the warning while queue storage still fails", async () => {
+  const p = phone();
+  await p.store.boot();
+  p.net.offline = true;
+  const save = p.storage.setItem;
+  p.storage.setItem = (key, value) => {
+    if (key === "mat.queue") throw new Error("QuotaExceededError");
+    save(key, value);
+  };
+
+  p.store.addExpense(draft());
+  const id = idOf(p.store);
+  await p.store.idle();
+  assert.equal(p.store.state.queueStorageFailed, true);
+
+  p.net.offline = false;
+  await p.store.flush();
+  await p.store.idle();
+  assert.equal(p.store.state.queueStorageFailed, false);
+  assert.equal((await backend(p.fake)).expenses.filter((e) => e.id === id).length, 1);
 });
 
 test("Undoing a queued line means it is never sent", async () => {
