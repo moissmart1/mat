@@ -1,0 +1,81 @@
+/* Copyright (c) 2026 moissmart1. All rights reserved. No licence is granted: do not copy, adapt or reuse this code or design, and do not use it to train or prompt an AI system to reproduce it. See LICENSE. */
+/* Back to the hotel (#compass, js/views/compass.js): the hotel card's ticket
+   stock (.sheet.stay, css/days.css) with a compass printed on it. The dial
+   is paper with black print and a vermilion 北; the needle is vermilion,
+   the hub is the stay's seal (宿). Distance reads on the register's LCD
+   glass (.lcd, css/register.css) in the dot face. */
+
+#compass.is-open{z-index:26}
+.phone.compass-open .ubar{top:calc(12px + env(safe-area-inset-top, 0px));bottom:auto}
+
+.cp{display:grid;gap:10px;padding:2px 0 4px}
+
+/* Which hotel: one ticket-stub button per stay, the shown one printed solid. */
+.cp-pick{display:flex;flex-wrap:wrap;gap:6px}
+.cp-pick button{min-height:40px;padding:0 12px;border:1.5px solid var(--print);border-radius:3px;background:none;color:var(--print);font-weight:700;font-size:13.5px;
+  transition:transform .12s ease-out,background .12s,color .12s}
+.cp-pick button:active{transform:scale(.97)}
+.cp-pick button.is-on{background:var(--print);color:var(--stock);font-weight:900}
+
+.cp-to{display:grid;gap:2px;padding-bottom:9px;border-bottom:2px dashed rgba(21,18,15,.38)}
+.cp-to b{font-size:24px;font-weight:900;line-height:1.2;letter-spacing:.02em;overflow-wrap:anywhere}
+.cp-to span{font-size:14px;font-weight:700;overflow-wrap:anywhere}
+.cp-to span:empty{display:none}
+
+/* The dial. The angles are set by the script every frame, so no transitions here. */
+.cp-dial{position:relative;width:min(76%, 270px);aspect-ratio:1;margin:6px auto 2px}
+.cp-face,.cp-needle{position:absolute;inset:0;width:100%;height:100%;will-change:transform;overflow:visible}
+.cp-face{filter:drop-shadow(0 1px 1px rgba(0,0,0,.35)) drop-shadow(0 8px 12px rgba(0,0,0,.18))}
+.cp-rim{fill:var(--paper);stroke:var(--print);stroke-width:2}
+.cp-ring{fill:none;stroke:rgba(21,18,15,.38);stroke-width:1.5;stroke-dasharray:4 4}
+.cp-t{stroke:var(--print);stroke-width:1.3;stroke-linecap:round}
+.cp-t.is-long{stroke-width:2.4}
+.cp-face text{font-family:var(--f);font-weight:900;text-anchor:middle;dominant-baseline:central}
+.cp-n{fill:var(--shu);font-size:24px}
+.cp-l{fill:var(--print);font-size:17px}
+.cp-ne{fill:var(--shu);font-size:10px}
+.cp-needle{pointer-events:none;filter:drop-shadow(0 2px 2px rgba(0,0,0,.35))}
+.cp-tip{fill:var(--shu);transition:fill .2s,opacity .2s}
+.cp-tail{fill:var(--print);opacity:.82}
+/* Until the phone knows where it is, the needle is a plain grey compass needle. */
+.compass:not(.is-live) .cp-tip{fill:var(--print);opacity:.35}
+.compass:not(.is-live) .cp-tail{opacity:.2}
+.cp-hub{position:absolute;left:50%;top:50%;width:44px;height:44px;margin:-22px 0 0 -22px;display:grid;place-items:center;border-radius:50%;
+  border:1.7px solid var(--shu);background:var(--paper);color:var(--shu);font-family:var(--seal);font-size:21px;line-height:1;
+  box-shadow:0 1px 2px rgba(0,0,0,.3)}
+.compass.is-live .cp-hub{background:var(--shu);color:#fff}
+
+/* The display: how far, then which way in words. */
+.cp-lcd{margin-top:0;text-align:center;padding:8px 12px 9px}
+.cp-far{font-family:var(--dot);font-size:34px;font-weight:400;line-height:1.1;letter-spacing:.02em;font-variant-numeric:tabular-nums}
+.cp-way{font-size:14px;font-weight:700;margin-top:3px;line-height:1.3;min-height:1.3em}
+
+/* What is going on, ringed in vermilion like the stop sheet's messages. */
+.cp-msg{margin:0;font-size:14.5px;font-weight:900;line-height:1.35}
+.cp-msg:empty{display:none}
+.cp-msg::before{content:"";display:inline-block;width:9px;height:9px;margin-right:8px;border-radius:50%;border:1.7px solid var(--shu)}
+
+.cp-go{height:52px;border:0;border-radius:6px;background:var(--print);color:var(--stock);font-weight:900;font-size:16px;transition:transform .12s ease-out}
+.cp-go:active{transform:scale(.97)}
+
+.cp-pin{display:flex;justify-content:space-between;align-items:center;gap:10px;padding-top:6px;border-top:1px solid rgba(21,18,15,.17);font-size:14px;font-weight:700}
+.cp-pin-b{display:flex;gap:2px;margin-right:-6px}
+.cp-pin-b button{min-height:44px;padding:0 6px;border:0;background:none;color:var(--print);font-weight:900;font-size:14.5px;white-space:nowrap;transition:transform .12s ease-out}
+.cp-pin-b button:active{transform:scale(.97)}
+.cp-pin-b button:disabled{opacity:.35;transform:none}
+.cp-pin-b #cpUnpin{opacity:.6}
+
+.cp .r-btns{margin-top:-4px}
+.cp .r-map{font-size:15px;padding:11px 16px}
+.cp .r-map.alt{padding:9.5px 16px}
+
+/* No hotel in the plan: just the sentence. */
+.compass.is-empty .cp-to,.compass.is-empty .cp-dial,.compass.is-empty .cp-lcd{display:none}
+
+/* The hotel card's way in: a button cut like its map links. */
+.sy .r-map.sy-cp{font:inherit;font-size:15px;font-weight:700;cursor:pointer}
+
+/* Held sideways: a smaller dial, so Start and the display stay in view. */
+@media (orientation:landscape) and (max-height:520px){
+  .cp-dial{width:min(52vh, 220px)}
+}

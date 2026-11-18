@@ -15,6 +15,7 @@ import { mountLine } from "./views/line.js";
 import { mountHistory } from "./views/history.js";
 import { mountYou } from "./views/you.js";
 import { mountStayCard } from "./views/staycard.js";
+import { mountCompass } from "./views/compass.js";
 import { mountAllDays } from "./views/alldays.js";
 import { mountStopSheet } from "./views/stopsheet.js";
 import { mountUndoBar } from "./views/ubar.js";
@@ -262,7 +263,15 @@ function start() {
   // One sheet at a time: opening one closes the others.
   const history = mountHistory(phone, store);
   // The Days sheets: the hotel card, the list of every day and the stop sheet.
-  const stayCard = mountStayCard(phone, store, { where });
+  // Back to the hotel: the compass, from You → Extras or the hotel card.
+  const compass = mountCompass(phone, store, { clock, storage: raw });
+  const stayCard = mountStayCard(phone, store, {
+    where,
+    onCompass: (id) => {
+      stayCard.close(false);
+      compass.open(id);
+    },
+  });
   const allDays = mountAllDays(phone, store, { clock, onPick: (i) => days.goDay(i) });
   const stopSheet = mountStopSheet(phone, store);
   // The stamp book, a panel like History, opened from the Days bar or today's ticket.
@@ -272,6 +281,7 @@ function start() {
     allDays.close(false);
     stopSheet.close(false);
     book.close(false);
+    compass.close(false);
   };
   // A tab switch closes them (they belong to Days).
   document.getElementById("nav").addEventListener("click", (ev) => {
@@ -333,6 +343,14 @@ function start() {
     onHistory: () => {
       you.close(false);
       history.open();
+    },
+    onCompass: () => {
+      you.close(false);
+      register.close();
+      line.close(false);
+      history.close(false);
+      closeDaySheets();
+      compass.open(null, { back: document.getElementById("youBtn") });
     },
     // Forget this phone: the trip, the key and every setting, the offline
     // copy and the worker, then the no-key screen.

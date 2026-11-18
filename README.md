@@ -139,6 +139,15 @@ A book of twelve stamps that each person presses by hand: one per trip day, and 
 
 **The `Stamps` tab** holds the presses: `id` (`<stamp id>|<name>`), `def`, `who`, `at`, `seed` (how the ink wore: the same on every phone), `gone` (`yes` when lifted). Rows are never deleted. `pressStamp` (`{ def, at, seed? }`) is not one of the Claude connector's tools and is refused through it ("Press this one in the app."). On a Sheet where `migrate` has not been run the book is simply absent: `load` answers empty lists, and the Days bar shows no stamp button.
 
+## Back to the hotel 帰り道
+
+A compass that points to where you sleep. It opens from You → Extras → Back to the hotel, or from 方位 Compass on the hotel card. It starts on the stay the ticket shows for now (tonight's, or last night's before 04:00), and with more than one stay in the plan a row of buttons switches between them.
+
+- **Where the hotel is:** a pin dropped on this phone, else coordinates in the stay's `place` (a Google Maps link that carries them, such as `…/@35.7148,139.7967,17z`, `…!3d35.7148!4d139.7967`, `?q=35.7148,139.7967`, or `35.7148, 139.7967` typed as text). A short `maps.app.goo.gl` link or a plain name has none, so the sheet asks for a pin.
+- **Pin it here:** standing at the hotel, one tap keeps this spot on this phone (`mat.pin.<stay id>` in localStorage). It is never sent: no signal needed, nothing in the Sheet or History changes, and each phone pins its own. Move pin here and Unpin put it right.
+- **Start** asks for the phone's location and, on an iPhone, the compass (both only on a tap). The dial turns so 北 points north and the vermilion needle points at the hotel; the display reads the distance in a straight line and the rough walking time (or "Take a train or a taxi" past 6 km). With no compass (a laptop, or one refused) the dial stays north-up and the needle still points the right way on it. Walk there ↗ opens Google Maps walking directions to the spot.
+- Location and compass are let go when the sheet closes or the app leaves the screen. Nothing here talks to the backend. The arithmetic is in `js/compass.js` (`tests/compass.test.js`); the sheet is `js/views/compass.js` and `css/compass.css`.
+
 ## You 設定
 
 **Your picture.** In You, "Your picture" opens the phone's own picker. The phone crops the picture to a centred square, shrinks it to 128 × 128 and sends it as a small JPEG (at most 12,000 characters; one that will not fit is refused before anything is sent). It then shows inside your round seal, in place of your initials, on every seal on every phone; Change and Remove are on the same row. Each person sets only their own. Setting, changing or removing it is one History entry, which its owner can undo.

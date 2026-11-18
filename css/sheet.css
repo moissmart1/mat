@@ -51,6 +51,8 @@
 /* ---------- Settings (#you), ported from the mockup's .set rules ---------- */
 .set{display:grid;gap:6px}
 .set-h{color:var(--dim);font-size:13px;font-weight:700}
+/* A heading further down the sheet (Extras, This phone and the trip): a little air above it. */
+.set-h.set-gap{margin-top:10px}
 .set-who{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:4px}
 .set-who button{height:82px;border:0;border-radius:8px;background:var(--key);display:grid;justify-items:center;align-content:center;gap:6px;font-weight:900;font-size:14.5px;
   box-shadow:var(--key-edge);transition:transform .15s ease-out,background .12s,box-shadow .15s}

@@ -2,7 +2,8 @@
 // The hotel card: where you sleep, to hold up to a taxi driver. A sheet on
 // the ticket's own stock, opened from a ticket's stay row.
 //
-// mountStayCard(root, store, { where }) -> { open(stayId), close(restoreFocus), isOpen() }
+// mountStayCard(root, store, { where, onCompass(stayId) }) -> { open(stayId), close(restoreFocus), isOpen() }
+// onCompass: 方位 Compass was tapped, for Back to the hotel (js/views/compass.js).
 // root is the phone. The card draws from store.state.stays only, so it opens
 // with no signal; nothing is fetched. It redraws on every store change while
 // open, and closes itself when its stay is gone. The name and the address are
@@ -89,6 +90,10 @@ function card(stay, far = "") {
   if (map) btns.append(link("r-map sy-map", "地図 Map ↗", map));
   const booking = safeHref(stay.link);
   if (booking) btns.append(link("r-map alt", "Booking ↗", booking));
+  const cp = el("button", "r-map alt sy-cp", "方位 Compass");
+  cp.type = "button";
+  cp.dataset.compass = stay.id;
+  btns.append(cp);
   if (btns.childElementCount) nodes.push(btns);
   if (jp || address) {
     const drv = el("button", "drv");
@@ -155,7 +160,7 @@ function fitType(box) {
   }
 }
 
-export function mountStayCard(root, store, { where = null } = {}) {
+export function mountStayCard(root, store, { where = null, onCompass = () => {} } = {}) {
   const scrim = el("div", "scrim");
   scrim.id = "stayScrim";
   scrim.hidden = true;
@@ -378,6 +383,10 @@ export function mountStayCard(root, store, { where = null } = {}) {
   }
 
   done.addEventListener("click", () => close());
+  body.addEventListener("click", (ev) => {
+    const b = ev.target.closest("button[data-compass]");
+    if (b) onCompass(b.dataset.compass);
+  });
   scrim.addEventListener("click", () => close());
   document.addEventListener("keydown", (ev) => {
     if (ev.key === "Escape") close();

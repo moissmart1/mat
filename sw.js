@@ -19,7 +19,7 @@
 //   script.googleusercontent.com), and anything else not listed here.
 // - Only OK answers are ever kept.
 
-const SW_VERSION = "324d359545";
+const SW_VERSION = "c6a02fe1e4";
 const SHELL_CACHE = "mat-shell-" + SW_VERSION;
 const FONT_CACHE = "mat-fonts";
 
@@ -31,6 +31,7 @@ const SHELL = [
   "icons/icon-192.png",
   "icons/icon-512.png",
   "css/base.css",
+  "css/compass.css",
   "css/before.css",
   "css/board.css",
   "css/days.css",
@@ -44,6 +45,7 @@ const SHELL = [
   "js/board.js",
   "js/clip.js",
   "js/clock.js",
+  "js/compass.js",
   "js/config.js",
   "js/diag.js",
   "js/format.js",
@@ -64,6 +66,7 @@ const SHELL = [
   "js/update.js",
   "js/where.js",
   "js/views/alldays.js",
+  "js/views/compass.js",
   "js/views/board.js",
   "js/views/days.js",
   "js/views/first.js",

@@ -3,10 +3,11 @@
 // picture (it shows in your seal; js/picture.js shrinks it first), the stamp
 // sound, History, when the figures were last fetched, how this works,
 // the invite link, the Claude link, planner payments (only once a planner
-// sheet is linked), the Google Sheet and "Report a problem".
+// sheet is linked), the Google Sheet and "Report a problem". Under Extras:
+// Back to the hotel, the compass (js/views/compass.js, opened by onCompass).
 // One sheet, no sub-pages.
 //
-// mountYou(root, store, { onHistory(), onDemo(date), getKey(), screen(), where, onForget() }) -> { open(), close(restoreFocus), isOpen() }
+// mountYou(root, store, { onHistory(), onDemo(date), onCompass(), getKey(), screen(), where, onForget() }) -> { open(), close(restoreFocus), isOpen() }
 // where: the phone's position (js/where.js). Its row, 現在地 Location, says
 // On or Off and turns it on or off; when the phone said no, it says so and
 // where to change it. Only the choice is shown, never a position. A phone
@@ -82,6 +83,9 @@ const MARKUP = `
     </span>
     <input type="file" accept="image/*" id="setPicFile" tabindex="-1" aria-hidden="true" hidden>
   </div>
+  <div class="set-h set-gap">Extras</div>
+  <button type="button" class="set-r" id="setCompass"><span>Back to the hotel<small>A compass that points to where you sleep</small></span><b>Open</b></button>
+  <div class="set-h set-gap">This phone and the trip</div>
   <button type="button" class="set-r" id="setSound"><span>Stamp sound</span><b id="setSoundV">On</b></button>
   <button type="button" class="set-r set-where" id="setWhere" hidden><span><span class="set-where-l"><span class="here">現在地</span>Location</span><small id="setWhereS"></small><small id="setWhereWhy" hidden></small></span><b id="setWhereV" data-w="Phone said no"></b></button>
   <button type="button" class="set-r" id="setHist"><span>History<small>Every change, with undo</small></span><b>Open</b></button>
@@ -158,7 +162,7 @@ const FORGET_FOR = "Takes the trip and your link off this phone";
 const FORGET_SURE = "Tap again to take everything off this phone";
 const FORGET_MS = 5000; // how long the row waits for the second tap
 
-export function mountYou(root, store, { onHistory = () => {}, onDemo = () => {}, demo = null, getKey = () => null, screen = () => "Money", where = null, onForget = async () => {} } = {}) {
+export function mountYou(root, store, { onHistory = () => {}, onDemo = () => {}, onCompass = () => {}, demo = null, getKey = () => null, screen = () => "Money", where = null, onForget = async () => {} } = {}) {
   const scrim = el("div", "scrim");
   scrim.id = "youScrim";
   scrim.hidden = true;
@@ -557,6 +561,7 @@ export function mountYou(root, store, { onHistory = () => {}, onDemo = () => {},
   });
 
   $("setHist").addEventListener("click", () => onHistory());
+  $("setCompass").addEventListener("click", () => onCompass());
   // Last updated: Fetching… while it loads, then Up to date ✓ (or No
   // signal) for a moment, then the time of the last fetch.
   let fetching = false;

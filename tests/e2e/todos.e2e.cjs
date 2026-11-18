@@ -953,7 +953,10 @@ module.exports.push({
     const box = await page.locator('#nav [data-tab="money"]').boundingBox();
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.down();
-    await page.waitForTimeout(250);
+    // Wait for the press's own transition to finish, not a fixed time: a busy
+    // runner can still be partway through it after 250 ms.
+    await page.waitForTimeout(100);
+    await page.waitForFunction(() => document.querySelector('#nav [data-tab="money"]').getAnimations().length === 0, null, { timeout: 3000 });
     const pressed = await page.evaluate(() => {
       const b = document.querySelector('#nav [data-tab="money"]');
       return { y: b.getBoundingClientRect().y, shadow: getComputedStyle(b).boxShadow };
