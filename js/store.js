@@ -760,7 +760,9 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
     // An undone add is only ever sent by finishUndo.
     if (op.undone && isAdd(op)) return;
     // A queued picture's data comes back from the keep; lost there, it is dropped and said.
-    if (op.kind === "ticket" && isAdd(op) && !(await fillTicket(op))) {
+    // One whose request may have landed is asked about without its data
+    // (fix round 1, I5): the backend answers the first add, or that it never had it.
+    if (op.kind === "ticket" && isAdd(op) && !(await fillTicket(op)) && !op.lost) {
       removeOp(op);
       state.notice = TICKET_LOST;
       settleTicket(op, { saved: false, reason: "lost" });
@@ -1125,7 +1127,9 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
         if (!contact) return "wait";
         let r;
         // A picture's data from the keep; lost there, the backend never had more than its id.
-        if (op.kind === "ticket" && !(await fillTicket(op))) {
+        // Without its data, a picture that may have landed is still asked about
+        // (fix round 1, I5): not_found below means it never did.
+        if (op.kind === "ticket" && !(await fillTicket(op)) && !op.lost) {
           stopResolving(op);
           return "done";
         }

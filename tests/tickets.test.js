@@ -641,3 +641,51 @@ test("I2: a full phone does not fetch the same picture again at once (it backs o
   await fetchMissing(store, keep, { now: () => NOW12 + 11 * 60 * 1000 });
   assert.equal(calls.ids.length, 2);
 });
+test("I5: a picture whose reply was lost, with its data gone from the phone, is resent without data and found landed", async () => {
+  const p = phone({ ticketData: async () => null });
+  await p.store.boot();
+  p.net.lose.add("addTicket");
+  const token = p.store.addTicket(picture());
+  const id = p.store.state.tickets[0].id;
+  assert.equal((await p.store.ticketOutcome(token)).reason, "queued");
+  assert.equal(p.fake.tables.Tickets.length, 1, "it did land");
+  // The app is opened again: the data is no longer in memory, and not in the keep either.
+  p.net.lose.clear();
+  const again = phone({ fake: p.fake, storage: p.storage, ticketData: async () => null });
+  await again.store.boot();
+  await again.store.idle();
+  const sent = again.net.sent.filter((b) => b.action === "addTicket");
+  assert.equal(sent.length, 1);
+  assert.equal("data" in sent[0].args.ticket, false, "resent without data");
+  assert.equal(again.store.state.notice, null, "not said lost: it is on the trip");
+  assert.deepEqual(again.store.state.tickets.map((t) => t.id), [id]);
+  assert.equal(JSON.parse(again.storage.getItem("mat.queue")).length, 0);
+});
+test("I5: undoing a picture whose reply was lost, with its data gone, still undoes it on the trip sheet", async () => {
+  const p = phone({ ticketData: async () => null });
+  await p.store.boot();
+  p.net.lose.add("addTicket");
+  const token = p.store.addTicket(picture());
+  await p.store.ticketOutcome(token);
+  assert.equal(p.fake.tables.Tickets.length, 1);
+  // Undo before any reply came: the add must be resent (no data here) and then undone.
+  const again = phone({ fake: p.fake, storage: p.storage, ticketData: async () => null });
+  p.net.lose.clear();
+  await p.store.undo(token);
+  await p.store.idle();
+  await again.store.boot();
+  await again.store.idle();
+  assert.equal(p.fake.tables.Tickets[0].gone, "yes", "the picture taken back is gone from the stop");
+});
+test("I5: a waiting picture that never left, with its data gone, is dropped with a sentence", async () => {
+  const p = phone({ ticketData: async () => null });
+  await p.store.boot();
+  p.net.offline = true;
+  await p.store.checkRev();
+  p.store.addTicket(picture());
+  const again = phone({ fake: p.fake, storage: p.storage, ticketData: async () => null });
+  await again.store.boot();
+  await again.store.idle();
+  assert.equal(again.net.sent.some((b) => b.action === "addTicket"), false);
+  assert.match(again.store.state.notice || "", /lost on this phone/);
+});

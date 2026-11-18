@@ -58,6 +58,7 @@ var MSG_ = {
   ticketsPerStop: "A stop can hold at most 8 ticket pictures.",
   ticketsPerTrip: "The trip can hold at most 120 ticket pictures.",
   claudeTicket: "Ticket pictures are added and removed in the app.",
+  ticketNeverSent: "That ticket picture never reached the trip sheet. Add it again.",
   // Security (2026-11-18).
   checkOnly: "This key can only read the trip.",
   claudeOwnerOnly: "Only {owner} can copy the Claude link.",
@@ -1984,9 +1985,10 @@ function sweepTicketChunks_(known) {
 function addTicket_(args, ctx) {
   if (ctx.via === "claude") return err_("bad_input", MSG_.claudeTicket);
   if (!ticketsReady_()) return err_("needs_migrate", MSG_.needsMigrate);
-  var v = validateTicket(args.ticket, ctx.names);
-  if (!v.ok) return err_("bad_input", v.message);
-  var t = v.value;
+  // The id first (fix round 1, I5): a phone that no longer holds a picture's
+  // data can still resend its add to learn whether it landed.
+  var given = isObj_(args.ticket) ? args.ticket : null;
+  if (!given || typeof given.id !== "string" || !ID_RE_.test(given.id)) return err_("bad_input", "That ticket picture has a bad id.");
   var all = readTable_("Tickets");
   var known = {};
   var existing = null;
@@ -1994,9 +1996,13 @@ function addTicket_(args, ctx) {
     var id = cellText_(r.id);
     if (id === "") return;
     known[id] = true;
-    if (id === t.id) existing = r;
+    if (id === given.id) existing = r;
   });
-  if (existing) return ok_({ ticket: ticketFromRow(existing), logId: firstLogId_("ticket", t.id, "add") }, rev_());
+  if (existing) return ok_({ ticket: ticketFromRow(existing), logId: firstLogId_("ticket", given.id, "add") }, rev_());
+  if (given.data === undefined || given.data === null) return err_("not_found", MSG_.ticketNeverSent);
+  var v = validateTicket(given, ctx.names);
+  if (!v.ok) return err_("bad_input", v.message);
+  var t = v.value;
   var stopRow = findPlanRow_(planKind_("stop"), t.stop);
   if (!stopRow || cellSet_(stopRow.deleted_at)) return err_("not_found", MSG_.noStop);
   var live = all.filter(function (r) { return cellText_(r.id) !== "" && cellText_(r.gone) !== "yes"; });

@@ -447,3 +447,23 @@ test("under the shared key the ticket actions work as before (until it is retire
   assert.equal(r.data.ticket.by, "Trenton");
   assert.equal((await call("ticket", { id: r.data.ticket.id })).ok, true);
 });
+
+// ---------- fix round 1 ----------
+
+test("I5: a resend without the picture's data answers the first add (and its log id); one that never landed says so", async () => {
+  const call = trip();
+  const t = pic();
+  const first = await call("addTicket", { ticket: t });
+  const meta = { ...t };
+  delete meta.data;
+  const again = await call("addTicket", { ticket: meta });
+  assert.equal(again.ok, true, again.message);
+  assert.equal(again.data.logId, first.data.logId);
+  assert.deepEqual(again.data.ticket, first.data.ticket);
+  const never = await call("addTicket", { ticket: { ...meta, id: tid() } });
+  assert.equal(never.ok, false);
+  assert.equal(never.error, "not_found");
+  assert.equal(call.fake.tables.Tickets.length, 1);
+  // A bad id is still refused before anything is looked up.
+  assert.equal((await call("addTicket", { ticket: { ...meta, id: "x" } })).error, "bad_input");
+});
