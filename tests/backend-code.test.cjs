@@ -67,3 +67,22 @@ test("doPost never lets a thrown error's text out in a JSON-RPC reply", () => {
   const r = w.doPost(post(JSON.stringify({ jsonrpc: "2.0", id: 9, method: "tools/list" }), {}));
   assert.equal(r.text, '{"jsonrpc":"2.0","id":null,"error":{"code":-32603,"message":"Internal error"}}');
 });
+
+test("a manual itinerary edit advances the revision once, including a multi-row paste", () => {
+  const w = world({});
+  let revision = 5;
+  let locked = false;
+  w.withLock_ = (write) => {
+    locked = true;
+    try { return write(); } finally { locked = false; }
+  };
+  w.bumpRev_ = () => { assert.ok(locked); return ++revision; };
+  const edit = (tab, lastRow) => w.onEdit({ range: {
+    getSheet: () => ({ getName: () => tab }), getLastRow: () => lastRow,
+  } });
+  for (const tab of ["Stops", "Stays", "Days"]) edit(tab, 9);
+  edit("Stops", 1);
+  edit("Expenses", 3);
+  w.onEdit();
+  assert.equal(revision, 8);
+});
