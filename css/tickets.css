@@ -49,6 +49,9 @@
 #tix .stub-who{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin:8px 0 8px}
 #tix .stub-who b{min-width:0;font-size:24px;font-weight:900;letter-spacing:.02em;overflow-wrap:anywhere}
 #tix .stub-who span{font-size:15px;font-weight:900;text-align:right}
+#tix .stub-who b{white-space:nowrap}
+#tix .oa-top span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media (max-width:350px){ #tix .stub-who b{font-size:20px} #tix .stub-who span{font-size:13.5px} }
 /* The code on pure white, about 300 px wide. */
 #tix .stub-code{width:min(100%,300px);margin:0 auto;padding:8px;background:#fff;border-radius:2px}
 #tix .stub-code.is-page{width:min(100%,270px);box-shadow:0 0 0 1px rgba(21,18,15,.25)}
