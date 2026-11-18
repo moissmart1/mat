@@ -3,7 +3,8 @@
 // e-Transfer address. While merely loading or offline, what is drawn stays.
 
 const assert = require("node:assert/strict");
-const { WITH_PLAN, NOON12, open, until, text, visible } = require("./helpers.cjs");
+const { WITH_PLAN, NOON12, makeBackend, open, until, text, visible } = require("./helpers.cjs");
+const { png } = require("./pictures.cjs");
 
 const line = (o) => ({ day: "2026-12-11", currency: "CAD", rate: 111, splitMode: "equal", splitVals: [], note: "", kind: "", deleted: false, ...o });
 const SEED = {
@@ -115,5 +116,83 @@ cases.push({
     assert.equal(await visible(page, "#gate"), false);
   },
 });
+
+// ---- a stop with a ticket picture and a booking reference ----
+const MEIJI = "planstop1201";
+const REF = "WIPE-REF-7731";
+const D12 = "2026-12-12";
+const mrow = '#rail .pg[data-date="' + D12 + '"] .r[data-id="' + MEIJI + '"]';
+
+async function ticketed() {
+  const backend = makeBackend(WITH_PLAN, { now: NOON12 });
+  const as = (action, args) => backend.fake({ key: "test-key", actor: "Ajen", action, args });
+  assert.equal((await as("updateStop", { id: MEIJI, patch: { tkRef: REF, tkName: "WIPE NAME", tkPeople: "3" } })).ok, true);
+  const r = await as("addTicket", { ticket: { id: "tktwipe00001", stop: MEIJI, who: "", seat: "", page: 1, mime: "image/png", w: 300, h: 300, data: png(300, 300, 51) } });
+  assert.equal(r.ok, true, r.message);
+  return backend;
+}
+const hasRef = (page) =>
+  page.evaluate((ref) => document.body.textContent.includes(ref) || [...document.querySelectorAll("input, textarea")].some((n) => n.value.includes(ref)), REF);
+const blobImages = (page) => page.evaluate(() => [...document.querySelectorAll("img")].filter((i) => (i.getAttribute("src") || "").startsWith("blob:")).length);
+
+async function openTicketed(page, how) {
+  const backend = await ticketed();
+  await open(page, { backend, tab: "days" });
+  await until(() => page.evaluate((sel) => !!document.querySelector(sel), mrow), "the stop is drawn");
+  await until(() => page.evaluate((sel) => { const b = document.querySelector(sel + " .tk-mark b"); return !!b && !b.classList.contains("is-dash"); }, mrow), "the picture is on this phone", 10000);
+  await page.dispatchEvent(mrow + " .r-b", "click");
+  await until(() => page.evaluate((sel) => document.querySelector(sel).classList.contains("is-open"), mrow), "the stop opens");
+  if (how === "stub") {
+    await page.dispatchEvent(mrow + " .r-tk", "click");
+    await until(() => page.evaluate(() => { const t = document.getElementById("tix"); return !!t && !t.hidden && !!t.querySelector("img"); }), "the stub is up with its picture");
+    assert.ok((await blobImages(page)) > 0, "the stub holds a blob: picture");
+  } else {
+    await page.dispatchEvent(mrow + " .r-edit", "click");
+    await until(() => page.evaluate(() => document.getElementById("stop").classList.contains("is-open")), "the edit sheet opens");
+    await until(() => blobImages(page).then((n) => n > 0), "the sheet shows the thumbnail");
+  }
+  assert.equal(await hasRef(page), true, "the reference is in the page before the wipe");
+  return backend;
+}
+
+async function assertTicketsGone(page) {
+  await until(() => visible(page, "#gate"), "the no-key screen shows");
+  await until(async () => !(await hasRef(page)) && (await blobImages(page)) === 0, "no reference and no blob picture is left");
+  assert.equal(await page.evaluate(() => document.body.textContent.includes("WIPE NAME")), false, "the name on the booking is gone");
+  assert.equal(await page.evaluate(() => document.querySelectorAll(".tk-mark, .r-tk, #tix .tstub, #stTix .file").length), 0, "no 券 box, show-ticket button, stub or thumbnail row");
+  assert.equal(await page.evaluate(() => document.getElementById("tix").hidden), true);
+  assert.equal(await page.evaluate(() => document.getElementById("stop").classList.contains("is-open")), false);
+  assert.equal(await page.evaluate(() => document.getElementById("phone").classList.contains("stub-open")), false);
+  const dbs = await page.evaluate(async () => (indexedDB.databases ? (await indexedDB.databases()).map((d) => d.name) : []));
+  assert.equal(dbs.includes("mat-tickets"), false, "no mat-tickets database after the wipe");
+}
+
+for (const size of SIZES) {
+  const mobile = size.width < 600;
+  cases.push({
+    name: "a refused key takes the stub and its picture out of the page at " + size.width + "x" + size.height,
+    viewport: size,
+    ...(mobile ? {} : { mobile: false }),
+    async run({ page }) {
+      const backend = await openTicketed(page, "stub");
+      backend.failWith = "bad_key";
+      await page.evaluate(() => globalThis.__matTest.store.checkRev());
+      await assertTicketsGone(page);
+    },
+  });
+  cases.push({
+    name: "Forget this phone takes the Edit sheet's ticket part and thumbnails out of the page at " + size.width + "x" + size.height,
+    viewport: size,
+    ...(mobile ? {} : { mobile: false }),
+    async run({ page }) {
+      await openTicketed(page, "edit");
+      await page.dispatchEvent("#youBtn", "click");
+      await until(() => page.evaluate(() => document.getElementById("you").classList.contains("is-open")), "settings open");
+      await page.dispatchEvent("#setForget", "click");
+      await page.dispatchEvent("#setForget", "click");
+      await assertTicketsGone(page);
+    },
+  });
+}
 
 module.exports = cases;
