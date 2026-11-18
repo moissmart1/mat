@@ -110,25 +110,26 @@ const calm = () => !!(globalThis.matchMedia && globalThis.matchMedia("(prefers-r
 const newestFirst = (a, b) => (a.stampedAt === b.stampedAt ? 0 : String(b.stampedAt || "") < String(a.stampedAt || "") ? -1 : 1);
 
 // The viewer's reading of who owes whom, under their own Simplify setting:
-// { names, live, simplify, list, bal }. The one source for both the slip and
+// The one source for both the slip and
 // the sentence at the top of Money (#say), so they cannot disagree.
 export function viewerOwed(s) {
   const names = s.people.map((p) => p.name);
   const live = s.expenses.filter((e) => !e.deleted);
   const mine = s.people.find((p) => p.name === s.me);
   const simplify = mine ? mine.simplify !== false : true;
-  return { names, live, simplify, list: owedList(names, live, s.payments, simplify), bal: balances(names, live, s.payments) };
+  const provisional = s.expenses.concat(s.payments).some((item) => item.pending || item.failed);
+  return { names, live, simplify, provisional, list: owedList(names, live, s.payments, simplify), bal: balances(names, live, s.payments) };
 }
 
 // What the slip shows, from the store's state. null: nothing to show yet.
 function read(s) {
   if (!s.trip || !s.trip.start || !s.people.length) return null;
-  const { names, live, simplify, list } = viewerOwed(s);
+  const { names, live, simplify, provisional, list } = viewerOwed(s);
   const directList = simplify ? direct(names, live, s.payments) : list;
   const open = list.map((t) => ({ ...t, key: keyOf(t), via: simplify ? routedVia(t, directList, names) : null }));
   const stamps = s.payments.filter((p) => !p.removed).sort(newestFirst);
   const address = Object.fromEntries(s.people.map((p) => [p.name, p.etransfer ? String(p.etransfer).trim() : ""]));
-  return { me: s.me, simplify, people: s.people, live, payments: s.payments, open, stamps, address, purpose: purposeLine(s.trip, s.people), mark: issuer(s.people) };
+  return { me: s.me, simplify, provisional, people: s.people, live, payments: s.payments, open, stamps, address, purpose: purposeLine(s.trip, s.people), mark: issuer(s.people) };
 }
 
 export function mountSlip(slip, store) {
@@ -266,6 +267,7 @@ export function mountSlip(slip, store) {
       to.id = "sendTo";
       const copy = button("", "Copy");
       copy.id = "copyTo";
+      if (v.provisional) copy.setAttribute("aria-describedby", "slipProvisional");
       send.append(el("span", "s-send-l", "e-Transfer to"), to, copy);
       row.append(send);
     }
@@ -443,7 +445,7 @@ export function mountSlip(slip, store) {
 
     const hits = calm() ? new Set() : fresh;
     const sig = JSON.stringify([
-      v.me, v.simplify, v.open, v.address, v.purpose, v.mark,
+      v.me, v.simplify, v.provisional, v.open, v.address, v.purpose, v.mark,
       v.stamps.map((p) => [p.id, p.from, p.to, p.cad, p.seed, p.rot, paidDay(v, p)]),
       ui.work ? [v.live.map((e) => [e.id, e.title, e.amount, e.currency, e.rate, e.paidBy, e.split, e.splitMode, e.splitVals, e.day]), v.payments.map((p) => [p.id, p.removed])] : 0,
       { ...ui, amt: undefined },
@@ -476,8 +478,11 @@ export function mountSlip(slip, store) {
     but.append(el("b", "", "但"), el("span", "", v.purpose));
     const body = [cols(), ...rows, but, foot, ...(v.me ? [simpBlock(v)] : [])];
     const st = seal.phase === "sealed" || seal.phase === "filed" ? settledOf(v.open, v.stamps) : null;
-    if (st) slip.replaceChildren(holes(), head, foldOf(body), stubOf(st), sealOf(st));
-    else slip.replaceChildren(head, ...body);
+    const notice = el("p", "slip-provisional", "Provisional. Some changes haven’t synced. Check the amount again before sending money.");
+    notice.id = "slipProvisional";
+    notice.hidden = !v.provisional;
+    if (st) slip.replaceChildren(holes(), head, notice, foldOf(body), stubOf(st), sealOf(st));
+    else slip.replaceChildren(head, notice, ...body);
     fileClasses();
 
     if (focus) {

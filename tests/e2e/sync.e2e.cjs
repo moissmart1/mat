@@ -155,6 +155,28 @@ module.exports = [
     },
   },
   {
+    name: "the settlement stays provisional until the queued expense syncs",
+    async run({ page }) {
+      const backend = await ready(page);
+      assert.equal(await visible(page, "#moneyProvisional"), false);
+
+      backend.failWith = "network";
+      await advance(page, backend, POLL_MS);
+      await expectText(page, "#net", NO_SIGNAL);
+      await ringUp(page, "Onigiri", "4 5 0");
+      await page.click("#regDone");
+      await waitClosed(page);
+      assert.equal(await visible(page, "#moneyProvisional"), true);
+      assert.equal(await visible(page, "#slipProvisional"), true);
+
+      backend.failWith = null;
+      await signalBack(page);
+      await waitRow(page, "Onigiri", (row) => !row.cls.includes("is-pending"), "sent");
+      await until(async () => !(await visible(page, "#moneyProvisional")), "the balance is confirmed");
+      assert.equal(await visible(page, "#slipProvisional"), false);
+    },
+  },
+  {
     name: "one check at a time: a check that never answers is not joined by more",
     async run({ page }) {
       const backend = await ready(page);

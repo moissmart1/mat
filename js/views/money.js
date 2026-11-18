@@ -167,7 +167,11 @@ export function mountMoney(root, store, { onRing = () => {}, onLine = () => {}, 
   asideNote.id = "asideNote";
   asideNote.setAttribute("role", "status");
   asideNote.hidden = true;
-  top.append(say, sayP, rateNote, asideNote, histBtn);
+  const provisionalNote = el("p", "say-warn", "Provisional balance. Some changes haven’t synced.");
+  provisionalNote.id = "moneyProvisional";
+  provisionalNote.setAttribute("role", "status");
+  provisionalNote.hidden = true;
+  top.append(say, provisionalNote, sayP, rateNote, asideNote, histBtn);
   const slip = el("div", "slip cf");
   slip.id = "slip";
   const rc = el("div", "rc");
@@ -197,6 +201,7 @@ export function mountMoney(root, store, { onRing = () => {}, onLine = () => {}, 
     if (!s.trip || !s.trip.start || !names.length) {
       say.textContent = "";
       sayP.textContent = s.status === "error" ? UNREACHABLE : "";
+      provisionalNote.hidden = true;
       rateNote.hidden = true;
       asideNote.hidden = true;
       histBtn.hidden = true;
@@ -207,8 +212,9 @@ export function mountMoney(root, store, { onRing = () => {}, onLine = () => {}, 
     histBtn.hidden = false;
     slip.hidden = false;
     // The same reading the slip shows (one source: viewerOwed).
-    const { live, list, bal } = viewerOwed(s);
+    const { live, list, bal, provisional } = viewerOwed(s);
     say.textContent = s.me ? sentence(standing(s.me, list, bal)) : "";
+    provisionalNote.hidden = !provisional || !s.me;
     // The words stay dim; the three figures are bold and bright.
     sayP.replaceChildren("The trip so far is ", el("b", "", dollars(sum(live, cadCents))), ", about ", el("b", "", yen(sum(live, jpyOf))),
       ", across ", el("b", "", String(live.length)), live.length === 1 ? " receipt." : " receipts.");
