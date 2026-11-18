@@ -101,7 +101,38 @@ function problem(v) {
   return null;
 }
 
-export function mountStopSheet(root, store, { keep = null } = {}) {
+// One record per person and stop (or trip day for a new stop). Compare before
+// removal so a late save cannot clear a newer draft from another opening.
+export function stopDrafts(storage, scope) {
+  const key = "mat.stopDraft." + JSON.stringify(scope);
+  return {
+    read() {
+      try {
+        const draft = JSON.parse(storage.getItem(key));
+        return draft && draft.fields && typeof draft.fields === "object" ? draft : null;
+      } catch {
+        return null;
+      }
+    },
+    write(draft) {
+      try {
+        storage.setItem(key, JSON.stringify(draft));
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    clear(expected) {
+      try {
+        if (expected && storage.getItem(key) === JSON.stringify(expected)) storage.removeItem(key);
+      } catch {
+        // A storage failure must leave the editor usable.
+      }
+    },
+  };
+}
+
+export function mountStopSheet(root, store, { keep = null, storage = null } = {}) {
   const scrim = el("div", "scrim");
   scrim.id = "stopScrim";
   scrim.hidden = true;
@@ -144,6 +175,31 @@ export function mountStopSheet(root, store, { keep = null } = {}) {
   let tries = 0; // Saves sent for this add
   let saveWord = "Add stop";
   let session = 0; // one per opening, so a late answer knows whether its sheet is still the one open
+
+  let drafts = null;
+  let originalInputs = {};
+  let draft = null;
+
+  // Only editable text, checkbox values and the retry id belong here. Ticket
+  // files use the separate ticket store. Preserve the raw text as typed.
+  function formValues() {
+    const controls = [...Object.values(f), pin, ...(withTix ? part.inputs() : [])];
+    return Object.fromEntries(controls.map((field) => [
+      field.id, field.type === "checkbox" ? field.checked : field.value,
+    ]));
+  }
+
+  function captureDraft() {
+    if (!drafts || !mode) return;
+    const fields = diff(originalInputs, formValues());
+    if (!Object.keys(fields).length) {
+      drafts.clear(draft);
+      draft = null;
+      return;
+    }
+    draft = { fields, addId };
+    drafts.write(draft);
+  }
 
   const isOpen = () => sheet.classList.contains("is-open");
   const current = () => (store.state.stops || []).find((s) => s && s.id === stopId && !s.deleted) || null;
@@ -281,6 +337,12 @@ export function mountStopSheet(root, store, { keep = null } = {}) {
     unsaved = false;
     refused = "";
     tries = 0;
+    originalInputs = formValues();
+    const trip = store.state.trip;
+    drafts = storage && trip && store.state.me
+      ? stopDrafts(storage, [trip.name, trip.start, store.state.me, mode, stopId || day])
+      : null;
+    draft = drafts ? drafts.read() : null;
     head.textContent = title;
     const dh = dayHead(day);
     dayLine.replaceChildren(el("b", "", dh.en), el("i", "", dh.jp));
@@ -330,6 +392,8 @@ export function mountStopSheet(root, store, { keep = null } = {}) {
     const id = stopId;
     const day = date;
     mode = null;
+    drafts = null;
+    draft = null;
     stopId = null;
     addId = null;
     refused = "";
@@ -384,6 +448,7 @@ export function mountStopSheet(root, store, { keep = null } = {}) {
     if (mode === "add") {
       if (!addId) addId = newId();
       tries += 1;
+      captureDraft();
       token = store.addStop({ date, ...now }, { id: addId, quiet: true, onUnsure });
     } else if (mode === "edit") {
       const patch = diff(was, now);
@@ -406,7 +471,10 @@ export function mountStopSheet(root, store, { keep = null } = {}) {
     }
     update();
     const sentAdd = mode === "add" ? now : null;
+    const savingDrafts = drafts;
+    const savingDraft = draft;
     store.outcome(token).then((out) => {
+      if (out && out.saved && savingDrafts) savingDrafts.clear(savingDraft);
       if (mine !== session) {
         // Closed while it was checking: the undo bar has the last word.
         if (out && !out.saved) store.notify(LEFT_UNSAVED);
@@ -460,6 +528,7 @@ export function mountStopSheet(root, store, { keep = null } = {}) {
   function onRemove() {
     if (mode !== "edit" || del.disabled) return;
     const id = stopId;
+    if (drafts) drafts.clear(draft);
     store.deleteStop(id);
     stopId = null; // its row is gone: focus goes to the day's ＋ Add a stop
     close();
@@ -495,6 +564,7 @@ export function mountStopSheet(root, store, { keep = null } = {}) {
   f.place.addEventListener("input", showAt);
   // Correcting any field takes the reason away.
   const edited = () => {
+    captureDraft();
     if (!refused) return;
     refused = "";
     update();

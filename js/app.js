@@ -283,7 +283,7 @@ function start() {
   // The Days sheets: the hotel card, the list of every day and the stop sheet.
   const stayCard = mountStayCard(phone, store, { where });
   const allDays = mountAllDays(phone, store, { clock, onPick: (i) => days.goDay(i) });
-  const stopSheet = mountStopSheet(phone, store, { keep });
+  const stopSheet = mountStopSheet(phone, store, { keep, storage: raw });
   // The stamp book, a panel like History, opened from the Days bar or today's ticket.
   const book = mountStampBook(phone, store, { where });
   // The real ticket, torn off the day's ticket (js/views/stub.js).
