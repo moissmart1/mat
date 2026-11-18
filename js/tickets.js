@@ -23,7 +23,8 @@
 //   encodes a page as shrink does.
 // - createKeep({ indexedDB }) -> the keep: database "mat-tickets", id ->
 //   { type, bytes }. have(id) (at once, from what was kept), get(id) -> Blob
-//   or null, put(id, blob) -> true when kept, drop(id), subscribe(fn).
+//   or null, put(id, blob) -> true when kept, drop(id), subscribe(fn), wipe() (everything off, database deleted, not opened again),
+//   restart() (open again, for a new link).
 //   lasting is false when there is no IndexedDB (a private window, blocked):
 //   pictures are then kept in memory for this visit only. Nothing throws.
 // - fetchMissing(store, keep): fetches, one at a time, every picture this
@@ -229,6 +230,10 @@ export function createKeep({ indexedDB = globalThis.indexedDB, name = "mat-ticke
   const subs = new Set();
   let db = null;
   let lasting = false;
+  // Set by a wipe (a refused key, Forget this phone): the database is not
+  // opened again until restart() (a new link), so a Forget never leaves an
+  // empty database open behind its own delete.
+  let wiped = false;
   // One per wipe: a put begun before a wipe never lands after it.
   let gen = 0;
   const tell = () => {
@@ -266,7 +271,7 @@ export function createKeep({ indexedDB = globalThis.indexedDB, name = "mat-ticke
   function open() {
     const mine = gen;
     return (async () => {
-      if (!indexedDB || typeof indexedDB.open !== "function") return;
+      if (wiped || !indexedDB || typeof indexedDB.open !== "function") return;
       try {
         const opened = await new Promise((resolve, reject) => {
           let r;
@@ -302,6 +307,14 @@ export function createKeep({ indexedDB = globalThis.indexedDB, name = "mat-ticke
           try { opened.close(); } catch { /* nothing */ }
           return;
         }
+        // Another tab or a deletion wants the database: let go of it at once.
+        opened.onversionchange = () => {
+          try { opened.close(); } catch { /* nothing */ }
+          if (db === opened) {
+            db = null;
+            lasting = false;
+          }
+        };
         db = opened;
         const keys = await run("readonly", (st) => st.getAllKeys());
         if (mine !== gen) return;
@@ -379,9 +392,11 @@ export function createKeep({ indexedDB = globalThis.indexedDB, name = "mat-ticke
     ids: () => [...new Set([...known, ...mem.keys()])],
     // Every picture off this phone (a refused key, Forget this phone): the
     // database deleted, memory emptied, and anything still on its way
-    // refused. The keep then starts again, empty, for a new link.
+    // refused. The database is not opened again here: restart() does that
+    // for a new link.
     async wipe() {
       gen++;
+      wiped = true;
       known.clear();
       mem.clear();
       lasting = false;
@@ -408,8 +423,13 @@ export function createKeep({ indexedDB = globalThis.indexedDB, name = "mat-ticke
           };
         });
       }
+    },
+    // A new link after a wipe: the keep opens its database again, empty.
+    restart() {
+      if (!wiped) return ready;
+      wiped = false;
       ready = open();
-      await ready;
+      return ready;
     },
     subscribe(fn) {
       subs.add(fn);

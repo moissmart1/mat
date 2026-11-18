@@ -364,7 +364,9 @@ function start() {
     // copy and the worker, then the no-key screen.
     onForget: async () => {
       keyHere = null;
-      // The ticket pictures first: their open database would hold up its deletion.
+      // The store is marked wiped first (nothing is written or sent after it),
+      // then the ticket pictures: their open database would hold up its deletion.
+      store.forgot();
       stub.close(false);
       await keep.wipe();
       let session = null;
@@ -382,7 +384,6 @@ function start() {
         // that directory, and only a registration with exactly it is ours.
         scope: new URL("./", new URL("sw.js", document.baseURI)).href,
       });
-      store.forgot();
       you.close(false);
     },
   });
@@ -517,6 +518,7 @@ function start() {
       } catch {
         // nowhere to keep it: it works for this visit only
       }
+      keep.restart();
       store.boot();
     },
   });

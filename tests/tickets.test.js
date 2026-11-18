@@ -160,18 +160,24 @@ function fakeIndexedDB({ fails = false, fullAfter = Infinity, hangs = false } = 
     });
     return t;
   };
-  const db = { objectStoreNames: { contains: () => true }, createObjectStore() {}, transaction: tx, close() {} };
+  const db = { objectStoreNames: { contains: () => true }, createObjectStore() {}, transaction: tx, close() { this.closed++; }, closed: 0, onversionchange: null };
   return {
     data,
+    db,
+    opens: 0,
+    exists: false,
     deleted: 0,
     deleteDatabase() {
       const r = { onsuccess: null, onerror: null, onblocked: null };
       this.deleted++;
+      this.exists = false;
       data.clear();
       queueMicrotask(() => r.onsuccess && r.onsuccess());
       return r;
     },
     open() {
+      this.opens++;
+      this.exists = true;
       const r = { result: db, error: null, onsuccess: null, onerror: null, onupgradeneeded: null };
       if (hangs) return r; // a known WebKit fault: never success, error or blocked
       queueMicrotask(() => {
@@ -719,3 +725,33 @@ test("minor 6: a picture whose stop is removed or not on the plan is not fetched
   assert.deepEqual(fetchOrder(s, NOW12).map((t) => t.id), ["a"]);
 });
 
+
+test("N1: after a wipe no database exists and none is opened again in that visit; a new link opens it afresh", async () => {
+  const idb = fakeIndexedDB();
+  const keep = createKeep({ indexedDB: idb });
+  await keep.ready;
+  await keep.put("a", blobOf(PNG, 10, "image/png"));
+  assert.equal(idb.exists, true);
+  assert.equal(idb.opens, 1);
+  await keep.wipe();
+  await keep.wipe(); // a refused key and Forget can both wipe
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(idb.exists, false, "Forget's delete is not undone by an empty database");
+  assert.equal(idb.opens, 1, "not opened again");
+  assert.equal(idb.db.closed >= 1, true, "the open connection was closed before the delete");
+  assert.equal(keep.have("a"), false);
+  await keep.restart();
+  assert.equal(idb.opens, 2);
+  assert.equal(keep.lasting, true);
+  assert.equal(await keep.put("b", blobOf(PNG, 10, "image/png")), true);
+});
+
+test("N1: a connection told of a version change (a deletion by someone else) closes itself", async () => {
+  const idb = fakeIndexedDB();
+  const keep = createKeep({ indexedDB: idb });
+  await keep.ready;
+  assert.equal(typeof idb.db.onversionchange, "function");
+  idb.db.onversionchange();
+  assert.equal(idb.db.closed, 1);
+  assert.equal(keep.lasting, false);
+});
