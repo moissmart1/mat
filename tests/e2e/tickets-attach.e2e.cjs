@@ -270,4 +270,28 @@ cases.push({
   },
 });
 
+cases.push({
+  name: "minor 1: Enter on the last field puts the keyboard away before migrate, and goes on to the ticket's facts after",
+  async run({ page, newPhone }) {
+    const old = makeBackend({ ...WITH_PLAN, missingTabs: ["Tickets", "TicketData"], missingColumns: ["Stops.tk_ref", "Stops.tk_name", "Stops.tk_people", "Stops.tk_seat"] }, { now: NOON12 });
+    await ready(page, { backend: old });
+    await edit(page, SKY);
+    assert.equal(await page.evaluate(() => document.getElementById("stSign").enterKeyHint), "done");
+    await page.focus("#stSign");
+    await page.keyboard.press("Enter");
+    assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.matches("input, textarea")), false, "the keyboard goes away");
+
+    const other = await newPhone();
+    await ready(other, { backend: makeBackend(WITH_PLAN, { now: NOON12 }) });
+    await edit(other, SKY);
+    assert.equal(await other.evaluate(() => document.getElementById("stSign").enterKeyHint), "next");
+    await other.focus("#stSign");
+    await other.keyboard.press("Enter");
+    assert.equal(await other.evaluate(() => document.activeElement.id), "stTkRef");
+    await other.focus("#stTkSeat");
+    await other.keyboard.press("Enter");
+    assert.equal(await other.evaluate(() => document.activeElement && document.activeElement.matches("input, textarea")), false);
+  },
+});
+
 module.exports = cases;

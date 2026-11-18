@@ -221,6 +221,8 @@ export function mountStopSheet(root, store, { keep = null } = {}) {
     pin.value = "";
     withTix = !!part && store.state.ticketsReady === true;
     tixBox.hidden = !withTix;
+    // The keyboard's key says what Enter does: on to the ticket's facts, or done.
+    f.signJp.enterKeyHint = withTix ? "next" : "done";
     if (part) part.fill(withTix ? stop : {});
     at = str(stop.lat) !== "" && str(stop.lng) !== "" ? { lat: str(stop.lat), lng: str(stop.lng) } : { lat: "", lng: "" };
     was = null;
@@ -519,10 +521,12 @@ export function mountStopSheet(root, store, { keep = null } = {}) {
   // Enter in the directions box is its own (a new line).
   const order = [f.title, f.time, f.detail, f.gettingThere, f.travelMin, f.place, pin, f.link, f.signJp, ...(part ? part.inputs() : [])];
   sheet.addEventListener("keydown", (ev) => {
-    const i = order.indexOf(ev.target);
+    // Only the fields that show (the ticket's facts are hidden before migrate: minor 1).
+    const shown = order.filter((x) => !x.closest("[hidden]"));
+    const i = shown.indexOf(ev.target);
     if (ev.key !== "Enter" || i < 0 || ev.isComposing || ev.target === f.gettingThere) return;
     ev.preventDefault();
-    if (order[i + 1]) order[i + 1].focus();
+    if (shown[i + 1]) shown[i + 1].focus();
     else ev.target.blur();
   });
   store.subscribe(render);
