@@ -307,6 +307,7 @@ cases.push({
     assert.equal(await page.evaluate(() => document.querySelectorAll("#rail .tk-mark, #rail .r-tk").length), 0);
     assert.equal(await page.evaluate(() => document.getElementById("tix").hidden), true);
     assert.equal(backend.requests.some((b) => b.action === "ticket"), false);
+    assert.equal(await page.evaluate(() => document.getElementById("setTix").hidden), true, "no Ticket pictures row in You");
     const fresh = makeBackend(WITH_PLAN, { now: NOON12 });
     const other = await newPhone();
     await ready(other, { backend: fresh });
@@ -327,6 +328,46 @@ cases.push({
     await advance(page, backend, 21000);
     await until(() => page.evaluate(() => document.querySelectorAll("#tix .pp-pg").length === 2), "the stub shows two codes");
     await expectText(page, row(SKY) + " .tk-mark", "券 2 codes · on this phone");
+  },
+});
+
+cases.push({
+  name: "You: Ticket pictures says how it fetches, and one tap changes it (kept on the phone)",
+  async run({ page }) {
+    const backend = await ticketed();
+    await ready(page, { backend });
+    await page.dispatchEvent("#youBtn", "click");
+    await until(() => page.evaluate(() => document.getElementById("you").classList.contains("is-open")), "You opens");
+    await page.evaluate(() => document.getElementById("setTix").scrollIntoView({ block: "center" }));
+    await expectText(page, "#setTix", "Ticket picturesEvery phone keeps every ticket, so they open with no signal. Up to about 50 MB in all.On Wi‑Fi and mobile");
+    await shot(page, "you-tix-all-393");
+    await page.dispatchEvent("#setTix", "click");
+    await expectText(page, "#setTixV", "Only when I open one");
+    await expectText(page, "#setTixS", "Fetched when you open one. Each needs signal once.");
+    assert.equal(await page.evaluate(() => localStorage.getItem("mat.tixFetch")), "open");
+    await shot(page, "you-tix-open-393");
+    await page.dispatchEvent("#setTix", "click");
+    await expectText(page, "#setTixV", "On Wi‑Fi and mobile");
+    assert.equal(await page.evaluate(() => localStorage.getItem("mat.tixFetch")), "all");
+  },
+});
+
+cases.push({
+  name: "Only when I open one: nothing is fetched in the background; Show ticket fetches its own, and only those",
+  async run({ page }) {
+    const backend = await ticketed();
+    await ready(page, { backend, storage: { "mat.tixFetch": "open" } });
+    await advance(page, backend, 21000);
+    await until(() => page.evaluate((sel) => !!document.querySelector(sel + " .tk-mark b.is-dash"), row(SKY)), "the box is dashed");
+    assert.equal(backend.requests.filter((b) => b.action === "ticket").length, 0, "nothing in the background");
+    await showTicket(page, SKY);
+    await until(() => page.evaluate(() => [...document.querySelectorAll("#tix .stub-code img")].length === 3), "the stub fetches its three codes", 10000);
+    const asked = backend.requests.filter((b) => b.action === "ticket").map((b) => b.args.id);
+    const sky = backend.fake.tables.Tickets.filter((t) => t.stop === SKY).map((t) => t.id);
+    assert.deepEqual(asked.sort(), sky.sort());
+    await closeStub(page);
+    await until(() => solid(page, SKY), "its box turns solid");
+    assert.equal(await page.evaluate((sel) => !!document.querySelector(sel + " .tk-mark b.is-dash"), row(MEIJI)), true, "the others still need signal once");
   },
 });
 
