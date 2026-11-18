@@ -180,6 +180,26 @@ function createFakeBackend(seed, { clock, lockFails, keepsApostrophe = false } =
     updateById_(tab, id, patch) {
       return primitives.updateWhere_(tab, "id", id, patch);
     },
+    // Same as Sheets.js: rows written below the last as one block.
+    appendObjs_(tab, objs) {
+      for (const obj of objs) primitives.appendObj_(tab, obj);
+    },
+    // Same as Sheets.js: one column's cells from row 2 down, as Sheets hands them back.
+    columnValues_(tab, column) {
+      const h = headers(tab);
+      if (h.indexOf(column) === -1) return [];
+      return tables[tab].map((r) => readRow(tab, r)[column]);
+    },
+    // Same as Sheets.js: one column's cells in the given sheet rows (2 is the first row under the header).
+    cellsAt_(tab, column, rowNums) {
+      headers(tab);
+      return rowNums.map((n) => (tables[tab][n - 2] ? readRow(tab, tables[tab][n - 2])[column] : ""));
+    },
+    // Same as Sheets.js: deletes those sheet rows.
+    deleteRowsAt_(tab, rowNums) {
+      headers(tab);
+      for (const n of [...rowNums].sort((x, y) => y - x)) tables[tab].splice(n - 2, 1);
+    },
     // Adds the tabs and columns an older Sheet lacked (seed.missingTabs and
     // seed.missingColumns), in TABS order, a new tab's columns one by one.
     ensureColumns_() {

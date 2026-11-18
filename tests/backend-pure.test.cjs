@@ -318,7 +318,7 @@ const STOP = { id: "stopAAAA0001", date: "2026-12-12", title: " Shibuya Sky ", t
 
 test("validateStop fills the blanks and trims", () => {
   const v = P.validateStop(STOP, DATES);
-  assert.deepEqual(v.value, { id: "stopAAAA0001", date: "2026-12-12", time: "14:00", title: "Shibuya Sky", detail: "", gettingThere: "", travelMin: 0, fixed: false, place: "", signJp: "", booked: false, link: "", photo: "", note: "", lat: "", lng: "" });
+  assert.deepEqual(v.value, { id: "stopAAAA0001", date: "2026-12-12", time: "14:00", title: "Shibuya Sky", detail: "", gettingThere: "", travelMin: 0, fixed: false, place: "", signJp: "", booked: false, link: "", photo: "", note: "", lat: "", lng: "", tkRef: "", tkName: "", tkPeople: "", tkSeat: "" });
 });
 test("validateStop refuses what it must", () => {
   const bad = (patch, message) => assert.deepEqual(P.validateStop({ ...STOP, ...patch }, DATES), { ok: false, message });

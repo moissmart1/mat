@@ -25,12 +25,15 @@
 // the Invite link row is not there (it would hand over your own link); the
 // Claude link row is there only for the trip's first person. On the shared
 // link, the e-Transfer field is read-only with a line saying to open your
-// own link. The last row, Forget this phone (onForget), asks once more in
+// own link. Ticket pictures (only once the trip has the ticket tabs): every
+// picture fetched in the background, or only when one is opened (js/tickets.js
+// fetchMode). The last row, Forget this phone (onForget), asks once more in
 // the row itself, then takes the trip, the key and the offline copy off.
 
 import { API_URL, APP_VERSION } from "../config.js";
 import { screenNumbers } from "../diag.js";
 import { soundOn, setSound } from "../sound.js";
+import { fetchMode, setFetchMode } from "../tickets.js";
 import { clock, dayHead, dayShort, localDay, freshText, historySentence } from "../format.js";
 import { HOW_LINES, standalone } from "./first.js";
 import { copyText } from "../clip.js";
@@ -84,6 +87,7 @@ const MARKUP = `
   </div>
   <button type="button" class="set-r" id="setSound"><span>Stamp sound</span><b id="setSoundV">On</b></button>
   <button type="button" class="set-r set-where" id="setWhere" hidden><span><span class="set-where-l"><span class="here">現在地</span>Location</span><small id="setWhereS"></small><small id="setWhereWhy" hidden></small></span><b id="setWhereV" data-w="Phone said no"></b></button>
+  <button type="button" class="set-r" id="setTix" hidden><span>Ticket pictures<small id="setTixS"></small></span><b id="setTixV">On Wi‑Fi and mobile</b></button>
   <button type="button" class="set-r" id="setHist"><span>History<small>Every change, with undo</small></span><b>Open</b></button>
   <button type="button" class="set-r" id="setFreshRow"><span>Last updated<small>Tap to fetch the latest</small></span><b id="setFresh" data-w="Up to date 00:00"></b></button>
   <span class="set-vh" id="setFreshSay" role="status"></span>
@@ -158,7 +162,7 @@ const FORGET_FOR = "Takes the trip and your link off this phone";
 const FORGET_SURE = "Tap again to take everything off this phone";
 const FORGET_MS = 5000; // how long the row waits for the second tap
 
-export function mountYou(root, store, { onHistory = () => {}, onDemo = () => {}, demo = null, getKey = () => null, screen = () => "Money", where = null, onForget = async () => {} } = {}) {
+export function mountYou(root, store, { onHistory = () => {}, onDemo = () => {}, demo = null, getKey = () => null, screen = () => "Money", where = null, onForget = async () => {}, onTixMode = () => {} } = {}) {
   const scrim = el("div", "scrim");
   scrim.id = "youScrim";
   scrim.hidden = true;
@@ -371,6 +375,7 @@ export function mountYou(root, store, { onHistory = () => {}, onDemo = () => {},
     drawMail(s);
     drawPic(s);
     soundV.textContent = soundOn() ? "On" : "Off";
+    drawTix();
     drawWhere();
     drawDemoDays(s);
     setDemo(!demoDays.hidden);
@@ -550,6 +555,25 @@ export function mountYou(root, store, { onHistory = () => {}, onDemo = () => {},
   });
   if (where) where.subscribe(() => {
     if (opened) drawWhere();
+  });
+  // Ticket pictures (once the trip has them): every one fetched in the
+  // background, or only one being opened (roaming data). onTixMode(mode) is told.
+  const tixRow = $("setTix");
+  const tixV = $("setTixV");
+  const tixS = $("setTixS");
+  const TIX_ALL = "Every phone keeps every ticket, so they open with no signal. Up to about 50 MB in all.";
+  const TIX_OPEN = "Fetched when you open one. Each needs signal once.";
+  function drawTix() {
+    tixRow.hidden = store.state.ticketsReady !== true;
+    const all = fetchMode() === "all";
+    tixV.textContent = all ? "On Wi‑Fi and mobile" : "Only when I open one";
+    tixS.textContent = all ? TIX_ALL : TIX_OPEN;
+  }
+  tixRow.addEventListener("click", () => {
+    const next = fetchMode() === "all" ? "open" : "all";
+    setFetchMode(next);
+    drawTix();
+    onTixMode(next);
   });
   $("setSound").addEventListener("click", () => {
     setSound(!soundOn());
