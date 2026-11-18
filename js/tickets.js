@@ -496,7 +496,12 @@ export function fetchMissing(store, keep, { now = () => Date.now() } = {}) {
         continue;
       }
       if (at !== keep.gen) return;
-      if (!(await keep.put(next.id, blob, { gen: at }))) return; // the phone is full: try again after the next load
+      if (!(await keep.put(next.id, blob, { gen: at }))) {
+        // The phone is full: this one backs off like a broken one (fix round 1, I2),
+        // or every redraw would fetch it again.
+        failed.set(next.id, now());
+        return;
+      }
     }
   })().finally(() => running.delete(store));
   running.set(store, p);

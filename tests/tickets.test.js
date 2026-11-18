@@ -629,3 +629,15 @@ test("I1: a waiting picture that meets a busy trip sheet stays waiting, and goes
   assert.equal(p.fake.tables.Tickets.length, 1);
   assert.equal(p.store.state.tickets[0].pending, undefined);
 });
+test("I2: a full phone does not fetch the same picture again at once (it backs off as for a broken one)", async () => {
+  const keep = createKeep({ indexedDB: fakeIndexedDB({ fullAfter: 0 }) });
+  await keep.ready;
+  const { store, calls } = fakeStore({ tickets: [T("t1", "soon0001")], stops: STOPS, answer: (id) => ({ id, mime: "image/png", data: pngData }) });
+  await fetchMissing(store, keep, { now: () => NOW12 });
+  assert.equal(calls.ids.length, 1);
+  await fetchMissing(store, keep, { now: () => NOW12 + 20000 });
+  await fetchMissing(store, keep, { now: () => NOW12 + 40000 });
+  assert.equal(calls.ids.length, 1, "not again every 20 seconds");
+  await fetchMissing(store, keep, { now: () => NOW12 + 11 * 60 * 1000 });
+  assert.equal(calls.ids.length, 2);
+});
