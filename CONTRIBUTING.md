@@ -7,6 +7,16 @@ The app is live and people use it. Two branches matter:
 - **`dev` is where finished work waits.** Everything gets there by pull
   request, and a pull request needs the owner's approval before it can merge.
 
+## Tickets
+
+Work is tracked in this repository's Issues. `ready` means it is written
+clearly enough to pick up; `needs-owner` waits on a decision or a step only
+the owner can take; `in-progress` means someone is on it (say so in the issue
+when you start); `real-phone` can only be checked on a real iPhone. Issues
+are public, like the code: nothing private in them, and the details of a
+security hole go to the owner directly, not into an issue. Coding agents:
+read `AGENTS.md` as well.
+
 ## How a change gets to the phones
 
 1. Branch from `dev`. Name the branch for what it does.
