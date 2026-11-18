@@ -120,6 +120,12 @@ export function mountHistory(root, store) {
   }
 
   function render(s) {
+    // The trip was taken off this phone: the sheet closes and the tape goes.
+    if (s.status === "nokey") {
+      close(false);
+      tape.replaceChildren();
+      return;
+    }
     if (!opened) return;
     // A redraw replaces the buttons: keep the thumb's place when one had focus.
     const hadFocus = tape.contains(document.activeElement) && document.activeElement !== tape;

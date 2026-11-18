@@ -380,6 +380,17 @@ export function mountTodos(root, store, { clock, now = () => Date.now(), onState
       const t = todos.find((x) => x.id === id);
       if (!t || !isDone(t)) landed.delete(id);
     }
+    // The trip was taken off this phone: the list goes, with every word of it.
+    if (s.status === "nokey") {
+      landed.clear();
+      openId = null;
+      hitId = null;
+      doneOpen = false;
+      shownProblems = null;
+      for (const box of [rows, doneBox, probs, count]) box.replaceChildren();
+      doneB.textContent = "";
+      at.textContent = "";
+    }
     const ready = s.status === "ready" && s.plannerLinked === true && todos.length > 0;
     const before = ready && beforeTrip(s);
     const shownOpen = byBookBy(todos.filter((t) => !isDone(t) || landed.has(t.id)));

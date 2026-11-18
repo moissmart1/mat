@@ -27,6 +27,8 @@ import { createUpdater, otherVersionIn } from "./update.js";
 import { APP_VERSION } from "./config.js";
 import { isWide, onWide } from "./shape.js";
 import { createWhere } from "./where.js";
+import { createKeep, fetchMissing, toBase64, ticketMark, fetchesAll, pruneKeep } from "./tickets.js";
+import { mountStub } from "./views/stub.js";
 import { clearTrip, forgetPhone } from "./forget.js";
 
 // How often a visible phone asks the backend whether anything changed.
@@ -227,15 +229,32 @@ function start() {
     // On its own link the backend knows who this is: no name is sent.
     getActor: () => (store && store.state.personal ? undefined : (store && store.state.me) || storage.getItem("mat.me")),
   });
+  // Ticket pictures kept on this phone (IndexedDB): every phone fetches every
+  // one after each load with signal, so it opens with none (js/tickets.js),
+  // unless You says only when one is opened.
+  const keep = createKeep();
   // A refused key takes the trip off the phone (js/store.js): the stored
-  // keys, and the key this visit came with.
+  // keys, the key this visit came with, and every ticket picture.
   store = createStore({
     api,
     storage,
     clear: (queue) => {
       keyHere = null;
       clearTrip(raw, { queue });
+      keep.wipe();
     },
+    ticketData: async (id) => {
+      const blob = await keep.get(id);
+      return blob ? toBase64(blob) : null;
+    },
+    afterLoad: () => {
+      pruneKeep(store, keep);
+      if (fetchesAll(raw)) fetchMissing(store, keep, { allowed: () => fetchesAll(raw) });
+    },
+  });
+  // A picture just kept may unblock the next one once saving ends: look again then.
+  store.subscribe(() => {
+    if (!store.busy() && store.state.ticketsReady && fetchesAll(raw)) fetchMissing(store, keep, { allowed: () => fetchesAll(raw) });
   });
 
   // Where the phone is: kept in memory only, never sent or stored (js/where.js).
@@ -264,10 +283,13 @@ function start() {
   // The Days sheets: the hotel card, the list of every day and the stop sheet.
   const stayCard = mountStayCard(phone, store, { where });
   const allDays = mountAllDays(phone, store, { clock, onPick: (i) => days.goDay(i) });
-  const stopSheet = mountStopSheet(phone, store);
+  const stopSheet = mountStopSheet(phone, store, { keep });
   // The stamp book, a panel like History, opened from the Days bar or today's ticket.
   const book = mountStampBook(phone, store, { where });
+  // The real ticket, torn off the day's ticket (js/views/stub.js).
+  const stub = mountStub(phone, store, keep);
   const closeDaySheets = () => {
+    stub.close(false);
     stayCard.close(false);
     allDays.close(false);
     stopSheet.close(false);
@@ -334,10 +356,19 @@ function start() {
       you.close(false);
       history.open();
     },
+    // Ticket pictures: back to every one, the fetching starts at once.
+    onTixMode: (mode) => {
+      if (mode === "all" && store.state.ticketsReady) fetchMissing(store, keep, { allowed: () => fetchesAll(raw) });
+    },
     // Forget this phone: the trip, the key and every setting, the offline
     // copy and the worker, then the no-key screen.
     onForget: async () => {
       keyHere = null;
+      // The store is marked wiped first (nothing is written or sent after it),
+      // then the ticket pictures: their open database would hold up its deletion.
+      store.forgot();
+      stub.close(false);
+      await keep.wipe();
       let session = null;
       try {
         session = window.sessionStorage;
@@ -349,8 +380,10 @@ function start() {
         indexedDB: globalThis.indexedDB || null,
         caches: globalThis.caches || null,
         serviceWorker: (navigator && navigator.serviceWorker) || null,
+        // The worker is registered as "sw.js" next to the page: its scope is
+        // that directory, and only a registration with exactly it is ours.
+        scope: new URL("./", new URL("sw.js", document.baseURI)).href,
       });
-      store.forgot();
       you.close(false);
     },
   });
@@ -448,7 +481,12 @@ function start() {
       stopSheet.edit(id);
     },
     // A stop being added or changed is being looked at: the rail stays put.
-    held: () => stopSheet.isOpen(),
+    held: () => stopSheet.isOpen() || stub.isOpen(),
+    tickets: { mark: (stop, s) => (s.ticketsReady ? ticketMark(stop, s.tickets, keep.have) : null), subscribe: (fn) => keep.subscribe(fn) },
+    onTicket: (id, button) => {
+      closeForDays();
+      stub.open(id, button);
+    },
   });
   mountMoney(document.getElementById("vMoney"), store, {
     onRing: ring,
@@ -480,6 +518,7 @@ function start() {
       } catch {
         // nowhere to keep it: it works for this visit only
       }
+      keep.restart();
       store.boot();
     },
   });
