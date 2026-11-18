@@ -116,7 +116,7 @@ function drawDay(day, lines, ctx) {
   return group;
 }
 
-function drawReceipt(rc, s, live, ctx) {
+function drawReceipt(rc, s, live, ctx, query) {
   const head = el("div", "rc-h");
   head.append(el("b", "", issuer(s.people)), document.createTextNode([s.trip.name, tripSpan(s.trip)].filter(Boolean).join(", ")));
   head.append(el("div", "rc-no", "レシート No." + String(live.length).padStart(4, "0")));
@@ -130,11 +130,16 @@ function drawReceipt(rc, s, live, ctx) {
   // Newest line first. Sorted oldest first (the sort is stable) and then turned
   // over, so lines with the same time also flip: a later Sheet row sits higher.
   const newestFirst = live.slice().sort((a, b) => ((a.addedAt || "") < (b.addedAt || "") ? -1 : (a.addedAt || "") > (b.addedAt || "") ? 1 : 0)).reverse();
-  const days = receiptDays(s, live, ctx.nowMs).map((day) => drawDay(day, newestFirst.filter((e) => e.day === day), ctx));
+  const matches = query ? newestFirst.filter((e) => String(e.title ?? "").toLowerCase().includes(query)) : newestFirst;
+  const matchDays = new Set(matches.map((e) => e.day));
+  const days = receiptDays(s, live, ctx.nowMs)
+    .filter((day) => !query || matchDays.has(day))
+    .map((day) => drawDay(day, matches.filter((e) => e.day === day), ctx));
+  if (query && !matches.length) days.push(el("p", "rc-empty", "No matching expenses."));
 
   const totalYen = sum(live, jpyOf);
   const tot = el("div", "rc-tot");
-  tot.append(el("span", "", "合計 Total"), fig("b", "", yen(totalYen)));
+  tot.append(el("span", "", query ? "合計 Trip total" : "合計 Total"), fig("b", "", yen(totalYen)));
   const inDollars = el("div", "rc-sub");
   inDollars.append(el("span", "", "in dollars"), fig("b", "", dollars(sum(live, cadCents))));
   const each = el("div", "rc-sub");
@@ -172,7 +177,17 @@ export function mountMoney(root, store, { onRing = () => {}, onLine = () => {}, 
   slip.id = "slip";
   const rc = el("div", "rc");
   rc.id = "rc";
-  root.replaceChildren(top, slip, rc);
+  const search = el("div", "rc-search");
+  search.hidden = true;
+  const label = el("label", "", "Search expenses");
+  label.htmlFor = "rcQuery";
+  const input = el("input");
+  input.id = "rcQuery";
+  input.type = "search";
+  input.autocomplete = "off";
+  input.setAttribute("aria-controls", rc.id);
+  search.append(label, input);
+  root.replaceChildren(top, slip, search, rc);
   mountSlip(slip, store);
 
   histBtn.addEventListener("click", () => onHistory());
@@ -201,11 +216,14 @@ export function mountMoney(root, store, { onRing = () => {}, onLine = () => {}, 
       asideNote.hidden = true;
       histBtn.hidden = true;
       slip.hidden = true;
+      search.hidden = true;
+      input.value = "";
       rc.replaceChildren();
       return;
     }
     histBtn.hidden = false;
     slip.hidden = false;
+    search.hidden = false;
     // The same reading the slip shows (one source: viewerOwed).
     const { live, list, bal } = viewerOwed(s);
     say.textContent = s.me ? sentence(standing(s.me, list, bal)) : "";
@@ -224,9 +242,10 @@ export function mountMoney(root, store, { onRing = () => {}, onLine = () => {}, 
     histN.textContent = String(fresh);
     histN.hidden = fresh === 0;
 
-    drawReceipt(rc, s, live, ctx);
+    drawReceipt(rc, s, live, ctx, input.value.trim().toLowerCase());
   }
 
+  input.addEventListener("input", () => render(store.state));
   render(store.state);
   store.subscribe(render);
 }

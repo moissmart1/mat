@@ -26,6 +26,27 @@ const BOARD = {
 
 module.exports = [
   {
+    name: "receipt search finds a description without changing the trip totals",
+    async run({ page }) {
+      await open(page, { seed: SEED, nowMs: NOON12 });
+      await waitRows(page, 8);
+      const balance = await text(page, "#say");
+      const total = await text(page, "#rc .rc-tot b");
+
+      await page.fill("#rcQuery", "  RAMEN  ");
+      await waitRows(page, 1);
+      assert.match(await text(page, "#rc .rc-row"), /Ramen/);
+      assert.equal(await page.locator("#rc .rc-group").count(), 1);
+      assert.equal(await text(page, "#say"), balance);
+      assert.equal(await text(page, "#rc .rc-tot b"), total);
+
+      await page.fill("#rcQuery", "no such expense");
+      await expectText(page, "#rc .rc-empty", "No matching expenses.");
+      await page.fill("#rcQuery", "");
+      await waitRows(page, 8);
+    },
+  },
+  {
     name: "within a day the newest line is at the top",
     async run({ page }) {
       const mk = (id, title, addedAt) => ({
