@@ -287,7 +287,20 @@ export function mountLine(root, store, { onEdit = () => {} } = {}) {
     else store.deleteExpense(id);
   });
 
-  store.subscribe(render);
+  // The trip was taken off this phone: the sheet closes and nothing of the line stays drawn.
+  function wipe() {
+    close(false);
+    for (const n of [title, amount, paid, dl, share, by, log]) n.replaceChildren();
+    note.value = "";
+    shownNote = "";
+    sentNote = null;
+    shownSig = "";
+  }
+
+  store.subscribe(() => {
+    if (store.state.status === "nokey") wipe();
+    else render();
+  });
 
   return { open, close: (restoreFocus) => close(restoreFocus), isOpen: () => sheet.classList.contains("is-open") };
 }

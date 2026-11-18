@@ -497,8 +497,37 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
     return on ? b.openToday : "";
   }
 
+  // The trip was taken off this phone (a refused key, Forget this phone: the
+  // store says status "nokey"): nothing of it stays in the page. Merely
+  // loading or offline is not this: those keep what is drawn.
+  function wipe() {
+    board.clear();
+    dates = [];
+    states = [];
+    ahead = [];
+    sigs.clear();
+    cur = -1;
+    opened = false;
+    seen = null;
+    autoId = null;
+    openId = null;
+    chosen = false;
+    rail.replaceChildren();
+    pager.replaceChildren();
+    count.replaceChildren();
+    count.hidden = true;
+    stampBtn.hidden = true;
+    stampN.textContent = "";
+    bar.classList.remove("has-stamp");
+    stampBtn.removeAttribute("aria-label");
+  }
+
   function render(s) {
     showDemo();
+    if (s.status === "nokey") {
+      wipe();
+      return;
+    }
     const stampToday = showStamps(s);
     const ready = s.status === "ready" && s.trip && s.trip.start && list(s.days).length;
     if (!ready) {

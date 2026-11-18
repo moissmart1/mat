@@ -126,6 +126,13 @@ export function mountAllDays(root, store, { clock, onPick = () => {} } = {}) {
     onPick(Number(b.dataset.i));
   });
   store.subscribe(() => {
+    // The trip was taken off this phone: the sheet closes and its rows go.
+    if (store.state.status === "nokey") {
+      close(false);
+      rows.replaceChildren();
+      shown = "";
+      return;
+    }
     if (isOpen()) draw();
   });
   // A demo started or stopped changes today and which days are used.

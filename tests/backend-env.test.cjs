@@ -18,6 +18,7 @@ function world({ props = {}, fetch } = {}) {
     PropertiesService: { getScriptProperties: () => ({
       getProperty: (k) => { calls.push("prop:" + k); return Object.prototype.hasOwnProperty.call(props, k) ? props[k] : null; },
       setProperty: (k, v) => { props[k] = String(v); },
+      deleteProperty: (k) => { delete props[k]; },
     }) },
     CacheService: { getScriptCache: () => ({
       get: (k) => (cache.has(k) ? cache.get(k) : null),
@@ -63,6 +64,15 @@ test("getRateInfo_ says live for a fetched rate, last for an earlier day's, fall
   assert.deepEqual(JSON.parse(JSON.stringify(last.getRateInfo_())), { rate: 107.9, source: "last" });
   const none = world({ fetch: () => { throw new Error("DNS error"); } });
   assert.deepEqual(JSON.parse(JSON.stringify(none.getRateInfo_())), { rate: 111, source: "fallback" });
+});
+
+test("a successful rate fetch deletes the last-failure mark: the property is absent, not empty", () => {
+  const w = world({ props: { RATE_FAIL_AT: "2026-12-10T00:00:00.000Z" }, fetch: reply(200, { rates: { JPY: 108.4 } }) });
+  w.requireLiveRate_();
+  assert.equal(Object.prototype.hasOwnProperty.call(w.props, "RATE_FAIL_AT"), false);
+  assert.equal(w.props["RATE_2026-12-10"], "108.4");
+  // Missing reads as no failure: the next call fetches without waiting an hour.
+  assert.equal(w.shouldFetchRate(undefined, w.getProp_("RATE_FAIL_AT"), "2026-12-10T00:00:01.000Z"), true);
 });
 
 test("requireLiveRate_ (run by setup) fetches once and fails loudly with the reason (F7)", () => {

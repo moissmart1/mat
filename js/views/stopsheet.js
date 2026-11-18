@@ -529,7 +529,22 @@ export function mountStopSheet(root, store, { keep = null } = {}) {
     if (shown[i + 1]) shown[i + 1].focus();
     else ev.target.blur();
   });
-  store.subscribe(render);
+  // The trip was taken off this phone: the sheet closes, even mid-save, and
+  // the stop it held is taken out of its fields.
+  function wipe() {
+    phase = null;
+    close(false);
+    fill({});
+    head.textContent = "";
+    dayLine.replaceChildren();
+    msg.textContent = "";
+    date = null;
+  }
+
+  store.subscribe((s) => {
+    if (s && s.status === "nokey") wipe();
+    else render();
+  });
 
   return { add, edit, close: (restoreFocus) => close(restoreFocus), isOpen };
 }

@@ -249,12 +249,12 @@ function start() {
     },
     afterLoad: () => {
       pruneKeep(store, keep);
-      if (fetchesAll(raw)) fetchMissing(store, keep);
+      if (fetchesAll(raw)) fetchMissing(store, keep, { allowed: () => fetchesAll(raw) });
     },
   });
   // A picture just kept may unblock the next one once saving ends: look again then.
   store.subscribe(() => {
-    if (!store.busy() && store.state.ticketsReady && fetchesAll(raw)) fetchMissing(store, keep);
+    if (!store.busy() && store.state.ticketsReady && fetchesAll(raw)) fetchMissing(store, keep, { allowed: () => fetchesAll(raw) });
   });
 
   // Where the phone is: kept in memory only, never sent or stored (js/where.js).
@@ -358,13 +358,15 @@ function start() {
     },
     // Ticket pictures: back to every one, the fetching starts at once.
     onTixMode: (mode) => {
-      if (mode === "all" && store.state.ticketsReady) fetchMissing(store, keep);
+      if (mode === "all" && store.state.ticketsReady) fetchMissing(store, keep, { allowed: () => fetchesAll(raw) });
     },
     // Forget this phone: the trip, the key and every setting, the offline
     // copy and the worker, then the no-key screen.
     onForget: async () => {
       keyHere = null;
-      // The ticket pictures first: their open database would hold up its deletion.
+      // The store is marked wiped first (nothing is written or sent after it),
+      // then the ticket pictures: their open database would hold up its deletion.
+      store.forgot();
       stub.close(false);
       await keep.wipe();
       let session = null;
@@ -378,8 +380,10 @@ function start() {
         indexedDB: globalThis.indexedDB || null,
         caches: globalThis.caches || null,
         serviceWorker: (navigator && navigator.serviceWorker) || null,
+        // The worker is registered as "sw.js" next to the page: its scope is
+        // that directory, and only a registration with exactly it is ours.
+        scope: new URL("./", new URL("sw.js", document.baseURI)).href,
       });
-      store.forgot();
       you.close(false);
     },
   });
@@ -514,6 +518,7 @@ function start() {
       } catch {
         // nowhere to keep it: it works for this visit only
       }
+      keep.restart();
       store.boot();
     },
   });

@@ -160,18 +160,24 @@ function fakeIndexedDB({ fails = false, fullAfter = Infinity, hangs = false } = 
     });
     return t;
   };
-  const db = { objectStoreNames: { contains: () => true }, createObjectStore() {}, transaction: tx, close() {} };
+  const db = { objectStoreNames: { contains: () => true }, createObjectStore() {}, transaction: tx, close() { this.closed++; }, closed: 0, onversionchange: null };
   return {
     data,
+    db,
+    opens: 0,
+    exists: false,
     deleted: 0,
     deleteDatabase() {
       const r = { onsuccess: null, onerror: null, onblocked: null };
       this.deleted++;
+      this.exists = false;
       data.clear();
       queueMicrotask(() => r.onsuccess && r.onsuccess());
       return r;
     },
     open() {
+      this.opens++;
+      this.exists = true;
       const r = { result: db, error: null, onsuccess: null, onerror: null, onupgradeneeded: null };
       if (hangs) return r; // a known WebKit fault: never success, error or blocked
       queueMicrotask(() => {
@@ -719,3 +725,78 @@ test("minor 6: a picture whose stop is removed or not on the plan is not fetched
   assert.deepEqual(fetchOrder(s, NOW12).map((t) => t.id), ["a"]);
 });
 
+
+test("N1: after a wipe no database exists and none is opened again in that visit; a new link opens it afresh", async () => {
+  const idb = fakeIndexedDB();
+  const keep = createKeep({ indexedDB: idb });
+  await keep.ready;
+  await keep.put("a", blobOf(PNG, 10, "image/png"));
+  assert.equal(idb.exists, true);
+  assert.equal(idb.opens, 1);
+  await keep.wipe();
+  await keep.wipe(); // a refused key and Forget can both wipe
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(idb.exists, false, "Forget's delete is not undone by an empty database");
+  assert.equal(idb.opens, 1, "not opened again");
+  assert.equal(idb.db.closed >= 1, true, "the open connection was closed before the delete");
+  assert.equal(keep.have("a"), false);
+  await keep.restart();
+  assert.equal(idb.opens, 2);
+  assert.equal(keep.lasting, true);
+  assert.equal(await keep.put("b", blobOf(PNG, 10, "image/png")), true);
+});
+
+test("N1: a connection told of a version change (a deletion by someone else) closes itself", async () => {
+  const idb = fakeIndexedDB();
+  const keep = createKeep({ indexedDB: idb });
+  await keep.ready;
+  assert.equal(typeof idb.db.onversionchange, "function");
+  idb.db.onversionchange();
+  assert.equal(idb.db.closed, 1);
+  assert.equal(keep.lasting, false);
+});
+
+test("N2: switching to Only when I open one stops a running pass at the next picture", async () => {
+  const keep = createKeep({ indexedDB: fakeIndexedDB() });
+  await keep.ready;
+  const mem = memStorage();
+  let n = 0;
+  const { store, calls } = fakeStore({
+    tickets: [T("t1", "soon0002"), T("t2", "soon0001"), T("t3", "late0001"), T("t4", "past0001")],
+    stops: STOPS,
+    answer: (id) => {
+      if (++n === 2) setFetchMode("open", mem); // the person changes the setting while the pass runs
+      return { id, mime: "image/png", data: pngData };
+    },
+  });
+  await fetchMissing(store, keep, { now: () => NOW12, allowed: () => fetchesAll(mem) });
+  assert.deepEqual(calls.ids, ["t1", "t2"], "no third picture is asked for");
+  assert.equal(keep.have("t3"), false);
+  // Without the option the pass is unchanged.
+  const { store: other, calls: c2 } = fakeStore({ tickets: [T("t9", "soon0002")], stops: STOPS, answer: (id) => ({ id, mime: "image/png", data: pngData }) });
+  await fetchMissing(other, keep, { now: () => NOW12 });
+  assert.equal(c2.ids.length, 1);
+});
+
+test("N4: a picture that meets a busy trip sheet says so, and does not blame the signal", async () => {
+  const kept = new Map();
+  const p = phone({ ticketData: async (id) => kept.get(id) || null });
+  await p.store.boot();
+  p.net.override = (body) => (body.action === "addTicket" ? { ok: false, error: "busy", message: "Someone else is saving right now. Try again in a moment." } : null);
+  const token = p.store.addTicket(picture());
+  const out = await p.store.ticketOutcome(token);
+  assert.equal(out.reason, "queued");
+  assert.equal(out.busy, true);
+  // And with no signal it is not marked busy.
+  const q = phone();
+  await q.store.boot();
+  q.net.offline = true;
+  await q.store.checkRev();
+  const off = await q.store.ticketOutcome(q.store.addTicket(picture()));
+  assert.equal(off.reason, "queued");
+  assert.equal(off.busy, undefined);
+  const { waitingSentence } = await import("../js/views/ticketpart.js");
+  assert.equal(waitingSentence({ waiting: 1, busy: 1 }), "The trip sheet is busy. It will go up in a moment.");
+  assert.equal(waitingSentence({ waiting: 2, busy: 1 }), "Saved on this phone. It goes up in a moment, or when there is signal.");
+  assert.equal(waitingSentence({ waiting: 1, busy: 0 }), "Saved on this phone. It goes up when there is signal.");
+});

@@ -44,6 +44,14 @@ const mb = (chars) => {
   return (bytes < 50000 ? "under 0.1" : (Math.round(bytes / 100000) / 10).toFixed(1)) + " MB";
 };
 
+// What is true of pictures that are waiting: every one met a busy trip sheet
+// (not a lack of signal), or they wait for signal.
+export function waitingSentence(out) {
+  if (out.waiting > 0 && out.busy === out.waiting) return "The trip sheet is busy. It will go up in a moment.";
+  if (out.busy > 0) return "Saved on this phone. It goes up in a moment, or when there is signal.";
+  return "Saved on this phone. It goes up when there is signal.";
+}
+
 export function mountTicketPart(box, store, keep) {
   box.classList.add("tkp");
   const head = el("div", "st-sec tkp-h");
@@ -356,7 +364,7 @@ export function mountTicketPart(box, store, keep) {
   }
 
   async function upload(stopId) {
-    const out = { saved: 0, waiting: 0, failed: 0 };
+    const out = { saved: 0, waiting: 0, failed: 0, busy: 0 };
     stop = (store.state.stops || []).find((s) => s && s.id === stopId) || { id: stopId };
     const todo = picks.filter((p) => p.state !== "saved");
     const at = keep.gen; // a wipe meanwhile: nothing more is kept or sent
@@ -380,6 +388,7 @@ export function mountTicketPart(box, store, keep) {
       } else if (res && res.reason === "queued") {
         p.state = "saved";
         out.waiting += 1;
+        if (res.busy) out.busy += 1;
       } else {
         p.state = "failed";
         p.message = (res && res.message) || "That picture wasn’t saved.";
@@ -392,7 +401,7 @@ export function mountTicketPart(box, store, keep) {
     say.textContent = out.failed
       ? (out.failed === 1 ? "One picture wasn’t saved. " : out.failed + " pictures weren’t saved. ") + "The rest are on the stop."
       : out.waiting
-      ? "Saved on this phone. It goes up when there is signal."
+      ? waitingSentence(out)
       : "";
     return out;
   }
