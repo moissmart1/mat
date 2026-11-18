@@ -15,11 +15,13 @@
 //   itself when nothing would be lost (js/update.js); see tellPages below.
 // - Google Fonts: stale-while-revalidate. When a font cannot be fetched and
 //   none is kept, the answer is an empty one, never an error.
+// - Not in the shell: vendor/pdfjs (pdf.js, loaded only when a PDF is picked
+//   to attach, which needs signal anyway).
 // - Never touched: the trip backend (script.google.com and
 //   script.googleusercontent.com), and anything else not listed here.
 // - Only OK answers are ever kept.
 
-const SW_VERSION = "2b65bc10aa";
+const SW_VERSION = "6698cf4626";
 const SHELL_CACHE = "mat-shell-" + SW_VERSION;
 const FONT_CACHE = "mat-fonts";
 
@@ -54,6 +56,7 @@ const SHELL = [
   "js/stamp.js",
   "js/stampbook.js",
   "js/store.js",
+  "js/tickets.js",
   "js/time.js",
   "js/todos.js",
   "js/turn.js",

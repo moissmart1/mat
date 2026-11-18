@@ -27,6 +27,7 @@ import { createUpdater, otherVersionIn } from "./update.js";
 import { APP_VERSION } from "./config.js";
 import { isWide, onWide } from "./shape.js";
 import { createWhere } from "./where.js";
+import { createKeep, fetchMissing, toBase64 } from "./tickets.js";
 
 // How often a visible phone asks the backend whether anything changed.
 const CHECK_MS = 20000;
@@ -199,7 +200,24 @@ function start() {
     getKey: () => storage.getItem("mat.key"),
     getActor: () => (store && store.state.me) || storage.getItem("mat.me"),
   });
-  store = createStore({ api, storage });
+  // Ticket pictures kept on this phone (IndexedDB): every phone fetches every
+  // one after each load with signal, so it opens with none (js/tickets.js).
+  const keep = createKeep();
+  store = createStore({
+    api,
+    storage,
+    ticketData: async (id) => {
+      const blob = await keep.get(id);
+      return blob ? toBase64(blob) : null;
+    },
+    afterLoad: () => {
+      fetchMissing(store, keep);
+    },
+  });
+  // A picture just kept may unblock the next one once saving ends: look again then.
+  store.subscribe(() => {
+    if (!store.busy() && store.state.ticketsReady) fetchMissing(store, keep);
+  });
 
   // Where the phone is: kept in memory only, never sent or stored (js/where.js).
   const where = createWhere({ storage: raw, geolocation: navigator.geolocation, permissions: navigator.permissions });
