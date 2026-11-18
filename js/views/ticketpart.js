@@ -222,19 +222,32 @@ export function mountTicketPart(box, store, keep) {
           }
           say.textContent = "Reading the PDF…";
           let got;
+          let failedPage = false;
           try {
-            got = await pdfPages(file, { max: space });
+            got = await pdfPages(file, {
+              max: space,
+              // Each page shrunk as soon as it is drawn (minor 3); one that
+              // cannot be is said, and the pages before it are kept (minor 2).
+              each: async (canvas, k) => {
+                if (failedPage) return;
+                try {
+                  const pic = await shrinkCanvas(canvas);
+                  picks.push({ key: newId(), name: name + " · page " + (k + 1), who, seat: "", page: k + 1, ...pic });
+                } catch {
+                  failedPage = true;
+                }
+              },
+            });
           } catch {
             cut = "That PDF couldn’t be read here. Try a screenshot of the ticket instead.";
             continue;
           }
-          if (got.total > got.pages.length) {
-            cut = "This PDF has " + got.total + " pages; a stop holds " + LIMITS.perStop + " pictures, so only the first " + got.pages.length + (got.pages.length === 1 ? " page" : " pages") + " will be kept.";
+          if (failedPage) cut = "Not every page of that PDF could be made into a picture on this phone. Try a screenshot of the ticket instead.";
+          else if (got.total > got.drawn) {
+            cut = "This PDF has " + got.total + " pages; a stop holds " + LIMITS.perStop + " pictures, so only the first " + got.drawn + (got.drawn === 1 ? " page" : " pages") + " will be kept.";
           }
-          for (let k = 0; k < got.pages.length; k++) {
-            const pic = await shrinkCanvas(got.pages[k]);
-            picks.push({ key: newId(), name: name + (got.total > 1 ? " · page " + (k + 1) : ""), who, seat: "", page: k + 1, ...pic });
-          }
+          // One page alone is named after the file.
+          if (got.total === 1 && picks.length && picks[picks.length - 1].name === name + " · page 1") picks[picks.length - 1].name = name;
           continue;
         }
         if (type !== "image/jpeg" && type !== "image/png") {
@@ -252,12 +265,15 @@ export function mountTicketPart(box, store, keep) {
           cut = (e && e.message) || NOT_A_TICKET;
         }
       }
+    } catch {
+      // Anything else that went wrong reading the files (minor 2): said, and what was made is kept.
+      cut = cut || "A file couldn’t be read on this phone. Try a screenshot of the ticket instead.";
     } finally {
       reading -= 1;
+      say.textContent = [refused ? (refused === 1 ? "That file can’t be a ticket. " : refused + " files can’t be tickets. ") + NOT_A_TICKET : "", cut].filter(Boolean).join(" ");
+      drawPicked();
+      box.dispatchEvent(new Event("input", { bubbles: true }));
     }
-    say.textContent = [refused ? (refused === 1 ? "That file can’t be a ticket. " : refused + " files can’t be tickets. ") + NOT_A_TICKET : "", cut].filter(Boolean).join(" ");
-    drawPicked();
-    box.dispatchEvent(new Event("input", { bubbles: true }));
   }
 
   input.addEventListener("change", () => {

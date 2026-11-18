@@ -14,9 +14,10 @@
 //   0.9 (a PNG stays PNG only when that is smaller); when that is still over
 //   LIMITS.maxChars, lower quality, then smaller, until it fits. data is
 //   base64 (no "data:" head); blob the same bytes.
-// - pdfPages(file, { max }) -> { pages: [canvas], total }: the first `max`
-//   pages drawn white-backed at about LIMITS.maxSide; total is how many the
-//   PDF has. pdf.js (vendor/pdfjs, Apache-2.0, 4.10.38, its LICENSE beside it)
+// - pdfPages(file, { max, each }) -> { pages, total, drawn }: the first `max`
+//   pages drawn white-backed at about LIMITS.maxSide, one at a time; with
+//   each(canvas, i) every page is handed over and its canvas let go (pages is
+//   then empty); total is how many the PDF has. pdf.js (vendor/pdfjs, Apache-2.0, 4.10.38, its LICENSE beside it)
 //   is loaded only now, the first time a PDF is picked, and is not in the
 //   offline shell: attaching needs signal anyway. shrinkCanvas(canvas) then
 //   encodes a page as shrink does.
@@ -133,6 +134,9 @@ async function encodeSource(source, width, height, tryPng, deps) {
       const png = await deps.encode(canvas, "image/png");
       if (png.size < blob.size) blob = png;
     }
+    // This try's canvas is done with: let its memory go (minor 3).
+    canvas.width = 0;
+    canvas.height = 0;
     // What the canvas really made (a phone that cannot make a JPEG makes a PNG).
     const mime = await sniff(blob);
     if (mime !== "image/jpeg" && mime !== "image/png") throw new Error(NOT_A_TICKET);
@@ -176,7 +180,7 @@ function loadPdf() {
   return pdfLib;
 }
 
-export async function pdfPages(file, { max = LIMITS.perStop } = {}) {
+export async function pdfPages(file, { max = LIMITS.perStop, each = null } = {}) {
   const lib = await loadPdf();
   const data = new Uint8Array(await file.arrayBuffer());
   // No eval, no scripting, no forms: the PDF is only drawn.
@@ -184,6 +188,8 @@ export async function pdfPages(file, { max = LIMITS.perStop } = {}) {
   try {
     const total = doc.numPages;
     const pages = [];
+    // One page at a time (minor 3): drawn, handed to each(canvas, index) to be
+    // shrunk, then its canvas let go, so 8 pages never sit in memory at once.
     for (let i = 1; i <= Math.min(total, Math.max(0, max)); i++) {
       const page = await doc.getPage(i);
       const one = page.getViewport({ scale: 1 });
@@ -197,9 +203,16 @@ export async function pdfPages(file, { max = LIMITS.perStop } = {}) {
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       await page.render({ canvasContext: ctx, viewport: vp }).promise;
       page.cleanup();
-      pages.push(canvas);
+      if (each) {
+        try {
+          await each(canvas, i - 1);
+        } finally {
+          canvas.width = 0;
+          canvas.height = 0;
+        }
+      } else pages.push(canvas);
     }
-    return { pages, total };
+    return { pages, total, drawn: Math.min(total, Math.max(0, max)) };
   } finally {
     doc.destroy();
   }
