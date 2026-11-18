@@ -8,7 +8,7 @@ import { findings } from "../scripts/scan.mjs";
 import { readFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { askUntil, checkKey, ownerKey, tripLoaded, withoutKeys } from "../scripts/release-lib.mjs";
+import { liveStampUntil, askUntil, checkKey, ownerKey, tripLoaded, withoutKeys } from "../scripts/release-lib.mjs";
 
 test("I4: the live load is asked again for about 30 seconds; ship never advises rolling the backend back", async () => {
   const waits = [];
@@ -172,4 +172,29 @@ test("the release checks use the check key, the old shared key only without one,
   assert.equal(ship.split("env." + SHARED_NAME).length - 1, 0, "ship reads its key only through checkKey");
   assert.match(ship, /const KEY = checkKey\(env\)/);
   assert.match(ship, /"#k=" \+ encodeURIComponent\(KEY\)/);
+});
+
+test("liveStampUntil asks again every 3 seconds, up to 30 seconds, until the live stamp is the commit's", async () => {
+  const waits = [];
+  const answers = ["old", "old", "abc"];
+  let n = 0;
+  const got = await liveStampUntil("https://example.test/exec", "abc", { ask: async () => answers[n++], sleep: async (ms) => waits.push(ms) });
+  assert.equal(got, "abc");
+  assert.deepEqual(waits, [3000, 3000]);
+  const waits2 = [];
+  let m = 0;
+  const never = await liveStampUntil("https://example.test/exec", "abc", { ask: async () => { m++; return "old"; }, sleep: async (ms) => waits2.push(ms) });
+  assert.equal(never, "old");
+  assert.equal(m, 11);
+  assert.equal(waits2.length, 10);
+  assert.equal(waits2.reduce((a, b) => a + b, 0), 30000);
+  // At once when it is already right: no wait.
+  const waits3 = [];
+  assert.equal(await liveStampUntil("u", "abc", { ask: async () => "abc", sleep: async (ms) => waits3.push(ms) }), "abc");
+  assert.deepEqual(waits3, []);
+});
+
+test("the pre-push check waits for the live stamp before it judges", () => {
+  const src = readFileSync(new URL("../scripts/prepush.mjs", import.meta.url), "utf8");
+  assert.match(src, /liveStampUntil\(config\(show\(localSha, "js\/config\.js"\)\)\.apiUrl, commitStamp\)/);
 });

@@ -312,6 +312,16 @@ export function mountStayCard(root, store, { where = null } = {}) {
   const isOpen = () => sheet.classList.contains("is-open");
 
   function render() {
+    // The trip was taken off this phone: the card closes and nothing of it stays drawn.
+    if (store.state.status === "nokey") {
+      close(false);
+      body.replaceChildren();
+      driver.replaceChildren();
+      shown = "";
+      driverSig = "";
+      foot = null;
+      return;
+    }
     if (!isOpen()) return;
     const stay = current();
     if (!stay) {

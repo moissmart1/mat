@@ -50,6 +50,56 @@ function appendObj_(tab, obj) {
   range.setValues([objToRow(headers, obj)]);
 }
 
+// Writes rows below the last as one block, formatted as appendObj_ does.
+// Callers hold the write lock.
+function appendObjs_(tab, objs) {
+  if (!objs.length) return;
+  var sh = sheet_(tab);
+  var headers = headersOf_(sh);
+  var rowNum = sh.getLastRow() + 1;
+  var need = rowNum + objs.length - 1 - sh.getMaxRows();
+  if (need > 0) sh.insertRowsAfter(sh.getMaxRows(), need + 100);
+  var range = sh.getRange(rowNum, 1, objs.length, headers.length);
+  var formats = headers.map(function (h) { return isTextColumn(tab, h) ? "@" : "General"; });
+  range.setNumberFormats(objs.map(function () { return formats; }));
+  range.setValues(objs.map(function (o) { return objToRow(headers, o); }));
+}
+
+// One column's cells from row 2 down (index 0 is sheet row 2); [] when the tab lacks it.
+function columnValues_(tab, column) {
+  var sh = sheet_(tab);
+  var last = sh.getLastRow();
+  if (last < 2) return [];
+  var col = headersOf_(sh).indexOf(column);
+  if (col === -1) return [];
+  return sh.getRange(2, col + 1, last - 1, 1).getValues().map(function (r) { return unsanitizeCell(r[0]); });
+}
+
+// One column's cells in the given sheet rows, read as one range from the
+// first to the last of them (a picture's chunks are side by side).
+function cellsAt_(tab, column, rowNums) {
+  if (!rowNums.length) return [];
+  var sh = sheet_(tab);
+  var col = headersOf_(sh).indexOf(column);
+  if (col === -1) return rowNums.map(function () { return ""; });
+  var lo = Math.min.apply(null, rowNums), hi = Math.max.apply(null, rowNums);
+  var cells = sh.getRange(lo, col + 1, hi - lo + 1, 1).getValues();
+  return rowNums.map(function (n) { return unsanitizeCell(cells[n - lo][0]); });
+}
+
+// Deletes the given sheet rows, each run of neighbours at once, bottom up.
+function deleteRowsAt_(tab, rowNums) {
+  var sh = sheet_(tab);
+  var list = rowNums.slice().sort(function (a, b) { return b - a; });
+  var i = 0;
+  while (i < list.length) {
+    var top = list[i], count = 1;
+    while (i + count < list.length && list[i + count] === top - count) count++;
+    sh.deleteRows(top - count + 1, count);
+    i += count;
+  }
+}
+
 // Writes only the patched columns of the first row whose `column` equals
 // `value`, and returns that row as read back. A blank lookup value never
 // matches (it would hit an empty row); a patch value of undefined is skipped.

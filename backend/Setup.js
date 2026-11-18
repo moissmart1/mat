@@ -268,7 +268,8 @@ function linksStatus() {
     Logger.log((i + 1) + ". " + name + ": " + said);
   });
   var stale = Object.keys(keys).filter(function (name) { return names.indexOf(name) === -1; });
-  if (stale.length) Logger.log("Not on the trip any more, still has a link: " + stale.join(", ") + ". Run issueLinks to remove it.");
+  if (stale.length && !names.length) Logger.log("Still has a link: " + stale.join(", ") + ". The People tab lists nobody.");
+  else if (stale.length) Logger.log("Not on the trip any more, still has a link: " + stale.join(", ") + ". Run issueLinks to remove it.");
   Logger.log(getProp_("TRIP_KEY") ? "The shared link still works." : "The shared link is retired.");
 }
 

@@ -24,9 +24,18 @@ const NOT_MAIL = /\.(png|jpe?g|svg|js|mjs|cjs|css|json|html|md)$/i;
 const DEPLOY = /AKfy[A-Za-z0-9_-]{20,}/g;
 const GOOGLE_ID = /(?<![A-Za-z0-9_-])1[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/g;
 
+// An entry is checked when it has 6 characters or more, or 4 or 5 and it has
+// a digit or is all upper case (a booking code), so a short code is caught
+// without flagging common four and five letter words.
+export function worthChecking(s) {
+  if (s.length >= 6) return true;
+  if (s.length < 4) return false;
+  return /\d/.test(s) || (/[A-Z]/.test(s) && s === s.toUpperCase());
+}
+
 export function privateWords(file = join(PRIVATE_DIR, "private.txt")) {
   if (!existsSync(file)) return null;
-  return readFileSync(file, "utf8").split("\n").map((s) => s.trim()).filter((s) => s.length >= 6);
+  return readFileSync(file, "utf8").split("\n").map((s) => s.trim()).filter(worthChecking);
 }
 
 // [{ rule, line }] for one file's text.

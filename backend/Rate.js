@@ -23,7 +23,7 @@ function fetchRate_(key) {
       if (isFinite(jpy) && jpy > 30 && jpy < 500) {
         setProp_(key, String(jpy));
         setProp_("RATE_LAST", String(jpy));
-        setProp_("RATE_FAIL_AT", "");
+        delProp_("RATE_FAIL_AT"); // deleted, not emptied: an empty Script Property blocks the properties page from saving
         return { rate: jpy };
       }
       error = "an unexpected rate (" + jpy + ")";
