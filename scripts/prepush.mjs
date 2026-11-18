@@ -3,7 +3,7 @@
 // and the live backend is already that commit's backend. `npm run ship` does
 // those in order; this is what stops a push made any other way.
 
-import { config, git, judgePush, liveStamp, readReceipt, stampIn } from "./release-lib.mjs";
+import { config, git, judgePush, liveStampUntil, readReceipt, stampIn } from "./release-lib.mjs";
 import { scanTree } from "./scan.mjs";
 
 const here = process.cwd();
@@ -38,7 +38,7 @@ for (const line of input.split("\n").filter(Boolean)) {
     localSha,
     receipt: zero ? null : readReceipt(git(["rev-parse", localSha + "^{tree}"], here), here),
     commitStamp,
-    live: commitStamp ? await liveStamp(config(show(localSha, "js/config.js")).apiUrl) : "",
+    live: commitStamp ? await liveStampUntil(config(show(localSha, "js/config.js")).apiUrl, commitStamp) : "",
   });
   if (why) {
     console.error("\npush refused: " + why + "\n");
