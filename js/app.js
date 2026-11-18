@@ -349,6 +349,9 @@ function start() {
         indexedDB: globalThis.indexedDB || null,
         caches: globalThis.caches || null,
         serviceWorker: (navigator && navigator.serviceWorker) || null,
+        // The worker is registered as "sw.js" next to the page: its scope is
+        // that directory, and only a registration with exactly it is ours.
+        scope: new URL("./", new URL("sw.js", document.baseURI)).href,
       });
       store.forgot();
       you.close(false);
