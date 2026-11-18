@@ -27,7 +27,7 @@ import { createUpdater, otherVersionIn } from "./update.js";
 import { APP_VERSION } from "./config.js";
 import { isWide, onWide } from "./shape.js";
 import { createWhere } from "./where.js";
-import { createKeep, fetchMissing, toBase64, ticketMark, fetchesAll } from "./tickets.js";
+import { createKeep, fetchMissing, toBase64, ticketMark, fetchesAll, pruneKeep } from "./tickets.js";
 import { mountStub } from "./views/stub.js";
 import { clearTrip, forgetPhone } from "./forget.js";
 
@@ -248,6 +248,7 @@ function start() {
       return blob ? toBase64(blob) : null;
     },
     afterLoad: () => {
+      pruneKeep(store, keep);
       if (fetchesAll(raw)) fetchMissing(store, keep);
     },
   });

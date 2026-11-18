@@ -434,8 +434,8 @@ export const fetchesAll = (storage) => fetchMode(storage) === "all";
 const live = (t) => t && typeof t.id === "string" && t.id && !t.gone;
 
 // The live pictures in the order they are fetched: upcoming stops first
-// (soonest first), then past ones (most recent first), then any whose stop is
-// not on the plan.
+// (soonest first), then past ones (most recent first); none whose stop is
+// removed or not on the plan.
 export function fetchOrder(s, nowMs) {
   const tz = (s.trip && s.trip.tz) || "Asia/Tokyo";
   const today = dateIn(tz, nowMs);
@@ -447,16 +447,26 @@ export function fetchOrder(s, nowMs) {
   const list = (Array.isArray(s.tickets) ? s.tickets : []).filter((t) => live(t) && !t.pending && !t.failed);
   const ahead = [];
   const past = [];
-  const lost = [];
   for (const t of list) {
     const w = when(t);
-    if (w === null) lost.push(t);
+    // A picture whose stop is removed or not on the plan is never fetched (minor 6).
+    if (w === null) continue;
     else if (w.slice(0, 10) >= today) ahead.push([w, t]);
     else past.push([w, t]);
   }
   ahead.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
   past.sort((a, b) => (a[0] > b[0] ? -1 : a[0] < b[0] ? 1 : 0));
-  return [...ahead.map((x) => x[1]), ...past.map((x) => x[1]), ...lost];
+  return [...ahead.map((x) => x[1]), ...past.map((x) => x[1])];
+}
+
+// After a load: pictures the trip no longer has (removed, refused, on a stop
+// gone from the plan) come off this phone (minor 4). Never before migrate,
+// and never one still on the screen (this phone's own, waiting to be sent).
+export async function pruneKeep(store, keep) {
+  const s = store.state;
+  if (!s.ticketsReady || !Array.isArray(s.tickets)) return;
+  const shown = new Set(s.tickets.filter(live).map((t) => t.id));
+  for (const id of keep.ids()) if (!shown.has(id)) await keep.drop(id);
 }
 
 const running = new WeakMap();

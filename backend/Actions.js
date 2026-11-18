@@ -395,7 +395,10 @@ function load_(holder) {
   };
   // The ticket pictures (never their data), once migrate has made the tabs;
   // until then the key is left out and the phones show no tickets.
-  var tickets = ticketsShown_();
+  // Not those on a removed stop (minor 6): putting the stop back brings them back.
+  var removed = {};
+  data.stops.forEach(function (st) { if (st.deleted) removed[st.id] = true; });
+  var tickets = ticketsShown_(removed);
   if (tickets !== null) data.tickets = tickets;
   return ok_(data, rev);
 }
@@ -1960,14 +1963,31 @@ function factsNeedMigrate_(stop) {
 }
 
 // What load shows: every picture not removed, or null before migrate. One lookup and one read.
-function ticketsShown_() {
+function ticketsShown_(removedStops) {
   var rows = readTableOrNull_("Tickets", ["id", "stop", "chunks", "gone"]);
   if (rows === null) return null;
-  return rows.filter(function (r) { return cellText_(r.id) !== "" && cellText_(r.gone) !== "yes"; }).map(ticketFromRow);
+  var off = removedStops || {};
+  return rows.filter(function (r) {
+    return cellText_(r.id) !== "" && cellText_(r.gone) !== "yes" && !Object.prototype.hasOwnProperty.call(off, cellText_(r.stop));
+  }).map(ticketFromRow);
+}
+
+// The ids of removed stops, for the limits: their pictures do not count (minor 6).
+function removedStops_() {
+  var out = {};
+  readTable_("Stops").forEach(function (r) { if (cellText_(r.id) !== "" && cellSet_(r.deleted_at)) out[cellText_(r.id)] = true; });
+  return out;
+}
+
+// Pictures that count: not removed, and not on a removed stop.
+function countedTickets_(rows, removed) {
+  return rows.filter(function (r) {
+    return cellText_(r.id) !== "" && cellText_(r.gone) !== "yes" && !Object.prototype.hasOwnProperty.call(removed, cellText_(r.stop));
+  });
 }
 
 function liveTickets_() {
-  return readTable_("Tickets").filter(function (r) { return cellText_(r.id) !== "" && cellText_(r.gone) !== "yes"; });
+  return countedTickets_(readTable_("Tickets"), removedStops_());
 }
 
 // Deletes TicketData rows whose ticket no Tickets row names (a failed add's), bottom up.
@@ -2005,7 +2025,7 @@ function addTicket_(args, ctx) {
   var t = v.value;
   var stopRow = findPlanRow_(planKind_("stop"), t.stop);
   if (!stopRow || cellSet_(stopRow.deleted_at)) return err_("not_found", MSG_.noStop);
-  var live = all.filter(function (r) { return cellText_(r.id) !== "" && cellText_(r.gone) !== "yes"; });
+  var live = countedTickets_(all, removedStops_());
   if (live.length >= TICKET_LIMITS.perTrip) return err_("bad_input", MSG_.ticketsPerTrip);
   if (live.filter(function (r) { return cellText_(r.stop) === t.stop; }).length >= TICKET_LIMITS.perStop) return err_("bad_input", MSG_.ticketsPerStop);
 

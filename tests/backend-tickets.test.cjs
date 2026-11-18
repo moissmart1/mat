@@ -467,3 +467,15 @@ test("I5: a resend without the picture's data answers the first add (and its log
   // A bad id is still refused before anything is looked up.
   assert.equal((await call("addTicket", { ticket: { ...meta, id: "x" } })).error, "bad_input");
 });
+
+test("minor 6: pictures on a removed stop are left out of load and do not count toward the limits; putting the stop back brings them back", async () => {
+  const call = trip();
+  for (let i = 0; i < 8; i++) assert.equal((await add(call, { stop: LUNCH, page: i + 1 })).ok, true);
+  await call("deleteStop", { id: LUNCH });
+  assert.deepEqual((await call("load")).data.tickets, []);
+  // The trip's 120: 112 more by hand on a live stop, then one more through the app still fits.
+  for (let i = 0; i < 111; i++) call.fake.tables.Tickets.push({ id: "hand" + String(i).padStart(6, "0"), stop: SKY + "x" + (i % 20), who: "", seat: "", page: "1", mime: "image/png", w: "1", h: "1", size: "4", chunks: "1", by: "Mo", at: "2026-12-01T00:00:00.000Z", gone: "" });
+  assert.equal((await add(call)).ok, true, "the removed stop's 8 do not count");
+  await call("restoreStop", { id: LUNCH });
+  assert.equal((await call("load")).data.tickets.filter((t) => t.stop === LUNCH).length, 8);
+});

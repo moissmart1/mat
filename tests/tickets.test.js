@@ -6,7 +6,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { LIMITS, sniff, shrink, createKeep, fetchMissing, toBase64, fromBase64, ticketKinds, ticketMark, fetchMode, setFetchMode, fetchesAll } from "../js/tickets.js";
+import { LIMITS, sniff, shrink, createKeep, fetchMissing, toBase64, fromBase64, ticketKinds, ticketMark, fetchMode, setFetchMode, fetchesAll, pruneKeep, fetchOrder } from "../js/tickets.js";
 import { createApi } from "../js/api.js";
 import { createStore } from "../js/store.js";
 import { changeText } from "../js/format.js";
@@ -701,3 +701,21 @@ test("minor 12: an undo refused by the trip sheet shows its own reason", async (
   await p.store.idle();
   assert.equal(p.store.state.notice, "A stop can hold at most 8 ticket pictures.");
 });
+
+test("minor 4: after a load, pictures no longer on the trip (removed, refused) come off the phone; those shown stay", async () => {
+  const keep = createKeep({ indexedDB: fakeIndexedDB() });
+  await keep.ready;
+  for (const id of ["live", "gone", "refused", "mine"]) await keep.put(id, blobOf(PNG, 10));
+  const s = { ticketsReady: true, tickets: [T("live", "soon0001"), T("gone", "soon0001", { gone: true }), T("mine", "soon0001", { pending: true })] };
+  await pruneKeep({ state: s }, keep);
+  assert.deepEqual(keep.ids().sort(), ["live", "mine"]);
+  // Before migrate (or a load that did not say), nothing is taken off.
+  await pruneKeep({ state: { ticketsReady: false, tickets: [] } }, keep);
+  assert.deepEqual(keep.ids().sort(), ["live", "mine"]);
+});
+
+test("minor 6: a picture whose stop is removed or not on the plan is not fetched", () => {
+  const s = { trip: { tz: "Asia/Tokyo" }, stops: [...STOPS, { id: "gone0001", date: "2026-12-12", time: "11:00", deleted: true }], tickets: [T("a", "soon0001"), T("b", "gone0001"), T("c", "nowhere1")] };
+  assert.deepEqual(fetchOrder(s, NOW12).map((t) => t.id), ["a"]);
+});
+
