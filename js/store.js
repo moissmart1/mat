@@ -800,7 +800,7 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
       } else if (isAdd(op) && (noReply(err) || (op.kind === "ticket" && transient(err)))) {
         // A picture that met a busy trip sheet waits too (fix round 1, I1): nothing else could send it again.
         op.status = "queued"; // the same id resent later is safe
-        settleTicket(op, { saved: false, reason: "queued" });
+        settleTicket(op, { saved: false, reason: "queued", busy: codeOf(err) === "busy" });
       } else if (op.api === "addTicket") {
         // Refused: gone from the screen. The sheet that sent it says why;
         // one that was waiting on the phone (the sheet long closed) is said here.

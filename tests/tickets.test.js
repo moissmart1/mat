@@ -777,3 +777,26 @@ test("N2: switching to Only when I open one stops a running pass at the next pic
   await fetchMissing(other, keep, { now: () => NOW12 });
   assert.equal(c2.ids.length, 1);
 });
+
+test("N4: a picture that meets a busy trip sheet says so, and does not blame the signal", async () => {
+  const kept = new Map();
+  const p = phone({ ticketData: async (id) => kept.get(id) || null });
+  await p.store.boot();
+  p.net.override = (body) => (body.action === "addTicket" ? { ok: false, error: "busy", message: "Someone else is saving right now. Try again in a moment." } : null);
+  const token = p.store.addTicket(picture());
+  const out = await p.store.ticketOutcome(token);
+  assert.equal(out.reason, "queued");
+  assert.equal(out.busy, true);
+  // And with no signal it is not marked busy.
+  const q = phone();
+  await q.store.boot();
+  q.net.offline = true;
+  await q.store.checkRev();
+  const off = await q.store.ticketOutcome(q.store.addTicket(picture()));
+  assert.equal(off.reason, "queued");
+  assert.equal(off.busy, undefined);
+  const { waitingSentence } = await import("../js/views/ticketpart.js");
+  assert.equal(waitingSentence({ waiting: 1, busy: 1 }), "The trip sheet is busy. It will go up in a moment.");
+  assert.equal(waitingSentence({ waiting: 2, busy: 1 }), "Saved on this phone. It goes up in a moment, or when there is signal.");
+  assert.equal(waitingSentence({ waiting: 1, busy: 0 }), "Saved on this phone. It goes up when there is signal.");
+});
