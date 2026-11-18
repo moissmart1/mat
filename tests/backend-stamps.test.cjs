@@ -381,12 +381,13 @@ test("through the fake: one read of each stamp tab per load, no tab or column pr
   call.fake.sheetCalls.hasTab = call.fake.sheetCalls.hasColumn = call.fake.sheetCalls.orNull = 0;
   const before = { ...call.fake.tableReads };
   await call("load");
-  assert.deepEqual({ ...call.fake.sheetCalls }, { hasTab: 1, hasColumn: 0, orNull: 2 }, "the one hasTab is the Before list's own");
+  // orNull 3: the two stamp tabs and the Tickets tab (the real ticket on a stop), each found and read once.
+  assert.deepEqual({ ...call.fake.sheetCalls }, { hasTab: 1, hasColumn: 0, orNull: 3 }, "the one hasTab is the Before list's own");
   assert.equal(call.fake.tableReads.StampDefs - (before.StampDefs || 0), 1);
   assert.equal(call.fake.tableReads.Stamps - (before.Stamps || 0), 1);
   const old = book({ over: { missingTabs: ["StampDefs", "Stamps"] }, defs: [] });
   old.fake.sheetCalls.orNull = 0;
   await old("load");
-  assert.deepEqual({ ...old.fake.sheetCalls }, { hasTab: 1, hasColumn: 0, orNull: 1 }, "the one hasTab is the Before list's own");
+  assert.deepEqual({ ...old.fake.sheetCalls }, { hasTab: 1, hasColumn: 0, orNull: 2 }, "the one hasTab is the Before list's own");
   assert.equal(old.fake.tableReads.StampDefs || 0, 0);
 });
