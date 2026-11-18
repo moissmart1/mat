@@ -479,6 +479,17 @@ test("minor: links for names no longer on the trip are listed by linksStatus and
   assert.equal(holdsSecret({ ...w, keys: { ...w.keys, ghost } }, w.fake.logged.join("\n")), false);
 });
 
+test("linksStatus with an empty People tab says it lists nobody and suggests nothing (issueLinks would refuse)", () => {
+  const w = world();
+  w.fake.personKey("Old name");
+  w.fake.tables.People.length = 0;
+  w.fake.logged.length = 0;
+  w.fake.world.linksStatus();
+  const said = w.fake.logged.join("\n");
+  assert.match(said, /Still has a link: .*Old name\. The People tab lists nobody\./);
+  assert.equal(/issueLinks/.test(said), false, said);
+});
+
 test("minor: once retired, setup never makes a shared key again, even with no personal keys left", () => {
   const w = world();
   w.fake.world.retireSharedLink();

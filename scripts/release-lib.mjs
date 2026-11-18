@@ -177,6 +177,15 @@ export async function askUntil(ask, ok, { tries = 7, waitMs = 5000, sleep = (ms)
   return last;
 }
 
+// The live backend's stamp, asked again every 3 seconds for up to 30 seconds
+// while it is not `wanted` (right after a deploy one request can still reach
+// the old version). Resolves with the last answer. ask and sleep stand in for
+// the network and the clock in tests.
+export async function liveStampUntil(apiUrl, wanted, { ask = liveStamp, sleep, tries = 11, waitMs = 3000 } = {}) {
+  const last = await askUntil(() => ask(apiUrl), (v) => v === wanted, { tries, waitMs, ...(sleep ? { sleep } : {}) });
+  return last === null ? "" : last;
+}
+
 // --- rules that are pure, so tests can pin them -----------------------------
 
 // A change the phones must fetch needs a new APP_VERSION, or they keep the old one.

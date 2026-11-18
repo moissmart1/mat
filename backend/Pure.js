@@ -5,7 +5,7 @@ var TABS = {
   Trip: ["key", "value"],
   People: ["name", "initials", "order", "etransfer", "simplify", "email", "photo"],
   Days: ["date", "city", "title", "line_jp", "line_en", "line_colour", "from_jp", "from_en", "to_jp", "to_en", "lat", "lng"],
-  Stops: ["id", "date", "time", "title", "detail", "getting_there", "travel_min", "fixed", "place", "sign_jp", "booked", "link", "photo", "note", "deleted_at", "lat", "lng"],
+  Stops: ["id", "date", "time", "title", "detail", "getting_there", "travel_min", "fixed", "place", "sign_jp", "booked", "link", "photo", "note", "deleted_at", "lat", "lng", "tk_ref", "tk_name", "tk_people", "tk_seat"],
   Stays: ["id", "name", "name_jp", "address_jp", "first_night", "last_night", "note", "place", "link", "photo", "deleted_at", "lat", "lng"],
   Expenses: ["id", "day", "title", "amount", "currency", "rate", "paid_by", "split", "split_mode", "split_vals", "note", "kind", "receipt", "added_by", "added_at", "deleted_at", "planner_id"],
   Settlements: ["id", "from", "to", "cad", "stamped_by", "stamped_at", "seed", "rot", "removed_at"],
@@ -13,6 +13,10 @@ var TABS = {
   Todos: ["id", "item", "book_by", "status", "note", "link", "claimed_by", "ticked_by", "ticked_at", "ticked_item", "planner_written", "planner_was", "gone"],
   StampDefs: ["id", "date", "name_ja", "name_en", "place", "motif", "ink", "shape"],
   Stamps: ["id", "def", "who", "at", "seed", "gone", "here"],
+  // The real ticket on a stop: one row per picture (no data), and the
+  // pictures' base64 in chunks, one cell each (README, The ticket on a stop).
+  Tickets: ["id", "stop", "who", "seat", "page", "mime", "w", "h", "size", "chunks", "by", "at", "gone"],
+  TicketData: ["ticket", "n", "data"],
 };
 
 var KINDS = ["food", "transport", "stay", "activity", "shopping"];
@@ -354,9 +358,15 @@ function validateStop(input, dayDates) {
   if (!note.ok) return note;
   var at = optCoords_(input.lat, input.lng);
   if (!at.ok) return at;
+  var facts = {};
+  for (var i = 0; i < TICKET_FACTS_.length; i++) {
+    var fact = optText_(input[TICKET_FACTS_[i]], TICKET_LIMITS.fact, "Keep each ticket detail under " + TICKET_LIMITS.fact + " letters.");
+    if (!fact.ok) return fact;
+    facts[TICKET_FACTS_[i]] = fact.value;
+  }
   return {
     ok: true,
-    value: { id: input.id, date: input.date, time: time, title: title, detail: detail.value, gettingThere: there.value, travelMin: travel, fixed: fixed.value, place: place.value, signJp: sign.value, booked: booked.value, link: link.value, photo: photo.value, note: note.value, lat: at.value.lat, lng: at.value.lng },
+    value: { id: input.id, date: input.date, time: time, title: title, detail: detail.value, gettingThere: there.value, travelMin: travel, fixed: fixed.value, place: place.value, signJp: sign.value, booked: booked.value, link: link.value, photo: photo.value, note: note.value, lat: at.value.lat, lng: at.value.lng, tkRef: facts.tkRef, tkName: facts.tkName, tkPeople: facts.tkPeople, tkSeat: facts.tkSeat },
   };
 }
 
@@ -530,6 +540,10 @@ function stopFromRow(o) {
     deleted: cellSet_(o.deleted_at),
     lat: coordsOf_(o).lat,
     lng: coordsOf_(o).lng,
+    tkRef: cellText_(o.tk_ref),
+    tkName: cellText_(o.tk_name),
+    tkPeople: cellText_(o.tk_people),
+    tkSeat: cellText_(o.tk_seat),
   };
 }
 
@@ -624,6 +638,10 @@ function stopToRow(s) {
   put_(o, "note", s.note);
   put_(o, "lat", s.lat);
   put_(o, "lng", s.lng);
+  put_(o, "tk_ref", s.tkRef);
+  put_(o, "tk_name", s.tkName);
+  put_(o, "tk_people", s.tkPeople);
+  put_(o, "tk_seat", s.tkSeat);
   return o;
 }
 
@@ -816,7 +834,7 @@ function expenseDiff_(before, after) {
   return "changed " + after.title + (changed.length ? ": " + changed.join(", ") : "");
 }
 
-var STOP_FIELD_LABELS_ = [["detail", "detail"], ["gettingThere", "directions"], ["travelMin", "travel time"], ["fixed", "fixed time"], ["place", "place"], ["signJp", "sign name"], ["booked", "booked"], ["link", "link"], ["photo", "photo"], ["note", "note"], ["lat", "map"], ["lng", "map"]];
+var STOP_FIELD_LABELS_ = [["detail", "detail"], ["gettingThere", "directions"], ["travelMin", "travel time"], ["fixed", "fixed time"], ["place", "place"], ["signJp", "sign name"], ["booked", "booked"], ["link", "link"], ["photo", "photo"], ["note", "note"], ["lat", "map"], ["lng", "map"], ["tkRef", "ticket"], ["tkName", "ticket"], ["tkPeople", "ticket"], ["tkSeat", "ticket"]];
 
 function stopDiff_(before, after) {
   if (before.title !== after.title) return "renamed " + before.title + " to " + after.title;
@@ -869,6 +887,14 @@ function summarize(action, kind, before, after) {
     return !st.day ? "stamped the book" : "stamped " + shortDay_(st.day);
   }
   if (kind === "day") return "changed the ticket for " + dayLabel((after || before).date);
+  // A ticket picture on a stop: whose it is and the stop's name, never the picture.
+  if (kind === "ticket") {
+    var tk = after || before;
+    var whose = cellText_(tk.who) ? cellText_(tk.who) + "\u2019s ticket" : "a ticket";
+    var on = cellText_(tk.stopTitle) || "a stop";
+    if (action === "remove") return "removed " + whose + " from " + on;
+    return "added " + whose + " to " + on;
+  }
   // A "Before we go" item: its own text (cut) and names, never a planner value.
   if (kind === "todo") {
     var what = plannerCut_(cellText_((after || before).item), 60);
@@ -1411,6 +1437,108 @@ function changeLogRow(rows, fields) {
   return { headerRow: h + 1, firstCol: firstCol, values: values };
 }
 
+// ---- the real ticket on a stop ----
+// The same limits as js/tickets.js (the phone checks them before sending;
+// the backend checks them again). A picture is a JPEG or PNG the phone made,
+// at most maxSide pixels on its longer side and maxChars base64 characters;
+// at most perStop pictures on a stop and perTrip in the whole trip. The
+// picture is kept in chunks of at most `chunk` characters, one Sheet cell
+// each (a cell holds at most 50,000). Each fact is text up to `fact` letters.
+var TICKET_LIMITS = { maxSide: 1500, maxChars: 450000, perStop: 8, perTrip: 120, chunk: 45000, fact: 60 };
+var TICKET_FACTS_ = ["tkRef", "tkName", "tkPeople", "tkSeat"];
+var TICKET_MIMES_ = { "image/jpeg": [0xff, 0xd8, 0xff], "image/png": [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] };
+var B64_RE_ = /^[A-Za-z0-9+\/]+={0,2}$/;
+var B64_CHARS_ = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+var TICKET_BAD_ = "That picture couldn’t be used. Try another.";
+
+// The first n bytes of a base64 string (n at most 9), as numbers.
+function b64Head_(s, n) {
+  var out = [];
+  var bits = 0, acc = 0;
+  for (var i = 0; i < s.length && out.length < n; i++) {
+    var v = B64_CHARS_.indexOf(s.charAt(i));
+    if (v === -1) break;
+    acc = (acc << 6) | v;
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      out.push((acc >> bits) & 0xff);
+      acc &= (1 << bits) - 1;
+    }
+  }
+  return out;
+}
+
+function wholeIn_(v, lo, hi) {
+  return typeof v === "number" && v % 1 === 0 && v >= lo && v <= hi;
+}
+
+// A picture as the phone sends it to addTicket: { id, stop, who, seat, page,
+// mime, w, h, data }. who is "" (for everyone) or one of the people; data is
+// base64 whose first bytes are the mime's signature (so an SVG, or anything
+// else named a JPEG, is refused). The size is checked before the base64 is
+// read, so a huge one costs nothing.
+function validateTicket(input, peopleNames) {
+  if (!isObj_(input)) return fail_(TICKET_BAD_);
+  if (typeof input.id !== "string" || !ID_RE_.test(input.id)) return fail_("That ticket picture has a bad id.");
+  if (typeof input.stop !== "string" || !ID_RE_.test(input.stop)) return fail_("That didn’t say which stop it is for.");
+  var who = input.who === undefined || input.who === null ? "" : input.who;
+  if (typeof who !== "string" || (who !== "" && peopleNames.indexOf(who) === -1)) return fail_("That person isn’t on this trip.");
+  var seat = optText_(input.seat, TICKET_LIMITS.fact, "Keep the seat under " + TICKET_LIMITS.fact + " letters.");
+  if (!seat.ok) return seat;
+  if (!wholeIn_(input.page, 1, TICKET_LIMITS.perStop)) return fail_(TICKET_BAD_);
+  var sig = Object.prototype.hasOwnProperty.call(TICKET_MIMES_, input.mime) ? TICKET_MIMES_[input.mime] : null;
+  if (!sig) return fail_("Only a photo, a screenshot or a PDF can be a ticket.");
+  if (!wholeIn_(input.w, 1, TICKET_LIMITS.maxSide) || !wholeIn_(input.h, 1, TICKET_LIMITS.maxSide)) return fail_(TICKET_BAD_);
+  var data = input.data;
+  if (typeof data !== "string" || data === "") return fail_(TICKET_BAD_);
+  if (data.length > TICKET_LIMITS.maxChars) return fail_("That picture is too big. Try a smaller one.");
+  if (data.length % 4 !== 0 || !B64_RE_.test(data)) return fail_(TICKET_BAD_);
+  var head = b64Head_(data, sig.length);
+  for (var i = 0; i < sig.length; i++) if (head[i] !== sig[i]) return fail_(TICKET_BAD_);
+  return { ok: true, value: { id: input.id, stop: input.stop, who: who, seat: seat.value, page: input.page, mime: input.mime, w: input.w, h: input.h, data: data } };
+}
+
+// data cut into the cells it is kept in, in order.
+function ticketChunks(data) {
+  var out = [];
+  for (var i = 0; i < data.length; i += TICKET_LIMITS.chunk) out.push(data.slice(i, i + TICKET_LIMITS.chunk));
+  return out;
+}
+
+// The picture put back together from its TicketData cells ({ n, data }, any
+// order): sorted by n as a number, each of 0 to count - 1 exactly once, and
+// size characters in all. null when anything is missing or doubled.
+function joinTicketChunks(cells, count, size) {
+  if (!wholeIn_(count, 1, 1000)) return null;
+  var parts = [];
+  for (var i = 0; i < cells.length; i++) {
+    var k = Number(cellText_(cells[i].n));
+    if (!wholeIn_(k, 0, count - 1) || parts[k] !== undefined) return null;
+    parts[k] = cellText_(cells[i].data);
+  }
+  for (var j = 0; j < count; j++) if (parts[j] === undefined) return null;
+  var data = parts.join("");
+  return data.length === size ? data : null;
+}
+
+// A Tickets row as load and the actions give it (never its data); gone only on a removed one.
+function ticketFromRow(o) {
+  var t = {
+    id: cellText_(o.id), stop: cellText_(o.stop), who: cellText_(o.who), seat: cellText_(o.seat),
+    page: cellNum_(o.page), mime: cellText_(o.mime), w: cellNum_(o.w), h: cellNum_(o.h),
+    size: cellNum_(o.size), chunks: cellNum_(o.chunks), by: cellText_(o.by), at: cellStamp_(o.at),
+  };
+  if (cellText_(o.gone) === "yes") t.gone = true;
+  return t;
+}
+
+// What the Log keeps of a picture: its row (no data), whether it is removed,
+// and the stop's name for the sentence.
+function ticketSnap_(t, stopTitle) {
+  return { id: t.id, stop: t.stop, who: t.who, seat: t.seat, page: t.page, mime: t.mime, w: t.w, h: t.h, size: t.size, chunks: t.chunks, by: t.by, at: t.at, gone: t.gone === true, stopTitle: cellText_(stopTitle) };
+}
+
 if (typeof module !== "undefined") {
-  module.exports = { TABS, KINDS, isTextColumn, sanitizeCell, unsanitizeCell, rowToObj, objToRow, validateExpense, validatePayment, validatePersonPatch, validateStop, validateStay, validateDayPatch, DAY_PATCH_KEYS, safeUrl, safeHttpsUrl, dayLabel, stopFromRow, stopToRow, stayFromRow, stayToRow, dayFromRow, dayToRow, expenseFromRow, paymentFromRow, personFromRow, cellDate_, cellStamp_, summarize, undoTarget, canUndo, entryFromRow, parseLogRow, expenseToRow, paymentToRow, setupSeedRows, shouldFetchRate, rateSource, sameKey, hexOfBytes, personKeysFrom, personKeysReadable, keyHolder, blankSecrets, paymentsFromRows, expenseFromPayment, paymentIdOf, todosFromRows, bookByDay, todoFromRow, isBooked, colLetter, changeLogRow, shortDay_, stampWindow, pressRefusal, stampDefFromRow, stampFromRow, stampSnap_, plannerWhat_, coordsOf_, pointFromLink, metresBetween_ };
+  module.exports = { TABS, KINDS, isTextColumn, sanitizeCell, unsanitizeCell, rowToObj, objToRow, validateExpense, validatePayment, validatePersonPatch, validateStop, validateStay, validateDayPatch, DAY_PATCH_KEYS, safeUrl, safeHttpsUrl, dayLabel, stopFromRow, stopToRow, stayFromRow, stayToRow, dayFromRow, dayToRow, expenseFromRow, paymentFromRow, personFromRow, cellDate_, cellStamp_, summarize, undoTarget, canUndo, entryFromRow, parseLogRow, expenseToRow, paymentToRow, setupSeedRows, shouldFetchRate, rateSource, sameKey, hexOfBytes, personKeysFrom, personKeysReadable, keyHolder, blankSecrets, paymentsFromRows, expenseFromPayment, paymentIdOf, todosFromRows, bookByDay, todoFromRow, isBooked, colLetter, changeLogRow, shortDay_, stampWindow, pressRefusal, stampDefFromRow, stampFromRow, stampSnap_, plannerWhat_, coordsOf_, pointFromLink, metresBetween_, TICKET_LIMITS, validateTicket, ticketChunks, joinTicketChunks, ticketFromRow, ticketSnap_ };
 }

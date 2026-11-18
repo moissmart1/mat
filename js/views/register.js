@@ -588,7 +588,29 @@ export function mountRegister(root, store, { now = () => Date.now(), storage = d
     render();
   });
 
+  // The trip was taken off this phone: the sheet closes, the line being typed
+  // goes, and no person or turn stays drawn.
+  let wiped = false;
+  function wipe() {
+    close();
+    startFresh();
+    peopleShown = "";
+    payerSeals.replaceChildren();
+    splitSeals.replaceChildren();
+    turnShown = null;
+    whyOpen = false;
+    drawTurn();
+  }
+
   store.subscribe(() => {
+    if (store.state.status === "nokey") {
+      if (!wiped) {
+        wiped = true;
+        wipe();
+      }
+      return;
+    }
+    wiped = false;
     if (opened) render();
   });
   startFresh();
