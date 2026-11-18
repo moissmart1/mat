@@ -351,8 +351,10 @@ export function mountTicketPart(box, store, keep) {
       drawPicked();
       say.textContent = "Saving " + (todo.indexOf(p) + 1) + " of " + todo.length + "…";
       const id = newId();
-      // On the phone first: a picture that has to wait for signal is sent from here later.
-      await keep.put(id, p.blob, { gen: at });
+      // Into the keep too, so a picture that has to wait for signal is sent from
+      // there after a reload. Not waited for (fix round 1, I3): a keep that
+      // never answers must not hold up Save; the data travels with the add.
+      keep.put(id, p.blob, { gen: at });
       const sameWho = liveOn(stopId).filter((t) => (t.who || "") === p.who).length;
       const token = store.addTicket({ id, stop: stopId, who: p.who, seat: p.seat.trim(), page: Math.min(LIMITS.perStop, Math.max(p.page, sameWho + 1)), mime: p.mime, w: p.w, h: p.h, data: p.data });
       const res = await store.ticketOutcome(token);

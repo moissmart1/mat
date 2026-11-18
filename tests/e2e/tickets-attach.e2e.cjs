@@ -246,4 +246,28 @@ cases.push({
   },
 });
 
+cases.push({
+  name: "fix round 1, I3: an IndexedDB that never answers does not hold up Save; the picture is still on the stop",
+  async run({ page }) {
+    // A known WebKit fault: indexedDB.open never says success, error or blocked.
+    await page.addInitScript(() => {
+      const hung = () => ({ result: null, error: null, onsuccess: null, onerror: null, onblocked: null, onupgradeneeded: null });
+      try {
+        Object.defineProperty(indexedDB, "open", { value: hung, configurable: true });
+      } catch {
+        // nothing to do
+      }
+    });
+    const backend = makeBackend(WITH_PLAN, { now: NOON12 });
+    await ready(page, { backend });
+    await edit(page, SKY);
+    await page.setInputFiles("#stTkFile", [file("one.png", "image/png", pngBytes(200, 200, 5))]);
+    await waitPicked(page, 1);
+    await page.dispatchEvent("#stSave", "click");
+    await sheetClosed(page);
+    assert.equal(backend.fake.tables.Tickets.length, 1);
+    assert.equal(await page.evaluate(() => globalThis.__matTest.store.busy()), false, "nothing left waiting (the updater can reload)");
+  },
+});
+
 module.exports = cases;
