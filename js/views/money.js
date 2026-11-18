@@ -23,6 +23,27 @@ export function setAsideText(list) {
     : list.length + " lines in the Sheet can’t be read (" + why + "). They’re left out of the totals. Tell Mo.";
 }
 
+// The export uses the same exchange rates, rounding, and transfers as the slip.
+export function settlementSummary(state, exportedAt) {
+  const { live, list, bal } = viewerOwed(state);
+  return {
+    trip: state.trip.name,
+    exportedAt,
+    online: state.online,
+    provisional: [...state.expenses, ...state.payments].some((row) => row.pending || row.failed),
+    excludedRows: (state.setAside || []).length,
+    expenses: live.map((e) => ({
+      day: e.day, description: e.title, paidBy: e.paidBy, amount: e.amount,
+      currency: e.currency, cadCents: cadCents(e),
+    })),
+    payments: state.payments.filter((p) => !p.removed).map((p) => ({
+      from: p.from, to: p.to, cadCents: Math.round(p.cad * 100), recordedAt: p.stampedAt,
+    })),
+    balances: bal,
+    transfers: list.map(({ from, to, cents }) => ({ from, to, cents })),
+  };
+}
+
 function el(tag, cls, text) {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
