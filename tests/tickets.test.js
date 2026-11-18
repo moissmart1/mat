@@ -603,3 +603,29 @@ test("the You setting: every picture by default, only when opened on a choice; a
   assert.equal(fetchMode(broken), "all");
   setFetchMode("open", broken);
 });
+
+// ---------- fix round 1 (phone) ----------
+test("I1: a waiting picture that meets a busy trip sheet stays waiting, and goes up on the next try", async () => {
+  const kept = new Map();
+  const p = phone({ ticketData: async (id) => kept.get(id) || null });
+  await p.store.boot();
+  p.net.offline = true;
+  await p.store.checkRev();
+  const token = p.store.addTicket(picture());
+  const id = p.store.state.tickets[0].id;
+  kept.set(id, pngData);
+  assert.equal((await p.store.ticketOutcome(token)).reason, "queued");
+  p.net.offline = false;
+  p.net.override = (body) => (body.action === "addTicket" ? { ok: false, error: "busy", message: "Someone else is saving right now. Try again in a moment." } : null);
+  await p.store.flush();
+  await p.store.idle();
+  assert.equal(p.store.state.tickets.length, 1, "still on the screen");
+  assert.equal(p.store.state.tickets[0].pending, true);
+  assert.ok(p.storage.getItem("mat.queue").includes(id), "still waiting on the phone");
+  assert.equal(p.fake.tables.Tickets.length, 0);
+  p.net.override = null;
+  await p.store.flush();
+  await p.store.idle();
+  assert.equal(p.fake.tables.Tickets.length, 1);
+  assert.equal(p.store.state.tickets[0].pending, undefined);
+});

@@ -795,7 +795,8 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
       if (fateUnknown(err)) op.lost = true;
       if (op.undone && isAdd(op)) {
         // finishUndo decides what still has to happen
-      } else if (isAdd(op) && noReply(err)) {
+      } else if (isAdd(op) && (noReply(err) || (op.kind === "ticket" && transient(err)))) {
+        // A picture that met a busy trip sheet waits too (fix round 1, I1): nothing else could send it again.
         op.status = "queued"; // the same id resent later is safe
         settleTicket(op, { saved: false, reason: "queued" });
       } else if (op.api === "addTicket") {
