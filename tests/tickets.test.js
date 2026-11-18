@@ -689,3 +689,15 @@ test("I5: a waiting picture that never left, with its data gone, is dropped with
   assert.equal(again.net.sent.some((b) => b.action === "addTicket"), false);
   assert.match(again.store.state.notice || "", /lost on this phone/);
 });
+test("minor 12: an undo refused by the trip sheet shows its own reason", async () => {
+  const p = phone();
+  await p.store.boot();
+  const t = await p.store.ticketOutcome(p.store.addTicket(picture()));
+  await p.store.idle();
+  const token = p.store.removeTicket(t.item.id);
+  await p.store.idle();
+  p.net.override = (body) => (body.action === "undo" ? { ok: false, error: "bad_input", message: "A stop can hold at most 8 ticket pictures." } : null);
+  await p.store.undo(token);
+  await p.store.idle();
+  assert.equal(p.store.state.notice, "A stop can hold at most 8 ticket pictures.");
+});

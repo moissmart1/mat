@@ -1240,10 +1240,16 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
           return;
         }
         if (fateUnknown(err)) wantReload();
-        state.notice = fateUnknown(err) ? UNCONFIRMED : UNDO_FAILED;
+        state.notice = fateUnknown(err) ? UNCONFIRMED : refusedWords(err);
       }
       changed();
     });
+  }
+
+  // An undo the backend refused with its own sentence says that sentence
+  // (tickets, fix round 1, minor 12: "A stop can hold at most 8 …").
+  function refusedWords(err) {
+    return err && err.code === "bad_input" && typeof err.message === "string" && err.message ? err.message : UNDO_FAILED;
   }
 
   const plainVal = (v) => JSON.stringify(typeof v === "string" ? v.trim() : v);
@@ -1606,7 +1612,7 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
           return false;
         }
         // No reply: it may have been undone; the next contact shows which.
-        state.notice = noReply(err) ? failNotice(err) : UNDO_FAILED;
+        state.notice = noReply(err) ? failNotice(err) : refusedWords(err);
         changed();
         return false;
       }
