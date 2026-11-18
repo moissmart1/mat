@@ -180,7 +180,7 @@ export async function pdfPages(file, { max = LIMITS.perStop } = {}) {
   const lib = await loadPdf();
   const data = new Uint8Array(await file.arrayBuffer());
   // No eval, no scripting, no forms: the PDF is only drawn.
-  const doc = await lib.getDocument({ data, isEvalSupported: false, enableXfa: false, stopAtErrors: false }).promise;
+  const doc = await lib.getDocument({ data, isEvalSupported: false, enableXfa: false, stopAtErrors: false, verbosity: lib.VerbosityLevel ? lib.VerbosityLevel.ERRORS : 0 }).promise;
   try {
     const total = doc.numPages;
     const pages = [];
@@ -260,6 +260,8 @@ export function createKeep({ indexedDB = globalThis.indexedDB, name = "mat-ticke
       const keys = await run("readonly", (s) => s.getAllKeys());
       for (const k of keys || []) known.add(String(k));
       lasting = true;
+      // Views drawn before this (the 券 boxes) look again.
+      if (known.size) tell();
     } catch {
       db = null;
       lasting = false;

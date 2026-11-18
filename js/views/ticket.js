@@ -39,6 +39,11 @@
 // Every row is drawn closed: the Days view opens one (.is-open on the .r, and
 // aria-expanded on its [role=button], and un-inerts its .r-more).
 // A used day's gate stamp is made once per day, place and mark, and reused.
+// - tix: { [stopId]: { kind, label, saved } } (js/tickets.js ticketMark) for
+//   the stops that have a ticket: the 券 box under the name (solid when every
+//   picture is on this phone, dashed when one still needs signal) and, when
+//   open, 切符 Show ticket (.r-tk) above the links. Absent, a stop reads
+//   exactly as it did.
 
 import { minutesOf, issueLine, isPast, nextLine, mapsUrl, safeHref, gateDate } from "../plan.js";
 import { dayHead, yen } from "../format.js";
@@ -124,7 +129,7 @@ const failedPhotos = new Set();
 // and the buttons (directions from here, and the stop's own link). Under the
 // keys, drawn hidden, the line that says where directions start: the Days
 // view shows it on the first stop opened in a visit (.r-why).
-function more(stop) {
+function more(stop, tix) {
   const wrap = el("div", "r-more");
   wrap.inert = true;
   const inner = el("div");
@@ -146,6 +151,15 @@ function more(stop) {
   if (go) inner.append(el("div", "r-go", go));
   const note = str(stop.note);
   if (note) inner.append(el("div", "r-note", note));
+  // 切符 Show ticket: a stub-shaped key (the Days view opens the stub).
+  if (tix) {
+    const show = el("button", "r-tk");
+    show.type = "button";
+    const w = el("span");
+    w.append(el("b", "", "切符"), "Show ticket");
+    show.append(w, el("i", "", tix.label));
+    inner.append(show);
+  }
   const btns = el("div", "r-btns");
   const link = (cls, text, href) => {
     const a = el("a", cls, text);
@@ -200,6 +214,12 @@ function row(stop, model) {
     fx.append(el("b", "", "指定"), " ", el("span", "", "Fixed time"));
     body.append(fx);
   }
+  const tix = model.tix && model.tix[stop.id] ? model.tix[stop.id] : null;
+  if (tix) {
+    const fx = el("div", "r-fx tk-mark");
+    fx.append(el("b", tix.saved ? "" : "is-dash", "券"), " ", el("span", "", tix.kind === "ref" ? "Reference only, no file" : tix.label + " · " + (tix.saved ? "on this phone" : "needs signal once")));
+    body.append(fx);
+  }
   const here = next && model.hereNext ? model.hereNext : null;
   if (here) body.append(hereRow(here.dist));
   else if (near) body.append(hereRow(near.dist));
@@ -212,7 +232,7 @@ function row(stop, model) {
     if (detail) s.append(detail);
     body.append(s);
   }
-  r.append(el("div", "r-t", minutesOf(stop.time) === null ? "—" : stop.time), body, el("div", "r-j", str(stop.signJp)), more(stop));
+  r.append(el("div", "r-t", minutesOf(stop.time) === null ? "—" : stop.time), body, el("div", "r-j", str(stop.signJp)), more(stop, tix));
   return r;
 }
 

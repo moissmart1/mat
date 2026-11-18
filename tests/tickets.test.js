@@ -192,8 +192,13 @@ test("the keep: put, have, get, drop; what was kept before is known at start", a
   assert.equal((await keep.get("a")).size, 10);
   assert.equal(seen.length, 1);
   const again = createKeep({ indexedDB: idb });
+  // A view drawn before the keep has read what it holds is told once it has.
+  let told = 0;
+  again.subscribe(() => told++);
+  assert.equal(again.have("a"), false);
   await again.ready;
   assert.equal(again.have("a"), true);
+  assert.equal(told, 1);
   await again.drop("a");
   assert.equal(again.have("a"), false);
   assert.equal(await again.get("a"), null);

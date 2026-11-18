@@ -27,7 +27,8 @@ import { createUpdater, otherVersionIn } from "./update.js";
 import { APP_VERSION } from "./config.js";
 import { isWide, onWide } from "./shape.js";
 import { createWhere } from "./where.js";
-import { createKeep, fetchMissing, toBase64 } from "./tickets.js";
+import { createKeep, fetchMissing, toBase64, ticketMark } from "./tickets.js";
+import { mountStub } from "./views/stub.js";
 
 // How often a visible phone asks the backend whether anything changed.
 const CHECK_MS = 20000;
@@ -245,10 +246,13 @@ function start() {
   // The Days sheets: the hotel card, the list of every day and the stop sheet.
   const stayCard = mountStayCard(phone, store, { where });
   const allDays = mountAllDays(phone, store, { clock, onPick: (i) => days.goDay(i) });
-  const stopSheet = mountStopSheet(phone, store);
+  const stopSheet = mountStopSheet(phone, store, { keep });
   // The stamp book, a panel like History, opened from the Days bar or today's ticket.
   const book = mountStampBook(phone, store, { where });
+  // The real ticket, torn off the day's ticket (js/views/stub.js).
+  const stub = mountStub(phone, store, keep);
   const closeDaySheets = () => {
+    stub.close(false);
     stayCard.close(false);
     allDays.close(false);
     stopSheet.close(false);
@@ -409,7 +413,12 @@ function start() {
       stopSheet.edit(id);
     },
     // A stop being added or changed is being looked at: the rail stays put.
-    held: () => stopSheet.isOpen(),
+    held: () => stopSheet.isOpen() || stub.isOpen(),
+    tickets: { mark: (stop, s) => (s.ticketsReady ? ticketMark(stop, s.tickets, keep.have) : null), subscribe: (fn) => keep.subscribe(fn) },
+    onTicket: (id, button) => {
+      closeForDays();
+      stub.open(id, button);
+    },
   });
   mountMoney(document.getElementById("vMoney"), store, {
     onRing: ring,
