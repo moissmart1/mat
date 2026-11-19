@@ -47,7 +47,8 @@ async function fits(page) {
   // The labels are one size, 15 px on a wide phone, scaled down only as far as a small one needs (never under 10.5 px, the small label).
   const sizes = await page.evaluate(() => [...document.querySelectorAll("#nav [data-tab], #youBtn")].filter((b) => !b.hidden).map((b) => getComputedStyle(b).fontSize));
   const px = sizes.map(parseFloat);
-  assert.ok(px.length === 3 && px.every((n) => n === px[0] && n >= 10.5 && n <= 15), sizes.join(" "));
+  // A trip day: Days, Tickets, Money and You.
+  assert.ok(px.length === 4 && px.every((n) => n === px[0] && n >= 10.5 && n <= 15), sizes.join(" "));
 }
 
 module.exports = [
