@@ -10,7 +10,7 @@ const assert = require("node:assert/strict");
 const fs = require("fs");
 const { WITH_PLAN, NOON12, makeBackend, open, advance, until, text, expectText, visible } = require("./helpers.cjs");
 
-const SHOTS = "/private/tmp/claude-501/mat-shots/picks";
+const SHOTS = process.env.MAT_SHOTS || "/private/tmp/claude-501/mat-shots/picks";
 const PLANNER_ID = "fakePlannerSheet_0123456789abcdefXYZ";
 const BHEAD = ["#", "Item", "Who", "Book by", "Status", "Notes", "Booking link"];
 const brow = (o) => BHEAD.map((h) => (o[h] === undefined ? "" : o[h]));
@@ -84,6 +84,11 @@ const fits = (page) =>
       const r = n.getBoundingClientRect();
       // The close's box reaches 12 px under the words' end; the × itself sits in its middle.
       if (r.right > x.left + 14) bad.push(s + " runs into the close");
+    }
+    const leave = document.querySelector('#vDays .brd[data-kind="trip"] .led-2');
+    if (leave && !leave.hidden) {
+      const r = leave.getBoundingClientRect();
+      if (leave.scrollWidth > leave.clientWidth || r.top < b.top - 0.5 || r.bottom > b.bottom + 0.5) bad.push("leave line is clipped");
     }
     return bad;
   });
@@ -311,9 +316,11 @@ module.exports = [
     name: "a long name stays on one line inside the board (an ellipsis, never wrapped, never pushing the close)",
     viewport: { width: 320, height: 568 },
     async run({ page }) {
-      const stops = WITH_PLAN.stops.map((s) => (s.title === "Shibuya Sky" ? { ...s, title: "A very long name for a place that no board could ever hold on one line" } : s));
+      const stop = WITH_PLAN.stops.find((s) => s.title === "Shibuya Sky");
+      const stops = [{ ...stop, time: "23:59", title: "A very long name for a place that no board could ever hold on one line" }];
       await ready(page, { nowMs: DAY12, seed: seedWith(ITEMS, { stops }) });
       await until(() => boardUp(page), "the board shows");
+      await expectText(page, "#vDays .led-2", "Leave by 23:29 · in 10 h 17 min");
       assert.deepEqual(await fits(page), []);
       const one = await page.evaluate(() => {
         const n = document.querySelector("#vDays .led-1");
