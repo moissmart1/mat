@@ -85,9 +85,9 @@ async function openBulk(page) {
 }
 const sorted = (page, n) => until(() => page.evaluate((n) => {
   const t = document.querySelector("#bulk .sheet-top i");
-  return !!t && t.textContent.startsWith(n + " files") && !document.querySelector("#bulk .bk-prog");
+  return !!t && t.textContent.startsWith(n + (n === 1 ? " file" : " files")) && !document.querySelector("#bulk .ba-prog");
 }, n), n + " files sorted", 20000);
-const added = (page) => until(() => page.evaluate(() => !!document.querySelector("#bulk .bk-done-h")), "added", 30000);
+const added = (page) => until(() => page.evaluate(() => !!document.querySelector("#bulk .ba-done-h")), "added", 30000);
 const noSideways = (page) => page.evaluate(() => {
   const s = document.getElementById("bulk");
   const over = [...s.querySelectorAll("*")].filter((e) => e.getClientRects().length && e.getBoundingClientRect().right > innerWidth + 0.5).map((e) => e.className || e.tagName);
@@ -107,8 +107,8 @@ cases.push({
     // Empty: the drop zone, the two keys, nothing sent.
     assert.equal(await page.getAttribute("#bulk", "role"), "dialog");
     await expectText(page, "#bulk .sheet-top", "Add tickets一括Cancel");
-    await expectText(page, "#bulk .bk-empty", "Drop the ticket files here.PDFs and pictures, all at once. Add the list (.csv) too if you have it: fewer to check by hand.Choose filesPDF · PNG · JPGChoose list.csv, optional");
-    await expectText(page, "#bulk .bk-say", /Nothing is sent until 入鋏\.$/);
+    await expectText(page, "#bulk .ba-empty", "Drop the ticket files here.PDFs and pictures, all at once. Add the list (.csv) too if you have it: fewer to check by hand.Choose filesPDF · PNG · JPGChoose list.csv, optional");
+    await expectText(page, "#bulk .ba-say", /Nothing is sent until 入鋏\.$/);
     assert.equal(await page.evaluate(() => document.activeElement.id), "bulkTop");
     await shot(page, "phone-empty.png");
 
@@ -119,26 +119,27 @@ cases.push({
     await sorted(page, 9);
     assert.equal(backend.requests.slice(before).some((b) => b.action === "addTicket" || b.action === "updateStop"), false, "nothing is sent before 入鋏");
     await expectText(page, "#bulk .sheet-top i", "9 files · list of 9");
-    await expectText(page, "#bulk .bk-band", "帯5 sortedD2 to D3 · 3 stops · 3 one eachUntie ›");
+    await expectText(page, "#bulk .ba-band", "帯5 sortedD2 to D3 · 3 stops · 3 one eachUntie ›");
     // The top ticket of the bundle: the stop with one each, three seals.
-    await expectText(page, "#bulk .bk-bundle .k", "D3 Sat 09:00 · one each");
-    await expectText(page, "#bulk .bk-bundle .n", "Meiji Shrine");
-    assert.equal(await page.evaluate(() => document.querySelectorAll("#bulk .bk-bundle .bk-seal").length), 3);
+    await expectText(page, "#bulk .ba-bundle .ba-k", "D3 Sat 09:00 · one each");
+    await expectText(page, "#bulk .ba-bundle .ba-n", "Meiji Shrine");
+    assert.equal(await page.evaluate(() => document.querySelectorAll("#bulk .ba-bundle .ba-seal").length), 3);
     // The first card: the file with no line, two stops by its name.
-    await expectText(page, "#bulk .bk-h", /^検札 To look at · 1 of 2/);
-    await expectText(page, "#bulk .bk-card .q", "どちら？ Which one?not on the list");
-    await expectText(page, "#bulk .bk-card .ask", "Two stops have this name.");
-    await expectText(page, "#bulk .bk-card .cap", "hoshizora ropeway.png");
-    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll("#bulk .bk-card [data-choice]")].map((b) => b.textContent)), ["D4Sun 11:00Hoshizora Ropeway, up›", "D5Mon 10:30Hoshizora Ropeway, night run›"]);
-    await until(() => page.evaluate(() => { const i = document.querySelector("#bulk .bk-card .pv img"); return !!i && i.naturalWidth > 0; }), "the card shows the file's picture");
-    await expectText(page, "#bulk .bk-next", "T019 · Lantern boatno stop on D7");
+    await expectText(page, "#bulk .ba-h", /^検札 To look at · 1 of 2/);
+    await expectText(page, "#bulk .ba-card .ba-q", "どちら？ Which one?not on the list");
+    await expectText(page, "#bulk .ba-card .ba-ask", "Two stops have this name.");
+    await expectText(page, "#bulk .ba-card .ba-fn", "A picture");
+    await expectText(page, "#bulk .ba-card .ba-cap", "hoshizora ropeway.png");
+    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll("#bulk .ba-card [data-choice]")].map((b) => b.textContent)), ["D4Sun 11:00Hoshizora Ropeway, up›", "D5Mon 10:30Hoshizora Ropeway, night run›"]);
+    await until(() => page.evaluate(() => { const i = document.querySelector("#bulk .ba-card .ba-pv img"); return !!i && i.naturalWidth > 0; }), "the card shows the file's picture");
+    await expectText(page, "#bulk .ba-next", "T019 · Lantern boatno stop on D7");
     // The quiet lines.
-    const asides = await page.evaluate(() => [...document.querySelectorAll("#bulk .bk-aside")].map((a) => a.textContent.replace(/\s+/g, " ").trim()));
+    const asides = await page.evaluate(() => [...document.querySelectorAll("#bulk .ba-aside")].map((a) => a.textContent.replace(/\s+/g, " ").trim()));
     assert.deepEqual(asides, [
-      "外 1 file isn’t a ticket file: T020 cal.ics. Left out.",
-      "止 1 not active on the list: T010 · Old booking (cancelled). Left out.",
-      "表 1 line on the list has no file here.",
-      "120 Pictures on the trip: 0 now, 6 after this.",
+      "外1 file isn’t a ticket file: T020 cal.ics. Left out.",
+      "止1 not active on the list: T010 · Old booking (cancelled). Left out.",
+      "表1 line on the list has no file here.",
+      "120Pictures on the trip: 0 now, 6 after this.",
     ]);
     await expectText(page, "#bulkPunch", "入鋏Add 5 nowthe 2 not looked at stay out · on every phone›");
     await toTop(page);
@@ -146,28 +147,28 @@ cases.push({
 
     // Untie: the bundle as a list by day; a line opens to change it, then tie again.
     await page.click('#bulk [data-act="untie"]');
-    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll("#bulk .bk-lh")].map((h) => h.textContent)), ["D2 Fri", "D3 Sat"]);
-    assert.equal(await page.evaluate(() => document.querySelectorAll("#bulk .bk-line").length), 5);
-    await page.click("#bulk .bk-lh + .bk-line .bk-lb");
-    await until(() => page.evaluate(() => !!document.querySelector("#bulk .bk-ed select")), "the line opens");
-    assert.equal(await page.evaluate(() => document.querySelector("#bulk .bk-ed select").value), SENSO);
+    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll("#bulk .ba-lh")].map((h) => h.textContent)), ["D2 Fri", "D3 Sat"]);
+    assert.equal(await page.evaluate(() => document.querySelectorAll("#bulk .ba-line").length), 5);
+    await page.click("#bulk .ba-lh + .ba-line .ba-lb");
+    await until(() => page.evaluate(() => !!document.querySelector("#bulk .ba-ed select")), "the line opens");
+    assert.equal(await page.evaluate(() => document.querySelector("#bulk .ba-ed select").value), SENSO);
     await page.click('#bulk [data-act="untie"]');
 
     // The card: D4.
-    await page.click('#bulk .bk-card [data-choice$="|0"]');
-    await expectText(page, "#bulk .bk-h", /^検札 To look at · 2 of 2/);
-    await expectText(page, "#bulk .bk-card .ask", "No stop on Day 7 at 19:30.");
-    await expectText(page, "#bulk .bk-card .fn", "T019 · Lantern boat");
-    await expectText(page, "#bulk .bk-band", /^帯6 sorted/);
+    await page.click('#bulk .ba-card [data-choice$="|0"]');
+    await expectText(page, "#bulk .ba-h", /^検札 To look at · 2 of 2/);
+    await expectText(page, "#bulk .ba-card .ba-ask", "No stop on Day 7 at 19:30.");
+    await expectText(page, "#bulk .ba-card .ba-fn", "T019 · Lantern boat");
+    await expectText(page, "#bulk .ba-band", /^帯6 sorted/);
     await expectText(page, "#bulkPunch", "入鋏Add 6 nowthe 1 not looked at stays out · on every phone›");
 
     // 入鋏: through the same path as a stop's Edit sheet.
     await page.click("#bulkPunch");
     await added(page);
     await expectText(page, "#bulk .sheet-top", "Add ticketspunchedDone");
-    await expectText(page, "#bulk .bk-done-h", "6 tickets added to 4 stops.");
-    await expectText(page, "#bulk .bk-done-s", "7 pictures, kept in the trip. Every phone shows them on its stubs the next time it opens MAT with signal.");
-    await expectText(page, "#bulk .bk-band", "済6 punched in5 sorted + 1 you checkedSee all ›");
+    await expectText(page, "#bulk .ba-done-h", "6 tickets added to 4 stops.");
+    await expectText(page, "#bulk .ba-done-s", "7 pictures, kept in the trip. Every phone shows them on its stubs the next time it opens MAT with signal.");
+    await expectText(page, "#bulk .ba-band", "済6 punched in5 sorted + 1 you checkedSee all ›");
     assert.equal(calls(backend, "addTicket").length, 7);
     const rows = backend.fake.tables.Tickets.map((r) => [r.stop, r.who, r.seat, String(r.page)]).sort();
     assert.deepEqual(rows, [
@@ -180,14 +181,14 @@ cases.push({
     assert.deepEqual([st(SKY).tk_ref, st(SKY).tk_name], ["QZ48810", "AJEN"]);
     assert.equal(st(MEIJI).tk_ref, "GD-7700");
     assert.equal(st(SENSO).tk_ref, "KEEP-1", "never overwritten");
-    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll("#bulk .bk-next > div")].map((d) => d.textContent)), [
-      "T019 · Lantern boatnot looked at: no stop on D7",
+    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll("#bulk .ba-next > div")].map((d) => d.textContent)), [
+      "T019 · Lantern boatleft out: no stop on D7",
       "T010 · Old bookingon the list as cancelled",
       "T020 cal.icsnot a ticket file",
     ]);
-    await expectText(page, "#bulk .bk-h", "Not added · 3");
+    await expectText(page, "#bulk .ba-h", "Not added · 3");
     await page.click('#bulk [data-act="seeall"]');
-    assert.equal(await page.evaluate(() => document.querySelectorAll("#bulk .bk-list .bk-line").length), 6);
+    assert.equal(await page.evaluate(() => document.querySelectorAll("#bulk .ba-list .ba-line").length), 6);
     await page.click('#bulk [data-act="seeall"]');
     await toTop(page);
     await shot(page, "phone-added.png");
@@ -197,10 +198,10 @@ cases.push({
     await until(() => page.evaluate(() => !document.getElementById("bulk").classList.contains("is-open") && !document.getElementById("you").classList.contains("is-open") && document.getElementById("vDays").classList.contains("is-active")), "Days shows");
     // Done starts afresh.
     await openBulk(page);
-    await expectText(page, "#bulk .bk-done-h", "6 tickets added to 4 stops.");
+    await expectText(page, "#bulk .ba-done-h", "6 tickets added to 4 stops.");
     await page.click("#bulkTop");
     await openBulk(page);
-    await until(() => page.evaluate(() => !!document.querySelector("#bulk .bk-empty")), "empty again");
+    await until(() => page.evaluate(() => !!document.querySelector("#bulk .ba-empty")), "empty again");
     assert.equal(await text(page, "#bulk .sheet-top i"), "一括");
   },
 });
@@ -226,7 +227,7 @@ cases.push({
     await page.setInputFiles("#bulkList", listFile());
     await page.setInputFiles("#bulkFiles", [sky(), file("T005 Mo.png", "image/png", pngBytes(300, 300, 15))]);
     await sorted(page, 2);
-    assert.match(await text(page, "#bulk .bk-aside"), /^既 1 already there: T001 · Shibuya Sky deck is on Shibuya Sky\. Left out\.$/);
+    assert.match(await text(page, "#bulk .ba-aside"), /^既1 already there: T001 · Shibuya Sky deck is on Shibuya Sky\. Left out\.$/);
     await expectText(page, "#bulkPunch", /^入鋏Add 1 now/);
     // No signal now.
     backend.failWith = "network";
@@ -234,13 +235,13 @@ cases.push({
     const sent = calls(backend, "addTicket").length;
     await page.click("#bulkPunch");
     await added(page);
-    await expectText(page, "#bulk .bk-done-h", "1 ticket added to 1 stop.");
-    await expectText(page, "#bulk .bk-done-s", /They wait on this phone and go up when there is signal\.$/);
-    await expectText(page, "#bulk .bk-next", "T001 · Shibuya Skyalready there");
+    await expectText(page, "#bulk .ba-done-h", "1 ticket added to 1 stop.");
+    await expectText(page, "#bulk .ba-done-s", /They wait on this phone and go up when there is signal\.$/);
+    await expectText(page, "#bulk .ba-next", "T001 · Shibuya Skyalready there");
     assert.equal(backend.fake.tables.Tickets.length, 1, "nothing reached the trip");
     assert.equal(calls(backend, "addTicket").length - sent, 0, "with failWith network nothing is received");
     // Its data is kept on the phone, only its fields in mat.queue.
-    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("mat.queue") || "[]").filter((o) => o.api === "addTicket" && !o.args.ticket.data).length), 1);
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("mat.queue") || "[]").filter((o) => o.ticket && o.ticket.who === "Mo" && !("data" in o.ticket)).length), 1);
     // Signal back: it goes up.
     backend.failWith = null;
     await page.context().setOffline(false);
@@ -259,15 +260,15 @@ cases.push({
     await openBulk(page);
     assert.deepEqual(await noSideways(page), { doc: true, sheet: true, over: [] });
     await page.setInputFiles("#bulkList", file("bad.csv", "text/csv", Buffer.from("ticket_id,title\nT001,Thing\n")));
-    await expectText(page, "#bulk .bk-aside.is-warn", "表 The list has no start_date column, so it wasn’t used. The files are matched without it.");
+    await expectText(page, "#bulk .ba-aside.is-warn", "表The list has no start_date column, so it wasn’t used. The files are matched without it.");
     await page.setInputFiles("#bulkFiles", [
       file("T001 Sky order.png", "image/png", pngBytes(360, 360, 11)),
       file("hoshizora ropeway with a very long file name to wrap.png", "image/png", pngBytes(320, 320, 30)),
     ]);
     await sorted(page, 2);
     // Without the list both are cards; Shibuya Sky's file shares the stop's name.
-    await expectText(page, "#bulk .bk-h", /^検札 To look at · 1 of 2/);
-    await expectText(page, "#bulk .bk-card .ask", "Is it for this stop?");
+    await expectText(page, "#bulk .ba-h", /^検札 To look at · 1 of 2/);
+    await expectText(page, "#bulk .ba-card .ba-ask", "Is it for this stop?");
     await expectText(page, "#bulkPunch", /^入鋏Nothing to add yet/);
     assert.equal(await page.evaluate(() => document.getElementById("bulkPunch").disabled), true);
     assert.deepEqual(await noSideways(page), { doc: true, sheet: true, over: [] });
@@ -275,13 +276,13 @@ cases.push({
     await page.click('#bulk [data-other]');
     await page.selectOption("#bulk [data-pick-for]", RW2);
     await page.click("#bulk [data-put]");
-    await expectText(page, "#bulk .bk-h", /^検札 To look at · 2 of 2/);
+    await expectText(page, "#bulk .ba-h", /^検札 To look at · 2 of 2/);
     assert.deepEqual(await noSideways(page), { doc: true, sheet: true, over: [] });
     await toTop(page);
     await shot(page, "phone-320.png");
     await page.click('#bulk [data-other]');
-    await page.click("#bulk .bk-card [data-out]");
-    await expectText(page, "#bulk .bk-h", "検札 All 2 looked at");
+    await page.click("#bulk .ba-card [data-out]");
+    await expectText(page, "#bulk .ba-h", "検札 All 2 looked at");
     await expectText(page, "#bulkPunch", "入鋏Add 1 nowon every phone›");
   },
 });
@@ -320,20 +321,20 @@ cases.push({
     }, drop);
     await sorted(page, 7);
     await expectText(page, "#bulk .sheet-top i", "7 files · list of 9");
-    await expectText(page, "#bulk .bk-band", /^帯5 sorted/);
-    // The card from the keyboard: Tab reaches its choices; Enter picks.
-    await page.focus("#bulk .bk-card [data-choice]");
-    await page.keyboard.press("Tab");
-    assert.equal(await page.evaluate(() => document.activeElement.dataset.choice || ""), (await page.evaluate(() => document.querySelectorAll("#bulk .bk-card [data-choice]")[1].dataset.choice)));
-    await page.keyboard.press("Enter");
-    await expectText(page, "#bulk .bk-band", /^帯6 sorted/);
-    assert.deepEqual(await noSideways(page), { doc: true, sheet: true, over: [] });
+    await expectText(page, "#bulk .ba-band", /^帯5 sorted/);
     await toTop(page);
     await shot(page, "desktop.png");
+    // The card from the keyboard: Tab reaches its choices; Enter picks.
+    await page.focus("#bulk .ba-card [data-choice]");
+    await page.keyboard.press("Tab");
+    assert.equal(await page.evaluate(() => document.activeElement.dataset.choice || ""), (await page.evaluate(() => document.querySelectorAll("#bulk .ba-card [data-choice]")[1].dataset.choice)));
+    await page.keyboard.press("Enter");
+    await expectText(page, "#bulk .ba-band", /^帯6 sorted/);
+    assert.deepEqual(await noSideways(page), { doc: true, sheet: true, over: [] });
     await page.focus("#bulkPunch");
     await page.keyboard.press("Enter");
     await added(page);
-    await expectText(page, "#bulk .bk-done-h", "6 tickets added to 4 stops.");
+    await expectText(page, "#bulk .ba-done-h", "6 tickets added to 4 stops.");
     assert.equal(backend.fake.tables.Tickets.filter((r) => r.stop === RW2).length, 1, "the second choice, D5");
     // Escape closes it; focus back on You.
     await page.keyboard.press("Escape");

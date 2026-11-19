@@ -57,7 +57,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
   const scrim = el("div", "scrim");
   scrim.id = "bulkScrim";
   scrim.hidden = true;
-  const sheet = el("div", "sheet bk");
+  const sheet = el("div", "sheet");
   sheet.id = "bulk";
   sheet.setAttribute("role", "dialog");
   sheet.setAttribute("aria-modal", "true");
@@ -70,8 +70,8 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
   const topB = btn("", "Cancel");
   topB.id = "bulkTop";
   top.append(topT, topB);
-  const body = el("div", "bk-body");
-  const say = el("p", "bk-vh");
+  const body = el("div", "ba-body");
+  const say = el("p", "ba-vh");
   say.setAttribute("role", "status");
   const fileIn = el("input");
   fileIn.type = "file";
@@ -149,7 +149,12 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
   // One pick or drop at a time, in the order they came.
   let queue = Promise.resolve();
   function take(picked) {
-    queue = queue.then(() => takeNow(picked)).catch(() => {});
+    queue = queue.then(() => takeNow(picked)).catch(() => {
+      // Anything else that went wrong reading: what was read is kept and sorted, and it is said.
+      if (phase === "reading") phase = "sorted";
+      draw();
+      say.textContent = "A file couldn’t be read on this phone. Try a screenshot of the ticket instead.";
+    });
     return queue;
   }
   async function takeNow(picked) {
@@ -213,10 +218,10 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
   }
 
   function emptyZone() {
-    const z = el("div", "bk-empty");
+    const z = el("div", "ba-empty");
     z.append(el("b", "", "Drop the ticket files here."), el("span", "", "PDFs and pictures, all at once. Add the list (.csv) too if you have it: fewer to check by hand."));
-    const two = el("div", "bk-two");
-    const f = btn("p", "Choose files");
+    const two = el("div", "ba-two");
+    const f = btn("is-p", "Choose files");
     f.id = "bulkChoose";
     f.append(el("small", "", "PDF · PNG · JPG"));
     const l = btn("", list && !list.error ? "List chosen" : "Choose list");
@@ -228,16 +233,16 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
   }
 
   function drawReading() {
-    const p = body.querySelector(".bk-prog");
+    const p = body.querySelector(".ba-prog");
     if (!p) return;
     p.firstChild.textContent = "Reading " + reading.done + " of " + reading.total + "…";
-    p.querySelector(".bar i").style.width = (reading.total ? Math.round((100 * reading.done) / reading.total) : 0) + "%";
+    p.querySelector(".ba-bar i").style.width = (reading.total ? Math.round((100 * reading.done) / reading.total) : 0) + "%";
   }
 
   function progress(head, small, part, whole) {
-    const p = el("div", "bk-prog", head);
+    const p = el("div", "ba-prog", head);
     p.append(el("small", "", small));
-    const bar = el("div", "bar");
+    const bar = el("div", "ba-bar");
     const fill = el("i");
     fill.style.width = (whole ? Math.round((100 * part) / whole) : 0) + "%";
     bar.append(fill);
@@ -247,7 +252,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
 
   // A small round seal with a person's initial.
   const seal = (name) => {
-    const s = el("span", "bk-seal", initial(name));
+    const s = el("span", "ba-seal", initial(name));
     s.setAttribute("aria-label", "for " + name);
     return s;
   };
@@ -255,10 +260,10 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
   // The banded bundle: the top ticket (a stop with one each, else the first),
   // two edges under it, the band with the count.
   function bundle(items, { punched = false, band, small, action, actionLabel, expanded }) {
-    const wrap = el("div", "bk-bundle" + (punched ? " punched" : ""));
-    const edge1 = el("div", "tk stock");
-    const edge2 = el("div", "tk stock");
-    const topTk = el("div", "tk stock top");
+    const wrap = el("div", "ba-bundle" + (punched ? " is-punched" : ""));
+    const edge1 = el("div", "ba-tk");
+    const edge2 = el("div", "ba-tk");
+    const topTk = el("div", "ba-tk is-top");
     const pp = items.find((i) => i.who && items.filter((j) => j.stop === i.stop && j.who).length > 1);
     const first = pp || items[0];
     const mine = items.filter((i) => i.stop === first.stop);
@@ -266,18 +271,18 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     const lab = dayLabel(st);
     const each = mine.filter((i) => i.who).length > 1;
     const left = el("div");
-    left.append(el("div", "k", [lab.d, lab.when].filter(Boolean).join(" ") + (each ? " · one each" : mine.length > 1 ? " · " + mine.length + " files" : "")), el("div", "n", lab.title));
-    const s = el("div", "s");
+    left.append(el("div", "ba-k", [lab.d, lab.when].filter(Boolean).join(" ") + (each ? " · one each" : mine.length > 1 ? " · " + mine.length + " files" : "")), el("div", "ba-n", lab.title));
+    const s = el("div", "ba-s");
     if (punched) s.textContent = each ? mine.filter((i) => i.who).map((i) => initial(i.who)).join(" · ") : mine.length + (mine.length === 1 ? " ticket" : " tickets");
     else {
       for (const i of mine.slice(0, 4)) {
-        const one = el("span", "bk-id", i.rowIds.length ? i.rowIds.join(" ") : i.file.name);
+        const one = el("span", "ba-id", i.rowIds.length ? i.rowIds.join(" ") : i.file.name);
         if (i.who) one.append(seal(i.who));
         s.append(one);
       }
     }
     left.append(s);
-    const right = el("div", "pv");
+    const right = el("div", "ba-pv");
     if (first.file.pic) {
       const img = el("img");
       img.alt = "";
@@ -285,12 +290,12 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
       right.append(img);
     }
     topTk.append(left, right);
-    const b = el("div", "bk-band");
+    const b = el("div", "ba-band");
     const t = el("b");
-    t.append(el("span", punched ? "ai shu" : "ai", punched ? "済" : "帯"), band, el("small", "", small));
+    t.append(el("span", punched ? "ba-ai is-shu" : "ba-ai", punched ? "済" : "帯"), band, el("small", "", small));
     b.append(t);
     if (action) {
-      const u = btn("bk-untie", actionLabel);
+      const u = btn("ba-untie", actionLabel);
       u.dataset.act = action;
       u.setAttribute("aria-expanded", String(!!expanded));
       b.append(u);
@@ -301,7 +306,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
 
   // The stops as a picker: one group per day.
   function stopPicker(selected) {
-    const s = el("select", "bk-pick");
+    const s = el("select", "ba-pick");
     s.append(new Option("Pick a stop…", ""));
     const days = store.state.days || [];
     days.forEach((d, i) => {
@@ -329,42 +334,42 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     const sp = el("span", "", c.pages ? "First " + plural(c.pages, "page", "pages") : lab.when || "No time");
     sp.append(el("small", "", (c.pages ? lab.d + " " : "") + lab.title + (c.who ? " · for " + c.who : "")));
     b.append(el("b", "", c.pages ? "" : lab.d), sp, el("i", "", "›"));
-    if (c.pages) b.classList.add("fit");
+    if (c.pages) b.classList.add("is-fit");
     return b;
   }
 
   function cardNode(card, n, of) {
-    const c = el("div", "bk-card");
+    const c = el("div", "ba-card");
     c.dataset.card = card.key;
-    const q = el("div", "q");
+    const q = el("div", "ba-q");
     q.append(el("span", "", card.kind === "limit" ? "満員 Too many" : "どちら？ Which one?"), el("i", "", card.onList ? card.rowIds.join(" ") || "on the list" : "not on the list"));
-    const big = el("div", "big");
-    const pv = el("div", "pv");
+    const big = el("div", "ba-big");
+    const pv = el("div", "ba-pv");
     if (card.file.pic) {
       const img = el("img");
       img.alt = "";
       img.src = card.file.url || (card.file.url = url(card.file.pic.blob));
       pv.append(img);
     }
-    pv.append(el("div", "cap", card.file.name));
+    pv.append(el("div", "ba-cap", card.file.name));
     const words = el("div");
-    words.append(el("div", "fn", card.onList ? card.label : plural(card.file.pages || 1, "page", "pages")), el("div", "ask", card.ask), el("div", "hint", card.hint));
+    words.append(el("div", "ba-fn", card.onList ? card.label : card.file.kind === "application/pdf" ? "A PDF · " + plural(card.file.pages || 1, "page", "pages") : "A picture"), el("div", "ba-ask", card.ask), el("div", "ba-hint", card.hint));
     big.append(pv, words);
-    const opts = el("div", "bk-opts");
+    const opts = el("div", "ba-opts");
     card.choices.forEach((ch, i) => opts.append(choiceBtn(ch, i, card)));
     const showOther = other === card.key || !card.choices.length;
     if (!showOther) {
-      const soft = btn("soft");
+      const soft = btn("is-soft");
       soft.dataset.other = card.key;
       soft.append(el("span", "", "Another stop, or leave it out"), el("i", "", "›"));
       opts.append(soft);
     } else {
-      const box = el("div", "bk-other");
+      const box = el("div", "ba-other");
       const pick = stopPicker("");
       pick.dataset.pickFor = card.key;
-      const put = btn("bk-put", "Put it on this stop");
+      const put = btn("ba-put", "Put it on this stop");
       put.dataset.put = card.key;
-      const out = btn("bk-out", "Leave it out");
+      const out = btn("ba-out", "Leave it out");
       out.dataset.out = card.key;
       box.append(pick, put, out);
       opts.append(box);
@@ -375,8 +380,8 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
   }
 
   function aside(sealText, strong, rest, cls = "") {
-    const a = el("div", "bk-aside" + (cls ? " " + cls : ""));
-    a.append(el("span", "bk-ring", sealText));
+    const a = el("div", "ba-aside" + (cls ? " " + cls : ""));
+    a.append(el("span", "ba-ring", sealText));
     const t = el("span");
     if (strong) t.append(el("b", "", strong), " ");
     t.append(rest);
@@ -385,7 +390,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
   }
 
   function untiedList(items) {
-    const box = el("div", "bk-list");
+    const box = el("div", "ba-list");
     const days = store.state.days || [];
     let lastDay = null;
     for (const it of items) {
@@ -393,10 +398,10 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
       if (st.date !== lastDay) {
         lastDay = st.date;
         const i = days.findIndex((d) => d.date === st.date);
-        box.append(el("div", "bk-lh", "D" + (i + 1) + " " + dayLabel({ date: st.date }).when));
+        box.append(el("div", "ba-lh", "D" + (i + 1) + " " + dayLabel({ date: st.date }).when));
       }
-      const line = el("div", "bk-line" + (openLine === it.key ? " is-open" : ""));
-      const b = btn("bk-lb");
+      const line = el("div", "ba-line" + (openLine === it.key ? " is-open" : ""));
+      const b = btn("ba-lb");
       b.dataset.line = it.key;
       b.setAttribute("aria-expanded", String(openLine === it.key));
       const lab = dayLabel(st);
@@ -404,10 +409,10 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
       if (it.who) b.append(seal(it.who));
       line.append(b);
       if (openLine === it.key) {
-        const ed = el("div", "bk-ed");
+        const ed = el("div", "ba-ed");
         const pick = stopPicker(it.stop);
         pick.dataset.move = it.key;
-        const fr = el("div", "bk-for");
+        const fr = el("div", "ba-for");
         fr.append("For ");
         const ppl = people();
         for (const [v, label] of [["", ppl.length === 3 ? "All three" : "Everyone"], ...ppl.map((p) => [p, initial(p)])]) {
@@ -417,7 +422,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
           if (v) w.setAttribute("aria-label", "For " + v);
           fr.append(w);
         }
-        const out = btn("bk-out", "Leave it out");
+        const out = btn("ba-out", "Leave it out");
         out.dataset.out = it.key;
         ed.append(pick, fr, out);
         line.append(ed);
@@ -448,14 +453,14 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     }
     const total = checked.size + r.cards.length;
     if (r.cards.length) {
-      const h = el("div", "bk-h");
+      const h = el("div", "ba-h");
       h.append(el("span", "", "検札 To look at · " + (checked.size + 1) + " of " + total));
-      const dots = el("span", "bk-dots");
+      const dots = el("span", "ba-dots");
       dots.setAttribute("aria-hidden", "true");
-      for (let i = 0; i < Math.min(total, 8); i++) dots.append(el("span", i < checked.size ? "done" : i === checked.size ? "on" : ""));
+      for (let i = 0; i < Math.min(total, 8); i++) dots.append(el("span", i < checked.size ? "is-done" : i === checked.size ? "is-on" : ""));
       h.append(dots);
       nodes.push(h, cardNode(r.cards[0], checked.size + 1, total));
-      const next = el("div", "bk-next");
+      const next = el("div", "ba-next");
       for (const c of r.cards.slice(1, 3)) {
         const d = el("div");
         d.append(el("span", "", c.label), el("i", "", c.short));
@@ -463,7 +468,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
       }
       if (next.childNodes.length) nodes.push(next);
     } else if (checked.size) {
-      nodes.push(el("div", "bk-h", "検札 All " + checked.size + " looked at"));
+      nodes.push(el("div", "ba-h", "検札 All " + checked.size + " looked at"));
     }
     const there = r.out.filter((o) => o.kind === "there");
     if (there.length) {
@@ -485,7 +490,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     else if (list && r.quiet) nodes.push(aside("表", "", plural(r.quiet, "line", "lines") + " on the list " + (r.quiet === 1 ? "has" : "have") + " no file here."));
     else if (!list) {
       const a = aside("表", "", "No list: every file not matched is looked at by hand. ");
-      const b = btn("bk-link", "Choose list");
+      const b = btn("ba-link", "Choose list");
       b.id = "bulkChooseList";
       a.lastChild.append(b);
       nodes.push(a);
@@ -494,13 +499,13 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     const cnt = nodes[nodes.length - 1].lastChild;
     cnt.append("Pictures on the trip: ", el("b", "", r.now + " now, " + r.after + " after this"), ".");
     const n = sure.length;
-    const key = btn("bk-punch");
+    const key = btn("ba-punch");
     key.id = "bulkPunch";
     key.disabled = n === 0 || phase === "reading";
     const sp = el("span");
     const small = (r.cards.length ? (r.cards.length === 1 ? "the 1 not looked at stays out" : "the " + r.cards.length + " not looked at stay out") + " · " : "") + "on every phone";
     sp.append(el("b", "", "入鋏"), n ? "Add " + n + " now" : "Nothing to add yet", el("small", "", small));
-    key.append(el("span", "hole"), sp, el("i", "", "›"));
+    key.append(el("span", "ba-hole"), sp, el("i", "", "›"));
     nodes.push(key);
     return nodes;
   }
@@ -514,21 +519,21 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
       const stops = new Set(ok.map((i) => i.stop)).size;
       const pics = ok.reduce((s, i) => s + i.saved + i.waiting, 0);
       const waiting = ok.reduce((s, i) => s + i.waiting, 0);
-      nodes.push(el("p", "bk-done-h", ok.length ? plural(ok.length, "ticket", "tickets") + " added to " + plural(stops, "stop", "stops") + "." : "No ticket was added."));
+      nodes.push(el("p", "ba-done-h", ok.length ? plural(ok.length, "ticket", "tickets") + " added to " + plural(stops, "stop", "stops") + "." : "No ticket was added."));
       if (ok.length) {
-        const s = el("p", "bk-done-s");
+        const s = el("p", "ba-done-s");
         s.append(el("b", "", plural(pics, "picture", "pictures")), ", kept in the trip. Every phone shows them on its stubs the next time it opens MAT with signal.");
         if (waiting) s.append(" " + (waiting === pics ? "They wait" : waiting + " wait") + " on this phone" + (a.busy && a.busy === waiting ? " and go up in a moment." : " and go up when there is signal."));
         nodes.push(s);
         const sure = ok.filter((i) => i.from === "sure").length;
         nodes.push(bundle(ok, { punched: true, band: ok.length + " punched in", small: sure + " sorted + " + (ok.length - sure) + " you checked", action: "seeall", actionLabel: seeAll ? "Hide ‹" : "See all ›", expanded: seeAll }));
         if (seeAll) {
-          const box = el("div", "bk-list");
+          const box = el("div", "ba-list");
           for (const it of ok) {
             const st = stopOf(it.stop) || {};
             const lab = dayLabel(st);
-            const row = el("div", "bk-line");
-            const d = el("div", "bk-lb");
+            const row = el("div", "ba-line");
+            const d = el("div", "ba-lb");
             d.append(el("b", "", lab.d), el("span", "", lab.title), el("small", "", (it.rowIds.length ? it.rowIds.join(" ") + " · " : "") + plural(it.saved + it.waiting, "picture", "pictures") + (it.waiting ? ", waiting" : "")));
             if (it.who) d.append(seal(it.who));
             row.append(d);
@@ -539,11 +544,11 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
       }
       const notAdded = a.notAdded;
       if (notAdded.length) {
-        nodes.push(el("div", "bk-h", "Not added · " + notAdded.length));
-        const box = el("div", "bk-next is-flat");
+        nodes.push(el("div", "ba-h", "Not added · " + notAdded.length));
+        const box = el("div", "ba-next is-flat");
         for (const x of notAdded) {
           const d = el("div");
-          d.append(el("span", "", x.label), el("i", x.grey ? "g" : "", x.why));
+          d.append(el("span", "", x.label), el("i", x.grey ? "is-g" : "", x.why));
           box.append(d);
         }
         nodes.push(box);
@@ -552,7 +557,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
       const firstDay = ok.map((i) => (stopOf(i.stop) || {}).date).filter(Boolean).sort()[0];
       if (firstDay) {
         const n = (store.state.days || []).findIndex((d) => d.date === firstDay) + 1;
-        const go = btn("bk-plain", "Open Day " + n + " · see the stubs");
+        const go = btn("ba-plain", "Open Day " + n + " · see the stubs");
         go.id = "bulkOpenDay";
         go.dataset.day = firstDay;
         nodes.push(go);
@@ -569,7 +574,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     if (phase === "empty") {
       nodes = [emptyZone()];
       if (list && list.error) nodes.push(aside("表", "", list.error, "is-warn"));
-      const p = el("p", "bk-say");
+      const p = el("p", "ba-say");
       p.append("Yours, or anyone’s on the trip. The conductor sorts them; you only look at the odd ones. ", el("b", "", NOTHING_SENT));
       nodes.push(p);
     } else if (phase === "reading" || phase === "sorted") {
@@ -591,7 +596,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
   function refocus(sel) {
     const n = body.querySelector(sel) || sheet.querySelector(sel);
     if (n && !n.disabled) n.focus({ preventScroll: true });
-    else if (body.querySelector(".bk-card button")) body.querySelector(".bk-card button").focus({ preventScroll: true });
+    else if (body.querySelector(".ba-card button")) body.querySelector(".ba-card button").focus({ preventScroll: true });
     else topB.focus({ preventScroll: true });
   }
 
@@ -617,9 +622,9 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
       notAdded: [],
     };
     // What the sort left out goes on the Not added list: cards not looked at, then the rest.
-    for (const c of r.cards) adding.notAdded.push({ label: c.label, why: "not looked at: " + c.short });
+    for (const c of r.cards) adding.notAdded.push({ label: c.label, why: "left out: " + c.short });
     for (const o of r.out) {
-      if (o.kind === "there") adding.notAdded.push({ label: o.label + " · " + ((stopOf(o.stop) || {}).title || ""), why: "already there", grey: true });
+      if (o.kind === "there") adding.notAdded.push({ label: [o.label.split(" · ")[0], (stopOf(o.stop) || {}).title].filter(Boolean).join(" · "), why: "already there", grey: true });
       else if (o.kind === "notTicket") adding.notAdded.push({ label: o.file.name, why: o.file.unreadable || "not a ticket file", grey: true });
       else adding.notAdded.push({ label: o.label, why: o.why });
     }
