@@ -644,10 +644,11 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
   // Fix round 1 (I2): three steps, so that nothing the person confirmed hangs
   // on anything else, and closing MAT part way loses nothing confirmed.
   // 1. Every picture is made (a PDF's pages drawn here) and put in the keep.
-  // 2. Then every one is handed to store.addTicket in one go, the single
-  //    add's own path: each is in mat.queue (its data in the keep) before the
-  //    first leaves, and one with no signal waits on the phone and goes up
-  //    later, after a reload too. Their outcomes are waited for together.
+  // 2. Then the pictures are handed to store.addTicket one at a time (fix
+  //    round 2, R1), each one's outcome awaited before the next, as the
+  //    single add does. One with no signal waits on the phone (in mat.queue,
+  //    its data in the keep) and goes up later through the store's flush,
+  //    which is one at a time, after a reload too.
   // 3. Then the stops' facts, each worked out as it is sent (I1).
   // A wipe (Forget, a refused key) or Cancel stops waiting at once (aborts).
 
@@ -748,34 +749,32 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     await orAbort(Promise.race([Promise.all(puts), pause(KEEP_WAIT_MS)]));
     if (dead()) return;
 
-    // 2. All handed over at once: each one waits on the phone if it has to.
+    // 2. Handed over ONE AT A TIME, each one's outcome awaited before the next, as the single add does (fix round 2, R1): never two ticket sends of ours in flight. One that cannot go up (no signal, busy) settles as waiting and the next is handed over; with no signal the store keeps each without sending it.
     adding.step = "sending";
     adding.pics = pics.length;
     const liveOn = (id) => (store.state.tickets || []).filter((t) => t && t.stop === id && !t.gone);
-    const outcomes = pics.map(({ it, id, pic, k }) => {
+    draw();
+    for (const { it, id, pic, k } of pics.splice(0)) {
+      if (dead()) break;
       const sameWho = liveOn(it.stop).filter((t) => (t.who || "") === it.who).length;
       const token = store.addTicket({ id, stop: it.stop, who: it.who, seat: seatFor(it, rows), page: Math.min(LIMITS.perStop, Math.max(k + 1, sameWho + 1)), mime: pic.mime, w: pic.w, h: pic.h, data: pic.data });
-      return store.ticketOutcome(token).then((res) => {
-        if (mine !== gen) return;
-        if (res && res.saved) it.saved += 1;
-        else if (res && res.reason === "queued") {
-          it.waiting += 1;
-          if (res.busy) {
-            it.busy += 1;
-            adding.busy += 1;
-          }
-        } else {
-          it.failed += 1;
-          it.message = (res && res.message) || "That picture wasn’t saved.";
-          keep.drop(id);
+      const res = await orAbort(store.ticketOutcome(token));
+      if (mine !== gen) return;
+      if (res && res.saved) it.saved += 1;
+      else if (res && res.reason === "queued") {
+        it.waiting += 1;
+        if (res.busy) {
+          it.busy += 1;
+          adding.busy += 1;
         }
-        adding.settled += 1;
-        draw();
-      });
-    });
-    pics.length = 0;
-    draw();
-    await orAbort(Promise.all(outcomes));
+      } else {
+        it.failed += 1;
+        it.message = (res && res.message) || "That picture wasn’t saved.";
+        keep.drop(id);
+      }
+      adding.settled += 1;
+      draw();
+    }
     if (mine !== gen) return;
     for (const it of adding.items) {
       // Fix round 1, M9: which limit cut a PDF.

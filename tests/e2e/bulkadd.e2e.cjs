@@ -377,32 +377,44 @@ cases.push({
     await page.setInputFiles("#bulkFiles", FILES().slice(0, 5));
     await sorted(page, 5);
     await expectText(page, "#bulkPunch", /^入鋏Add 5 now/);
-    // Two pictures land; the other four leave and no reply ever comes (a tunnel).
+    // Two pictures land; the third leaves and no reply comes (a tunnel). Every ticket request is counted while it is out,
+    // and each takes a moment, so two at once would show (fix round 2, R1: never more than one in flight, first run and after the reload).
     const handle = backend.handle;
     let landed = 0;
+    let out = 0;
+    let most = 0;
+    let sent = 0;
     const held = [];
     backend.handle = async (body) => {
-      if (body.action === "addTicket") {
+      if (body.action !== "addTicket") return handle(body);
+      sent += 1;
+      out += 1;
+      most = Math.max(most, out);
+      try {
+        await new Promise((r) => setTimeout(r, 40));
         if (landed >= 2) {
           held.push(body);
-          return new Promise(() => {});
+          throw new Error("network");
         }
         landed += 1;
+        return await handle(body);
+      } finally {
+        out -= 1;
       }
-      return handle(body);
     };
     await page.click("#bulkPunch");
-    await until(() => held.length === 4, "two land, four are on their way", 20000);
+    await until(() => held.length === 1, "two land, the third is on its way and gets no reply", 20000);
     await until(async () => (await queued(page)).length === 4, "the four not landed are in mat.queue");
+    assert.equal(sent, 3, "after the first no-reply the rest wait on the phone without being sent");
+    assert.equal(most, 1, "at most one ticket request in flight (first run)");
     // Every one confirmed is on the phone before any reply: in mat.queue without its data, its picture in the keep.
     const q = await queued(page);
     assert.equal(q.some((x) => x.data), false, "no picture data in mat.queue");
     const kept = await keptIds(page);
     for (const x of q) assert.ok(kept.includes(x.id), "kept: " + x.id);
-    assert.equal(await page.evaluate(() => !!document.querySelector("#bulk .ba-done-h")), false, "still adding");
+    await until(() => page.evaluate(() => !!document.querySelector("#bulk .ba-done-h")), "the run ends");
     assert.equal(backend.fake.tables.Tickets.length, 2);
     // No signal now; MAT is closed and opened again.
-    backend.handle = handle;
     backend.failWith = "network";
     await page.reload();
     await page.clock.resume();
@@ -410,12 +422,16 @@ cases.push({
     assert.deepEqual((await queued(page)).map((x) => x.id).sort(), q.map((x) => x.id).sort(), "still waiting after the reload");
     // One request that left before the close lands late on the backend.
     assert.equal((await backend.fake(held[0])).ok, true);
-    // Signal back.
+    // Signal back: the waiting ones go up one after another.
     backend.failWith = null;
+    landed = -100;
+    sent = 0;
     await page.evaluate(() => globalThis.__matTest.store.checkRev());
     await until(async () => backend.fake.tables.Tickets.length === 6 && (await queued(page)).length === 0, "every confirmed ticket arrives", 20000);
     await page.evaluate(() => globalThis.__matTest.store.checkRev());
     await page.evaluate(() => globalThis.__matTest.store.idle());
+    assert.equal(most, 1, "at most one ticket request in flight (after the reload)");
+    assert.ok(sent >= 3, "the waiting ones were sent after the reload");
     const rows = backend.fake.tables.Tickets;
     assert.equal(rows.length, 6, "exactly once");
     assert.equal(new Set(rows.map((r) => r.id)).size, 6);
@@ -425,6 +441,46 @@ cases.push({
     ].sort());
     // Each with its picture's data.
     for (const r of rows) assert.ok(backend.fake.tables.TicketData.some((d) => d.ticket === r.id), "data for " + r.id);
+  },
+});
+
+cases.push({
+  name: "fix round 2, R1: with signal and slow replies the pictures go up one at a time, in order, the next only after the last one's reply",
+  async run({ page }) {
+    const backend = makeBackend(TRIP, { now: NOON12 });
+    await ready(page, { backend });
+    await openBulk(page);
+    await page.setInputFiles("#bulkList", listFile());
+    await page.setInputFiles("#bulkFiles", FILES().slice(0, 5));
+    await sorted(page, 5);
+    const handle = backend.handle;
+    let out = 0;
+    let most = 0;
+    let begun = 0;
+    let replied = 0;
+    let early = 0;
+    backend.handle = async (body) => {
+      if (body.action !== "addTicket") return handle(body);
+      // A request that starts before the one before it was answered is a second one in flight.
+      if (begun !== replied) early += 1;
+      begun += 1;
+      out += 1;
+      most = Math.max(most, out);
+      try {
+        await new Promise((r) => setTimeout(r, 60));
+        return await handle(body);
+      } finally {
+        out -= 1;
+        replied += 1;
+      }
+    };
+    await page.click("#bulkPunch");
+    await until(() => page.evaluate(() => !!document.querySelector("#bulk .ba-done-h")), "the run ends", 30000);
+    assert.equal(begun, 6, "six pictures, six requests");
+    assert.equal(most, 1, "never two ticket requests in flight");
+    assert.equal(early, 0, "each request starts after the last was answered");
+    assert.equal(backend.fake.tables.Tickets.length, 6);
+    assert.equal(new Set(backend.fake.tables.Tickets.map((r) => r.id)).size, 6);
   },
 });
 
