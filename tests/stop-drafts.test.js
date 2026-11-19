@@ -19,3 +19,13 @@ test("stop drafts survive reopening, isolate people and days, and retain a newer
   again.clear(again.read());
   assert.equal(a.read(), null);
 });
+
+test("a second editing session preserves other draft fields and their original values", async () => {
+  const { updateStopDraft } = await import("../js/views/stopsheet.js");
+  const first = updateStopDraft(null, { stWhat: "Walk", stTime: "10:00" }, { stWhat: "Walk", stTime: "11:00" }, null);
+  const base = { stWhat: "Walk", stTime: "12:00", stTkRef: "private-marker" };
+  const next = updateStopDraft(first, base, { ...base, stWhat: "Park", stTkRef: "different-private-marker" }, null);
+  assert.deepEqual(next.fields, { stTime: "11:00", stWhat: "Park" });
+  assert.deepEqual(next.base, { stTime: "10:00", stWhat: "Walk" });
+  assert.doesNotMatch(JSON.stringify(next), /private-marker/);
+});

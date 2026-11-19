@@ -101,6 +101,21 @@ function problem(v) {
   return null;
 }
 
+// Retain fields from an earlier opening until the user edits them. Keep the
+// original value alongside each edit so a restore can detect intervening changes.
+export function updateStopDraft(previous, original, values, addId) {
+  const fields = { ...previous?.fields };
+  const base = { ...previous?.base };
+  delete fields.stTkRef;
+  delete base.stTkRef;
+  for (const [key, value] of Object.entries(values)) {
+    if (key === "stTkRef" || original[key] === value) continue;
+    fields[key] = value;
+    if (!(key in base)) base[key] = original[key];
+  }
+  return Object.keys(fields).length ? { fields, base, addId } : null;
+}
+
 // One record per person and stop (or trip day for a new stop). Compare before
 // removal so a late save cannot clear a newer draft from another opening.
 export function stopDrafts(storage, scope) {
@@ -179,25 +194,26 @@ export function mountStopSheet(root, store, { keep = null, storage = null } = {}
   let drafts = null;
   let originalInputs = {};
   let draft = null;
+  let openingDraft = null;
 
   // Only editable text, checkbox values and the retry id belong here. Ticket
   // files use the separate ticket store. Preserve the raw text as typed.
   function formValues() {
     const controls = [...Object.values(f), pin, ...(withTix ? part.inputs() : [])];
-    return Object.fromEntries(controls.map((field) => [
+    return Object.fromEntries(controls.filter((field) => field.id !== "stTkRef").map((field) => [
       field.id, field.type === "checkbox" ? field.checked : field.value,
     ]));
   }
 
   function captureDraft() {
     if (!drafts || !mode) return;
-    const fields = diff(originalInputs, formValues());
-    if (!Object.keys(fields).length) {
+    const next = updateStopDraft(openingDraft, originalInputs, formValues(), addId);
+    if (!next) {
       drafts.clear(draft);
       draft = null;
       return;
     }
-    draft = { fields, addId };
+    draft = next;
     drafts.write(draft);
   }
 
@@ -340,9 +356,10 @@ export function mountStopSheet(root, store, { keep = null, storage = null } = {}
     originalInputs = formValues();
     const trip = store.state.trip;
     drafts = storage && trip && store.state.me
-      ? stopDrafts(storage, [trip.name, trip.start, store.state.me, mode, stopId || day])
+      ? stopDrafts(storage, [trip.name, trip.start, store.state.me, mode, ...(stopId ? [stopId] : [day, addId])])
       : null;
     draft = drafts ? drafts.read() : null;
+    openingDraft = draft;
     head.textContent = title;
     const dh = dayHead(day);
     dayLine.replaceChildren(el("b", "", dh.en), el("i", "", dh.jp));
@@ -363,7 +380,7 @@ export function mountStopSheet(root, store, { keep = null, storage = null } = {}
     mode = "add";
     date = day;
     stopId = null;
-    addId = null;
+    addId = newId();
     fill({});
     show("Add a stop", day, "Add stop");
     return true;
@@ -394,6 +411,7 @@ export function mountStopSheet(root, store, { keep = null, storage = null } = {}
     mode = null;
     drafts = null;
     draft = null;
+    openingDraft = null;
     stopId = null;
     addId = null;
     refused = "";
@@ -472,7 +490,8 @@ export function mountStopSheet(root, store, { keep = null, storage = null } = {}
     update();
     const sentAdd = mode === "add" ? now : null;
     const savingDrafts = drafts;
-    const savingDraft = draft;
+    const submitted = formValues();
+    const savingDraft = draft && Object.entries(draft.fields).every(([field, value]) => submitted[field] === value) ? draft : null;
     store.outcome(token).then((out) => {
       if (out && out.saved && savingDrafts) savingDrafts.clear(savingDraft);
       if (mine !== session) {

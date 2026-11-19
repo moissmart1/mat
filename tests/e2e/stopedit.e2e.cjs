@@ -170,6 +170,24 @@ function reach(page, selector, scroll = false) {
 
 module.exports = [
   {
+    name: "unsent new stops on the same day have separate drafts after a reload",
+    async run({ page }) {
+      await ready(page);
+      for (const title of ["Walk", "Lunch"]) {
+        await openAdd(page);
+        await page.fill("#stWhat", title);
+        await page.click("#stDone");
+        await waitSheetClosed(page);
+      }
+      await page.reload();
+      const drafts = await page.evaluate(() => Object.keys(localStorage)
+        .filter((key) => key.startsWith("mat.stopDraft."))
+        .map((key) => JSON.parse(localStorage.getItem(key))));
+      assert.deepEqual(drafts.map((draft) => draft.fields.stWhat).sort(), ["Lunch", "Walk"]);
+      assert.equal(new Set(drafts.map((draft) => draft.addId)).size, 2);
+    },
+  },
+  {
     name: "add a stop",
     async run({ page }) {
       const backend = await ready(page);
