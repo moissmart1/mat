@@ -514,7 +514,10 @@ cases.push({
   name: "a minute passing changes the lead line in place: focus returns to the opener after the stub, and the picture is not redrawn",
   async run({ page }) {
     const backend = await ready(page);
+    // Every picture has reached this phone first: a late one is a real change that redraws the case.
+    await kept(page, [MEIJI, LUNCH, SKY, EXPRESS]);
     await goTickets(page);
+    await until(() => page.evaluate(() => document.querySelector('.pc-pk[data-id="planstop1206"]').classList.contains("is-needs")), "the tea ceremony settles on needs signal");
     await expectText(page, "#pcWin .pc-lv", "こんどLeave by 13:30 · in 10 min");
     await until(() => page.evaluate(() => {
       const img = document.querySelector("#pcWin .pc-th img");
