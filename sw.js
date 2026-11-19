@@ -21,7 +21,7 @@
 //   script.googleusercontent.com), and anything else not listed here.
 // - Only OK answers are ever kept.
 
-const SW_VERSION = "8ea7eb8ac8";
+const SW_VERSION = "da37569fac";
 const SHELL_CACHE = "mat-shell-" + SW_VERSION;
 const FONT_CACHE = "mat-fonts";
 
@@ -46,6 +46,7 @@ const SHELL = [
   "css/tickets.css",
   "js/api.js",
   "js/app.js",
+  "js/autoadd.js",
   "js/board.js",
   "js/bulk.js",
   "js/clip.js",

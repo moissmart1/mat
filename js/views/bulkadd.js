@@ -24,11 +24,28 @@
 // textContent; a thumbnail is an <img> of a picture the phone made itself.
 // Closing the sheet any way but Cancel keeps what was sorted (or the adding
 // going on); Cancel throws it away, Done after adding starts afresh.
+//
+// Tickets from the list by themselves (auto-add, option A, 2026-11-19): on
+// the owner's phone only (store.state.ticketList), the sheet also looks at
+// the planner's list and the ticket folder (store.listTickets, at start and
+// at most every 10 minutes while MAT is open: maybeCheckList; Check the list
+// now: checkList({ force })), compares them with the trip's pictures by their
+// tie (js/autoadd.js) and tells You what it found (onList({ text, error })),
+// the notice "4 new tickets from the list". Its Check opens this sheet in list
+// mode (openList): only the files that need something are fetched, one at a
+// time (store.listTicketFile), read exactly as dropped files are, and sorted
+// in the same review; a changed or cancelled line is a card, never acted on
+// by itself; a stop someone filled by hand gets nothing from the list. 入鋏
+// adds them through the same path, each with its tie (`from`), and takes off
+// the old pictures a card said to (store.removeTicket: soft, undoable). What
+// the list brings is held in memory only and wiped with the rest. A line
+// left out is remembered on this phone (mat.listSkip: ties only).
 
 import { LIMITS, sniff, shrink, shrinkCanvas, pdfPages } from "../tickets.js";
 import { parseList, sortFiles, factsFor, seatFor, stopLabel } from "../bulk.js";
 import { newId } from "../time.js";
 import { minutesOf } from "../plan.js";
+import { listPlan, byHand, noticeText, readSkip, writeSkip } from "../autoadd.js";
 
 function el(tag, cls, text) {
   const n = document.createElement(tag);
@@ -56,7 +73,17 @@ async function hashOf(blob) {
 
 const NOTHING_SENT = "Nothing is sent until 入鋏.";
 
-export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose = () => {} } = {}) {
+const SKIP_KEY = "mat.listSkip";
+const LIST_GAP_MS = 10 * 60 * 1000;
+const LIST_FILE_MAX = 4000000;
+const fromB64 = (data, mime) => {
+  const raw = atob(data);
+  const b = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) b[i] = raw.charCodeAt(i);
+  return new Blob([b], { type: mime });
+};
+
+export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose = () => {}, onList = () => {}, storage = null, now = () => Date.now() } = {}) {
   const scrim = el("div", "scrim");
   scrim.id = "bulkScrim";
   scrim.hidden = true;
@@ -108,6 +135,45 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
   let seeAll = false;
   let urls = [];
   let gen = 0; // one per Cancel / Done: work begun before it is dropped
+  // ---- tickets from the list (auto-add) ----
+  let mode = "drop"; // "drop" (files picked or dropped) | "list" (opened from the notice)
+  let listData = null; // { rows, files, at }: the last look, in memory only
+  let listErr = ""; // the last look's refusal (the desk or the planner can't be reached)
+  let plan = null; // listPlan of listData against the trip as it is now
+  let listGen = 0; // one per wipe: a look begun before it is dropped
+  let lastLook = null;
+  let looking = null;
+  let lanswers = new Map(); // a changed or cancelled line's card -> "replace" | "first" | "add" | "off" | "keep"
+  let chgFiles = new Map(); // a changed line's card -> the new files, fetched and read
+  let fetching = { done: 0, total: 0, failed: [] };
+  let handPre = []; // lines not fetched: their stop was filled by hand
+  const store_ = () => {
+    try {
+      return storage || globalThis.localStorage || null;
+    } catch {
+      return null;
+    }
+  };
+  let skip = (() => {
+    try {
+      const st = store_();
+      return readSkip(st ? st.getItem(SKIP_KEY) : null);
+    } catch {
+      return new Set();
+    }
+  })();
+  function addSkip(ties) {
+    for (const t of ties) if (t) {
+      skip.delete(t);
+      skip.add(t);
+    }
+    try {
+      const st = store_();
+      if (st) st.setItem(SKIP_KEY, writeSkip(skip));
+    } catch {
+      // kept for this visit only
+    }
+  }
 
   const url = (blob) => {
     const u = URL.createObjectURL(blob);
@@ -132,7 +198,210 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     }
   }
 
-  const sorted = () => sortFiles({ files, rows: list && !list.error ? list.rows : [], listError: list ? list.error : null, state: store.state, answers, isThere });
+  const sortedFiles = () => sortFiles({ files, rows: list && !list.error ? list.rows : [], listError: list ? list.error : null, state: store.state, answers, isThere });
+  // In list mode: Mo's rule (a stop filled by hand gets nothing from the
+  // list), the list's own quiet counts, and the changed and cancelled lines'
+  // cards after the files' own.
+  function sorted() {
+    const r = sortedFiles();
+    if (mode !== "list") return r;
+    const hand = byHand(r.items, store.state.tickets);
+    for (const it of hand.out) r.out.push({ kind: "hand", file: it.file, label: it.label, key: it.key, stop: it.stop, why: "filled by hand" });
+    r.items = hand.keep;
+    r.quiet = 0;
+    const cards = listCards();
+    r.cards = r.cards.concat(cards.filter((c) => !lanswers.has(c.key)));
+    r.listDone = cards.filter((c) => lanswers.has(c.key)).map((c) => ({ card: c, act: lanswers.get(c.key) }));
+    let after = r.now + r.items.reduce((n, i) => n + i.pages, 0);
+    for (const { card, act } of r.listDone) {
+      if (act === "replace" || act === "first" || act === "add") after += card.newPages;
+      if (act === "replace" || act === "first" || act === "off") after -= card.drop.length;
+    }
+    r.after = after;
+    return r;
+  }
+
+  // ---- tickets from the list (auto-add) ----
+
+  const stopOf_ = (id) => (store.state.stops || []).find((s) => s && s.id === id && !s.deleted);
+  const onStopNow = (id) => (store.state.tickets || []).filter((t) => t && !t.gone && t.stop === id).length;
+  const where = (stopId) => {
+    const st = stopOf_(stopId);
+    if (!st) return "its stop";
+    const lab = stopLabel(st, store.state.days || []);
+    return [lab.d, lab.title].filter(Boolean).join(" · ");
+  };
+  const lineTitle = (row) => (row ? String(row.title || row.provider || "").trim() : "");
+
+  // The changed and cancelled lines as cards (choices: act buttons, not stops).
+  function listCards() {
+    if (mode !== "list" || !plan) return [];
+    const out = [];
+    for (const c of plan.changed) {
+      const got = chgFiles.get(c.key) || [];
+      const label = [c.tid, lineTitle(c.row)].filter(Boolean).join(" · ");
+      const newPages = got.reduce((n, f) => n + Math.max(1, f.pages || 1), 0);
+      const stopGone = !stopOf_(c.stop);
+      if (c.add.length && !got.length && !c.drop.length) continue; // its file could not be fetched: said in the asides
+      const base = { kind: "changed", key: c.key, label, file: got[0] || null, onList: true, rowIds: [c.tid], who: c.who, stop: c.stop, drop: c.drop, got, newPages, choices: [] };
+      if (stopGone) {
+        out.push({ ...base, ask: c.tid + "’s stop is no longer on the trip.", hint: "Add its new file from Add tickets by hand.", short: "its stop was removed", lchoices: [{ act: "keep", label: "Leave it", sub: "nothing changes" }] });
+        continue;
+      }
+      if (got.length && c.drop.length) {
+        const fits = onStopNow(c.stop) + newPages <= LIMITS.perStop;
+        const pics = c.drop.length === 1 ? "its picture" : "its " + c.drop.length + " pictures";
+        out.push({ ...base, ask: c.tid + "’s file changed in the list: replace " + pics + " on " + where(c.stop) + "?", hint: fits ? "The old ones come off afterwards and can be put back from History." : "Adding first would pass " + LIMITS.perStop + " pictures on the stop.", short: "file changed", lchoices: [fits ? { act: "replace", label: "Replace them", sub: plural(newPages, "new page", "new pages") + " in, then the old off" } : { act: "first", label: "Take the old ones off first", sub: "then add the new " + plural(newPages, "page", "pages") }, { act: "keep", label: "Keep the old ones", sub: "the new file stays out" }] });
+      } else if (got.length) {
+        const fits = onStopNow(c.stop) + newPages <= LIMITS.perStop;
+        out.push({ ...base, ask: c.tid + " has another file in the list: add it to " + where(c.stop) + "?", hint: fits ? "Its other pictures stay." : "It would pass " + LIMITS.perStop + " pictures on the stop.", short: "another file", lchoices: (fits ? [{ act: "add", label: "Add it", sub: plural(newPages, "page", "pages") }] : []).concat([{ act: "keep", label: "Leave it out", sub: "nothing changes" }]) });
+      } else {
+        const pics = c.drop.length === 1 ? "its picture" : "its " + c.drop.length + " pictures";
+        out.push({ ...base, ask: "A file of " + c.tid + " is gone from the list: take " + pics + " off " + where(c.stop) + "?", hint: "They can be put back from History.", short: "file gone from the list", lchoices: [{ act: "off", label: "Take them off", sub: plural(c.drop.length, "picture", "pictures") }, { act: "keep", label: "Leave them", sub: "nothing changes" }] });
+      }
+    }
+    for (const c of plan.cancelled) {
+      const stops = [...new Set(c.tickets.map((t) => t.stop))];
+      const on = stops.map(where).join(", ");
+      const label = [c.tid, lineTitle(c.row)].filter(Boolean).join(" · ");
+      const ask = c.why === "cancelled" ? c.tid + " is " + (c.status || "not active").toLowerCase() + " in the list: take its pictures off " + on + "?" : c.why === "gone" ? c.tid + " is gone from the list: take its pictures off " + on + "?" : c.tid + "’s file is gone from the list: take its pictures off " + on + "?";
+      out.push({ kind: "cancelled", key: c.key, label, file: null, onList: !!c.row, rowIds: [c.tid], who: "", stop: stops[0], drop: c.tickets, got: [], newPages: 0, choices: [], ask, hint: plural(c.tickets.length, "picture", "pictures") + ". They can be put back from History.", short: c.why === "cancelled" ? "cancelled in the list" : "gone from the list", lchoices: [{ act: "off", label: "Take them off", sub: plural(c.tickets.length, "picture", "pictures") }, { act: "keep", label: "Leave them", sub: "nothing changes" }] });
+    }
+    return out;
+  }
+
+  // What the notice says: the new lines that would go in or need a look, and the changed or cancelled ones.
+  function noticeNow() {
+    if (!plan || !listData) return "";
+    const stubs = plan.fresh.map((f) => ({ key: f.file.h, name: f.file.name, kind: f.file.mime, pages: 1, sig: null }));
+    const r = sortFiles({ files: stubs, rows: listData.rows, state: store.state });
+    const fresh = byHand(r.items, store.state.tickets).keep.length + r.cards.length;
+    return noticeText({ fresh, other: plan.changed.length + plan.cancelled.length });
+  }
+  let told = "";
+  function replan() {
+    plan = listData ? listPlan({ rows: listData.rows, files: listData.files, state: store.state, skip }) : null;
+    const text = noticeNow();
+    const error = text ? "" : listErr;
+    const sig = text + "|" + error;
+    if (sig !== told) {
+      told = sig;
+      onList({ text, error });
+    }
+  }
+
+  // A look at the list: the owner's phone only, one at a time.
+  function checkList({ force = false } = {}) {
+    if (store.state.ticketList !== true || store.state.status !== "ready") return Promise.resolve({ ok: false, code: "off" });
+    if (looking) return looking;
+    const mine = listGen;
+    lastLook = now();
+    looking = (async () => {
+      try {
+        const d = await store.listTickets({ force });
+        if (mine !== listGen) return { ok: false, code: "late" };
+        listData = { rows: Array.isArray(d && d.rows) ? d.rows : [], files: Array.isArray(d && d.files) ? d.files : [], at: (d && d.at) || "" };
+        listErr = "";
+        replan();
+        return { ok: true };
+      } catch (err) {
+        if (mine !== listGen) return { ok: false, code: "late" };
+        const code = (err && err.code) || "server";
+        // No signal: what the last look found still stands. Anything else (the
+        // desk or the planner can't be reached, the setup gone): said in the
+        // notice in place of what it found, never quietly.
+        if (code !== "network") {
+          listErr = (err && err.message) || "The list can’t be reached right now.";
+          listData = null;
+        }
+        replan();
+        return { ok: false, code, message: (err && err.message) || "" };
+      } finally {
+        if (mine === listGen) looking = null;
+      }
+    })();
+    return looking;
+  }
+  // At start, and at most every 10 minutes while MAT is open.
+  function maybeCheckList() {
+    if (store.state.ticketList !== true || store.state.status !== "ready" || looking) return null;
+    if (lastLook !== null && now() - lastLook < LIST_GAP_MS) return null;
+    return checkList();
+  }
+
+  // The notice's Check (and Check the list now): this sheet in list mode,
+  // fetching only the files that need something, one at a time.
+  async function openList({ force = false } = {}) {
+    if (phase === "adding" || phase === "reading" || phase === "fetching" || (mode === "list" && phase === "sorted" && !force)) return open();
+    reset();
+    mode = "list";
+    const mine = gen;
+    phase = "fetching";
+    fetching = { done: 0, total: 0, failed: [] };
+    open();
+    draw();
+    if (force || !listData) await checkList({ force: true });
+    if (mine !== gen) return;
+    if (!listData || !plan) {
+      phase = "empty";
+      mode = "drop";
+      draw();
+      say.textContent = listErr || "The list couldn’t be looked at. Try again when there is signal.";
+      return;
+    }
+    // A line whose stop was filled by hand is not even fetched (Mo's rule): said in the asides.
+    const stubs = plan.fresh.map((f) => ({ key: f.file.h, name: f.file.name, kind: f.file.mime, pages: 1, sig: null }));
+    const pre = sortFiles({ files: stubs, rows: listData.rows, state: store.state });
+    const handOut = byHand(pre.items, store.state.tickets).out;
+    const notNeeded = new Set(handOut.filter((it) => !pre.items.some((x) => x.file.key === it.file.key && !handOut.includes(x))).map((it) => it.file.key));
+    handPre = handOut.filter((it) => notNeeded.has(it.file.key)).map((it) => ({ label: it.label, stop: it.stop }));
+    const want = plan.fresh.filter((f) => !notNeeded.has(f.file.h)).map((f) => ({ file: f.file, tie: f.tie, card: null }))
+      .concat(...plan.changed.map((c) => c.add.map((a) => ({ file: a.file, tie: a.tie, card: c.key }))));
+    fetching.total = want.length;
+    draw();
+    for (const w of want) {
+      if (mine !== gen) return;
+      if (w.file.size > LIST_FILE_MAX) {
+        fetching.failed.push({ label: w.file.name, why: "too big to fetch: add it by hand" });
+        fetching.done += 1;
+        continue;
+      }
+      let got = null;
+      try {
+        got = await store.listTicketFile(w.file.h);
+      } catch (err) {
+        if (mine !== gen) return;
+        fetching.failed.push({ label: w.file.name, why: err && err.code === "network" ? "no signal: Check the list again later" : (err && err.message) || "it couldn’t be fetched" });
+      }
+      if (mine !== gen) return;
+      if (got && typeof got.data === "string") {
+        let raw = null;
+        try {
+          raw = fromB64(got.data, got.mime);
+        } catch {
+          raw = null;
+        }
+        const f = raw ? await readOne(raw, w.file.name) : null;
+        if (mine !== gen) return;
+        if (f && f.pic) {
+          f.tie = w.tie;
+          if (w.card) {
+            if (!chgFiles.has(w.card)) chgFiles.set(w.card, []);
+            chgFiles.get(w.card).push(f);
+          } else files.push(f);
+        } else fetching.failed.push({ label: w.file.name, why: "couldn’t be read on this phone" });
+      }
+      fetching.done += 1;
+      draw();
+    }
+    await hashKept();
+    if (mine !== gen) return;
+    list = { rows: listData.rows, error: null, warn: [], name: "the list" };
+    phase = "sorted";
+    afterChange();
+    const r = sorted();
+    say.textContent = r.items.length || r.cards.length ? "Sorted from the list." : "Nothing new on the list.";
+  }
 
   // ---- reading what was picked or dropped ----
 
@@ -154,6 +423,34 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     other = null;
     if (phase === "empty") draw();
     else afterChange();
+  }
+
+  // One file read on this phone: its kind by its first bytes, its first
+  // picture (a PDF's first page; the rest are drawn at 入鋏) and its pages.
+  async function readOne(raw, name) {
+    const f = { key: newId(), name: String(name || "A file").slice(0, 80), raw, kind: null, pages: 0, sig: null, pic: null, url: "", unreadable: "" };
+    try {
+      f.kind = await sniff(raw);
+      if (f.kind === "image/png" || f.kind === "image/jpeg") {
+        f.pic = await shrink(raw);
+        f.pages = 1;
+      } else if (f.kind === "application/pdf") {
+        const got = await pdfPages(raw, {
+          max: 1,
+          each: async (canvas) => {
+            f.pic = await shrinkCanvas(canvas);
+          },
+        });
+        f.pages = got.total;
+        if (!f.pic) throw new Error("no page");
+      }
+    } catch {
+      f.unreadable = "couldn’t be read on this phone";
+      f.kind = null;
+      f.pic = null;
+    }
+    if (f.pic) f.sig = { mime: f.pic.mime, w: f.pic.w, h: f.pic.h, size: f.pic.data.length, hash: await hashOf(f.pic.blob) };
+    return f;
   }
 
   // One pick or drop at a time, in the order they came.
@@ -179,29 +476,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     reading = { done: 0, total: rest.length };
     draw();
     for (const raw of rest) {
-      const f = { key: newId(), name: String(raw.name || "A file").slice(0, 80), raw, kind: null, pages: 0, sig: null, pic: null, url: "", unreadable: "" };
-      try {
-        f.kind = await sniff(raw);
-        if (f.kind === "image/png" || f.kind === "image/jpeg") {
-          f.pic = await shrink(raw);
-          f.pages = 1;
-        } else if (f.kind === "application/pdf") {
-          // The first page only, for its picture and already-there; the rest are drawn at 入鋏.
-          const got = await pdfPages(raw, {
-            max: 1,
-            each: async (canvas) => {
-              f.pic = await shrinkCanvas(canvas);
-            },
-          });
-          f.pages = got.total;
-          if (!f.pic) throw new Error("no page");
-        }
-      } catch {
-        f.unreadable = "couldn’t be read on this phone";
-        f.kind = null;
-        f.pic = null;
-      }
-      if (f.pic) f.sig = { mime: f.pic.mime, w: f.pic.w, h: f.pic.h, size: f.pic.data.length, hash: await hashOf(f.pic.blob) };
+      const f = await readOne(raw, raw.name);
       if (mine !== gen) return;
       files.push(f);
       reading.done += 1;
@@ -222,7 +497,9 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
 
   function drawTop() {
     if (phase === "empty") topI.textContent = "一括";
+    else if (phase === "fetching") topI.textContent = "from the list";
     else if (phase === "adding" || phase === "added") topI.textContent = "punched";
+    else if (mode === "list") topI.textContent = "from the list · " + plural(files.length + [...chgFiles.values()].reduce((n, l) => n + l.length, 0), "file", "files");
     else topI.textContent = plural(files.length, "file", "files") + (list && !list.error ? " · list of " + list.rows.length : "");
     topB.textContent = phase === "adding" || phase === "added" ? "Done" : "Cancel";
   }
@@ -240,6 +517,15 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     two.append(f, l);
     z.append(two);
     return z;
+  }
+
+  // The owner's phone: the list and its folder, looked at now.
+  function checkLine() {
+    const a = aside("表", "", "The planner’s list and its ticket files: ");
+    const b = btn("ba-link", "Check the list now");
+    b.id = "bulkCheckList";
+    a.lastChild.append(b);
+    return a;
   }
 
   function drawReading() {
@@ -391,6 +677,40 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     return c;
   }
 
+  // A changed or cancelled line from the list: the question and two acts.
+  function listCardNode(card, n, of) {
+    const c = el("div", "ba-card");
+    c.dataset.card = card.key;
+    const q = el("div", "ba-q");
+    q.append(el("span", "", card.kind === "changed" ? "変更 Changed" : "取消 Off the list"), el("i", "", card.rowIds.join(" ")));
+    const big = el("div", "ba-big");
+    const pv = el("div", "ba-pv");
+    if (card.file && card.file.pic) {
+      const img = el("img");
+      img.alt = "";
+      img.src = card.file.url || (card.file.url = url(card.file.pic.blob));
+      pv.append(img);
+      pv.append(el("div", "ba-cap", card.file.name));
+    } else pv.append(el("div", "ba-cap", plural(card.drop.length, "picture", "pictures") + " on the trip"));
+    const words = el("div");
+    words.append(el("div", "ba-fn", card.label), el("div", "ba-ask", card.ask), el("div", "ba-hint", card.hint));
+    big.append(pv, words);
+    const opts = el("div", "ba-opts");
+    for (const ch of card.lchoices) {
+      const b = btn(ch.act === "keep" ? "is-soft" : "");
+      b.dataset.lchoice = card.key + "|" + ch.act;
+      const sp = el("span", "", ch.label);
+      sp.append(el("small", "", ch.sub));
+      if (ch.act === "keep") b.append(sp, el("i", "", "›"));
+      else b.append(el("b", "", ch.act === "off" ? "外" : "換"), sp, el("i", "", "›"));
+      opts.append(b);
+    }
+    c.append(q, big, opts);
+    c.setAttribute("role", "group");
+    c.setAttribute("aria-label", "To look at, " + n + " of " + of);
+    return c;
+  }
+
   function aside(sealText, strong, rest, cls = "") {
     const a = el("div", "ba-aside" + (cls ? " " + cls : ""));
     a.append(el("span", "ba-ring", sealText));
@@ -471,7 +791,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
       dots.setAttribute("aria-hidden", "true");
       for (let i = 0; i < Math.min(total, 8); i++) dots.append(el("span", i < checked.size ? "is-done" : i === checked.size ? "is-on" : ""));
       h.append(dots);
-      nodes.push(h, cardNode(r.cards[0], checked.size + 1, total));
+      nodes.push(h, (r.cards[0].lchoices ? listCardNode : cardNode)(r.cards[0], checked.size + 1, total));
       const next = el("div", "ba-next");
       for (const c of r.cards.slice(1, 3)) {
         const d = el("div");
@@ -498,9 +818,30 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     if (inactive.length) nodes.push(aside("止", plural(inactive.length, "not active", "not active") + " on the list:", inactive.map((o) => o.label + " (" + o.why.replace(/^on the list as /, "") + ")").join(", ") + ". Left out."));
     const mineOut = r.out.filter((o) => o.kind === "leftOut");
     if (mineOut.length) nodes.push(aside("除", plural(mineOut.length, "left out", "left out") + ":", mineOut.map((o) => o.label).join(", ") + "."));
-    if (list && list.error) nodes.push(aside("表", "", list.error, "is-warn"));
+    const hand = r.out.filter((o) => o.kind === "hand").map((o) => ({ label: o.label, stop: o.stop })).concat(mode === "list" ? handPre : []);
+    if (hand.length) nodes.push(aside("手", plural(hand.length, "stop was", "stops were") + " filled by hand:", hand.map((o) => o.label.split(" · ")[0] + " on " + ((stopOf(o.stop) || {}).title || "its stop")).join("; ") + ". The list’s are left out."));
+    if (mode === "list") {
+      if (fetching.failed.length) nodes.push(aside("外", plural(fetching.failed.length, "file wasn’t fetched:", "files weren’t fetched:"), fetching.failed.map((x) => x.label + " (" + x.why + ")").join(", ") + ".", "is-warn"));
+      const qd = plan ? plan.quiet : null;
+      if (qd) {
+        const bits = [];
+        if (qd.noFile) bits.push(plural(qd.noFile, "line has", "lines have") + " no file yet");
+        if (qd.outside) bits.push(plural(qd.outside, "is", "are") + " outside the trip’s days");
+        if (qd.unlisted) bits.push(plural(qd.unlisted, "file in the folder isn’t", "files in the folder aren’t") + " on the list");
+        if (bits.length) nodes.push(aside("表", "", "On the list: " + bits.join(", ") + "."));
+        if (qd.skipped) {
+          const a = aside("除", "", plural(qd.skipped, "line", "lines") + " left out before on this phone. ");
+          const b = btn("ba-link", "Bring them back");
+          b.id = "bulkUnskip";
+          a.lastChild.append(b);
+          nodes.push(a);
+        }
+      }
+    } else if (list && list.error) nodes.push(aside("表", "", list.error, "is-warn"));
     else if (list && list.warn && list.warn.length) nodes.push(aside("表", "", list.warn.join(" "), "is-warn"));
-    if (list && !list.error && r.quiet) nodes.push(aside("表", "", plural(r.quiet, "line", "lines") + " on the list " + (r.quiet === 1 ? "has" : "have") + " no file here."));
+    if (mode === "list") {
+      // (the list's own lines above)
+    } else if (list && !list.error && r.quiet) nodes.push(aside("表", "", plural(r.quiet, "line", "lines") + " on the list " + (r.quiet === 1 ? "has" : "have") + " no file here."));
     else if (!list) {
       const a = aside("表", "", "No list: every file not matched is looked at by hand. ");
       const b = btn("ba-link", "Choose list");
@@ -511,13 +852,16 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     nodes.push(aside(String(LIMITS.perTrip), "", "", "is-count"));
     const cnt = nodes[nodes.length - 1].lastChild;
     cnt.append("Pictures on the trip: ", el("b", "", r.now + " now, " + r.after + " after this"), ".");
-    const n = sure.length;
+    const done = r.listDone || [];
+    const n = sure.length + done.filter((d) => d.act === "replace" || d.act === "first" || d.act === "add").length;
+    const offs = done.filter((d) => d.act === "off").reduce((k, d) => k + d.card.drop.length, 0);
     const key = btn("ba-punch");
     key.id = "bulkPunch";
-    key.disabled = n === 0 || phase === "reading";
+    key.disabled = (n === 0 && offs === 0) || phase === "reading";
     const sp = el("span");
     const small = (r.cards.length ? (r.cards.length === 1 ? "the 1 not looked at stays out" : "the " + r.cards.length + " not looked at stay out") + " · " : "") + "on every phone";
-    sp.append(el("b", "", "入鋏"), n ? "Add " + n + " now" : "Nothing to add yet", el("small", "", small));
+    const words = n && offs ? "Add " + n + ", take " + offs + " off" : n ? "Add " + n + " now" : offs ? "Take " + offs + " off now" : "Nothing to add yet";
+    sp.append(el("b", "", "入鋏"), words, el("small", "", small));
     key.append(el("span", "ba-hole"), sp, el("i", "", "›"));
     nodes.push(key);
     return nodes;
@@ -529,6 +873,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     if (phase === "adding") {
       // Fix round 1 (I2): until every picture is kept on this phone, MAT must stay open; after that nothing confirmed is lost.
       if (a.step === "making") nodes.push(progress("Making pictures: " + a.made + " of " + a.total, "Keep MAT open until they are all added. Nothing is sent yet.", a.made, a.total));
+      else if (a.step === "off") nodes.push(progress("Taking pictures off: " + a.off, "The old ones, as you said. They can be put back from History.", a.off, a.off + 1));
       else if (a.step === "sending") nodes.push(progress("While adding: " + a.settled + " of " + plural(a.pics, "picture", "pictures"), "Keep MAT open until they are all added. One that can’t go up now is kept on this phone and goes up when MAT next has signal.", a.settled, a.pics));
       else nodes.push(progress("Filling in the stops’ details…", "From the list, only where a stop’s field is empty.", 1, 1));
     }
@@ -537,7 +882,8 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
       const stops = new Set(ok.map((i) => i.stop)).size;
       const pics = ok.reduce((s, i) => s + i.saved + i.waiting, 0);
       const waiting = ok.reduce((s, i) => s + i.waiting, 0);
-      nodes.push(el("p", "ba-done-h", ok.length ? plural(ok.length, "ticket", "tickets") + " added to " + plural(stops, "stop", "stops") + "." : "No ticket was added."));
+      nodes.push(el("p", "ba-done-h", ok.length ? plural(ok.length, "ticket", "tickets") + " added to " + plural(stops, "stop", "stops") + "." : a.off ? plural(a.off, "picture", "pictures") + " taken off." : "No ticket was added."));
+      if (ok.length && a.off) nodes.push(el("p", "ba-done-s", plural(a.off, "old picture", "old pictures") + " taken off. History puts them back."));
       if (ok.length) {
         const s = el("p", "ba-done-s");
         s.append(el("b", "", plural(pics, "picture", "pictures")), ", kept in the trip. Every phone shows them on its stubs the next time it opens MAT with signal.");
@@ -608,6 +954,9 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
       const p = el("p", "ba-say");
       p.append("Yours, or anyone’s on the trip. The conductor sorts them; you only look at the odd ones. ", el("b", "", NOTHING_SENT));
       nodes.push(p);
+      if (store.state.ticketList === true) nodes.push(checkLine());
+    } else if (phase === "fetching") {
+      nodes = [progress(fetching.total ? "Fetching " + fetching.done + " of " + plural(fetching.total, "file", "files") + " from the list…" : "Looking at the list…", "One at a time, from the list’s ticket folder, then made into pictures on this phone. " + NOTHING_SENT, fetching.done, fetching.total)];
     } else if (phase === "reading" || phase === "sorted") {
       const r = sorted();
       lastSig = sigOf(r);
@@ -619,7 +968,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     if (focusKey) refocus(focusKey);
   }
   // A redraw keeps focus on the same control (keyboard on a computer).
-  const ATTRS = ["choice", "other", "put", "out", "line", "who", "act", "pickFor", "move"];
+  const ATTRS = ["choice", "lchoice", "other", "put", "out", "line", "who", "act", "pickFor", "move"];
   function focusId(n) {
     if (n.id) return "#" + n.id;
     for (const a of ATTRS) if (n.dataset && n.dataset[a] !== undefined) return "[data-" + a.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase()) + '="' + CSS.escape(n.dataset[a]) + '"]';
@@ -683,7 +1032,8 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
   async function punch() {
     if (phase !== "sorted") return;
     const r = sorted();
-    if (!r.items.length) return;
+    const done = (r.listDone || []).filter((d) => d.act !== "keep");
+    if (!r.items.length && !done.length) return;
     // Fix round 1, M7: what is added is what was shown; a trip changed since is drawn again first.
     if (sigOf(r) !== lastSig) {
       draw();
@@ -694,10 +1044,25 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     const at = keep.gen;
     const dead = () => mine !== gen || at !== keep.gen || store.state.status === "nokey";
     const rows = list && !list.error ? list.rows : [];
+    const listing = mode === "list";
+    // From the list: a changed line's new files go where its pictures are; the
+    // old ones come off before (first) or after (replace) them; a cancelled
+    // line's come off (off). Each picture added carries its tie.
+    const extra = [];
+    const offBefore = [], offAfter = [];
+    for (const { card, act } of done) {
+      if (act === "replace" || act === "first" || act === "add") {
+        card.got.forEach((f, i) => extra.push({ key: card.key + "#" + i, file: f, label: card.label, stop: card.stop, who: card.who, rowIds: card.rowIds, pages: Math.min(Math.max(1, f.pages || 1), LIMITS.perStop), cut: "", from: "card" }));
+      }
+      const ids = card.drop.map((t) => ({ id: t.id, label: card.label }));
+      if (act === "first" || act === "off") offBefore.push(...ids);
+      if (act === "replace") offAfter.push(...ids);
+    }
+    const all = r.items.concat(extra);
     phase = "adding";
     adding = {
-      step: "making", made: 0, pics: 0, settled: 0, total: r.items.length, busy: 0,
-      items: r.items.map((i) => ({ ...i, saved: 0, waiting: 0, busy: 0, failed: 0, message: "", short: 0 })),
+      step: "making", made: 0, pics: 0, settled: 0, total: all.length, busy: 0, off: 0,
+      items: all.map((i) => ({ ...i, saved: 0, waiting: 0, busy: 0, failed: 0, message: "", short: 0 })),
       notAdded: [],
     };
     // What the sort left out goes on the Not added list: cards not looked at, then the rest.
@@ -707,8 +1072,12 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
       else if (o.kind === "notTicket") adding.notAdded.push({ label: o.file.name, why: o.file.unreadable || "not a ticket file", grey: true });
       else adding.notAdded.push({ label: o.label, why: o.why });
     }
+    if (listing) {
+      for (const h of handPre) adding.notAdded.push({ label: h.label, why: "filled by hand", grey: true });
+      for (const x of fetching.failed) adding.notAdded.push({ label: x.label, why: x.why });
+    }
     draw();
-    say.textContent = "Adding " + plural(r.items.length, "ticket", "tickets") + ".";
+    say.textContent = all.length ? "Adding " + plural(all.length, "ticket", "tickets") + "." : "Taking " + plural(offBefore.length, "picture", "pictures") + " off.";
 
     // 1. Every picture made (in memory only), nothing kept or sent yet.
     const pics = []; // { it, id, pic, k }
@@ -742,6 +1111,29 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     }
     if (dead()) return;
 
+    // Pictures a card said to take off, one at a time, each waited on (soft: History puts them back).
+    async function takeOff(list) {
+      for (const { id, label } of list) {
+        if (dead()) return;
+        let unsure = null;
+        const noReply = new Promise((resolve) => {
+          unsure = resolve;
+        });
+        const token = store.removeTicket(id, { quiet: true, onUnsure: () => unsure({ saved: false, reason: "unsure" }) });
+        const out = token ? await orAbort(Promise.race([store.outcome(token), noReply])) : null;
+        if (mine !== gen) return;
+        const now = (store.state.tickets || []).find((t) => t && t.id === id);
+        if ((out && out.saved) || !now || now.gone) adding.off += 1;
+        else adding.notAdded.push({ label, why: "not taken off: " + (out && out.reason === "refused" ? out.message || "refused" : out && out.reason === "notSent" ? "no signal" : "no reply yet, look at the stop later") });
+      }
+    }
+    if (offBefore.length) {
+      adding.step = "off";
+      draw();
+      await takeOff(offBefore);
+      if (mine !== gen || dead()) return;
+    }
+
     // 2. Handed over ONE AT A TIME, each one's outcome awaited before the next, as the single add does (fix round 2, R1): never two ticket sends of ours in flight. One that cannot go up (no signal, busy) settles as waiting and the next is handed over; with no signal the store keeps each without sending it.
     adding.step = "sending";
     adding.pics = pics.length;
@@ -752,7 +1144,10 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
       // Into the keep right before its own add, as the single add does (fix round 3, R2): a load's cleanup of the keep can never take a picture this loop has not reached. Not waited for: a keep that never answers must not hold the rest up; the data travels with the add.
       keep.put(id, pic.blob, { gen: at });
       const sameWho = liveOn(it.stop).filter((t) => (t.who || "") === it.who).length;
-      const token = store.addTicket({ id, stop: it.stop, who: it.who, seat: seatFor(it, rows), page: Math.min(LIMITS.perStop, Math.max(k + 1, sameWho + 1)), mime: pic.mime, w: pic.w, h: pic.h, data: pic.data });
+      // From the list: its tie, and its page within its own file, so another phone adding the same one is told it is already there.
+      const tie = listing && typeof it.file.tie === "string" ? it.file.tie : "";
+      const page = tie ? Math.min(LIMITS.perStop, k + 1) : Math.min(LIMITS.perStop, Math.max(k + 1, sameWho + 1));
+      const token = store.addTicket({ id, stop: it.stop, who: it.who, seat: seatFor(it, rows), page, mime: pic.mime, w: pic.w, h: pic.h, data: pic.data, ...(tie ? { from: tie } : {}) });
       const res = await orAbort(store.ticketOutcome(token));
       if (mine !== gen) return;
       if (res && res.saved) it.saved += 1;
@@ -771,6 +1166,12 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
       draw();
     }
     if (mine !== gen) return;
+    if (offAfter.length) {
+      adding.step = "off";
+      draw();
+      await takeOff(offAfter);
+      if (mine !== gen) return;
+    }
     for (const it of adding.items) {
       // Fix round 1, M9: which limit cut a PDF.
       if (it.pages < it.file.pages) adding.notAdded.push({ label: (it.rowIds[0] || it.file.name) + " · pages " + (it.pages + 1) + (it.file.pages > it.pages + 1 ? "–" + it.file.pages : ""), why: it.cut === "trip" ? "trip full, " + LIMITS.perTrip + " of " + LIMITS.perTrip : "stop full, " + LIMITS.perStop + " of " + LIMITS.perStop });
@@ -820,12 +1221,40 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     say.textContent = plural(ok, "ticket", "tickets") + " added.";
   }
 
+  // Check the list now (the owner's phone, the empty sheet): a forced look,
+  // then the list's review if anything needs something.
+  async function checkNow() {
+    say.textContent = "Looking at the list…";
+    const got = await checkList({ force: true });
+    if (phase !== "empty") return;
+    if (!got || !got.ok) {
+      say.textContent = got && got.code === "network" ? "No signal: the list can’t be looked at now." : (got && got.message) || listErr || "The list can’t be looked at now.";
+      return;
+    }
+    if (noticeNow()) return openList();
+    say.textContent = "Nothing new on the list.";
+  }
+
   // ---- taps ----
 
   function answerCard(key, a) {
     answers.set(key, a);
     checked.add(key);
     other = null;
+    // From the list, left out: remembered on this phone, so it is not new again.
+    if (mode === "list" && a.out) leftOut(key);
+    afterChange();
+  }
+  function leftOut(key) {
+    const f = files.find((x) => key.startsWith(x.key + "#"));
+    if (f && f.tie) addSkip([f.tie]);
+  }
+  function answerList(key, act) {
+    const card = listCards().find((c) => c.key === key);
+    if (!card) return;
+    lanswers.set(key, act);
+    checked.add(key);
+    if (act === "keep") addSkip(card.got.map((f) => f.tie).concat((plan.changed.find((c) => c.key === key) || { add: [] }).add.map((a) => a.tie), card.drop.map((t) => "keep:" + t.from)));
     afterChange();
   }
 
@@ -833,6 +1262,13 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     const t = ev.target.closest("button");
     if (!t || t.disabled) return;
     if (t.id === "bulkChoose") return fileIn.click();
+    if (t.id === "bulkCheckList") return checkNow();
+    if (t.id === "bulkUnskip") {
+      skip = new Set();
+      addSkip([]);
+      replan();
+      return openList({ force: true });
+    }
     if (t.id === "bulkChooseList") return listIn.click();
     if (t.id === "bulkPunch") return punch();
     if (t.id === "bulkOpenDay") {
@@ -853,6 +1289,10 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     }
     const r = phase === "sorted" ? sorted() : null;
     if (!r) return;
+    if (d.lchoice) {
+      const [key, act] = d.lchoice.split("|");
+      return answerList(key, act);
+    }
     if (d.choice) {
       const [key, i] = d.choice.split("|");
       const card = r.cards.find((c) => c.key === key);
@@ -883,6 +1323,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
       if (card) answerCard(card.key, { out: true, why: card.short });
       else {
         answers.set(d.out, { out: true });
+        if (mode === "list") leftOut(d.out);
         openLine = null;
         afterChange();
       }
@@ -944,6 +1385,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     for (const u of urls) URL.revokeObjectURL(u);
     urls = [];
     files = [];
+    for (const l of chgFiles.values()) for (const f of l) f.raw = null;
     list = null;
     answers = new Map();
     checked = new Set();
@@ -958,6 +1400,11 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     for (const done of [...aborts]) done(null);
     aborts = new Set();
     seeAll = false;
+    mode = "drop";
+    lanswers = new Map();
+    chgFiles = new Map();
+    fetching = { done: 0, total: 0, failed: [] };
+    handPre = [];
     phase = "empty";
     say.textContent = "";
   }
@@ -979,6 +1426,15 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
   let wiped = false;
   function wipe() {
     reset();
+    // What the list brought (its lines, the files' names and handles): gone, and the notice with it.
+    listGen += 1;
+    skip = new Set(); // the left-out ties in memory too: storage was cleared by Forget, and the next "leave out" must not write the old ones back
+    listData = null;
+    listErr = "";
+    plan = null;
+    looking = null;
+    lastLook = null;
+    replan();
     body.replaceChildren();
     say.textContent = "";
     topI.textContent = "一括";
@@ -1000,6 +1456,8 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
       return;
     }
     wiped = false;
+    // Another phone's (or this one's) pictures: the notice counted again.
+    if (listData) replan();
     if (!opened || phase !== "sorted") return;
     if (sigOf(sorted()) === lastSig) return;
     const a = document.activeElement;
@@ -1031,7 +1489,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
   }
 
   // Reading files or adding (fix round 1, I4): a new release waits, open or not.
-  const isBusy = () => phase === "reading" || phase === "adding";
+  const isBusy = () => phase === "reading" || phase === "adding" || phase === "fetching";
 
-  return { open, close: (restoreFocus) => close(restoreFocus), isOpen: () => opened, isBusy };
+  return { open, close: (restoreFocus) => close(restoreFocus), isOpen: () => opened, isBusy, checkList, maybeCheckList, openList };
 }

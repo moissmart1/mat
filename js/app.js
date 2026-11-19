@@ -383,6 +383,11 @@ function start() {
       you.close(false);
       bulk.open();
     },
+    // The notice "4 new tickets from the list": the same sheet, opened on the list's review.
+    onListCheck: () => {
+      you.close(false);
+      bulk.openList();
+    },
     // Ticket pictures: back to every one, the fetching starts at once.
     onTixMode: (mode) => {
       if (mode === "all" && store.state.ticketsReady) fetchMissing(store, keep, { allowed: () => fetchesAll(raw) });
@@ -429,6 +434,9 @@ function start() {
       const b = document.getElementById("youBtn");
       if (restoreFocus && b) b.focus({ preventScroll: true });
     },
+    // What the list's look found: the notice in You (the owner's phone only).
+    onList: (info) => you.setListNotice(info),
+    storage: raw,
   });
   const closeYou = you.close;
   you.close = (restoreFocus) => {
@@ -699,9 +707,11 @@ function start() {
     return inFlight;
   };
   // Each look also asks for the planner's payments, at most every 10 minutes (store.autoPayments).
+  // And, on the owner's phone, at the planner's ticket list (auto-add), at most every 10 minutes.
   const look = () => {
     check();
     store.autoPayments();
+    bulk.maybeCheckList();
   };
   const startChecking = () => {
     if (connected && !checking) checking = setInterval(look, CHECK_MS);
@@ -728,6 +738,7 @@ function start() {
   if (connected) store.boot({ candidate: taken.candidate }).then(() => {
     todos.wake();
     store.autoPayments();
+    bulk.maybeCheckList();
     // History is fetched quietly, so it opens at once (it then keeps itself up to date).
     if (store.state.status === "ready") store.loadHistory();
   });

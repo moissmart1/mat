@@ -199,7 +199,8 @@ function mcpWrite_(kind, action, args, who) {
 // owner's error log (reportError_ in Actions.js): the shared key while it
 // exists, the token and the planner's id.
 function secretsAnywhere_() {
-  return [tripKey_(), claudeToken_(), plannerId_()].filter(function (s) { return typeof s === "string" && s !== ""; });
+  // The ticket desk's address and key too (auto-add), so neither can reach a reply or a log.
+  return [tripKey_(), claudeToken_(), plannerId_(), getProp_("TICKET_DESK_KEY"), getProp_("TICKET_DESK_URL")].filter(function (s) { return typeof s === "string" && s !== ""; });
 }
 
 function mcpSecrets_(people) {

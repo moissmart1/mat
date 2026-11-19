@@ -298,7 +298,7 @@ test("an un-migrated Sheet: load has no tickets, the stop has empty facts, and t
   const m = await call("migrate");
   assert.deepEqual(m.data.added.filter((a) => /^Stops\.tk_|^Tickets\.|^TicketData\./.test(a)), [
     "Stops.tk_ref", "Stops.tk_name", "Stops.tk_people", "Stops.tk_seat",
-    "Tickets.id", "Tickets.stop", "Tickets.who", "Tickets.seat", "Tickets.page", "Tickets.mime", "Tickets.w", "Tickets.h", "Tickets.size", "Tickets.chunks", "Tickets.by", "Tickets.at", "Tickets.gone",
+    "Tickets.id", "Tickets.stop", "Tickets.who", "Tickets.seat", "Tickets.page", "Tickets.mime", "Tickets.w", "Tickets.h", "Tickets.size", "Tickets.chunks", "Tickets.by", "Tickets.at", "Tickets.gone", "Tickets.planner_id",
     "TicketData.ticket", "TicketData.n", "TicketData.data",
   ]);
   assert.deepEqual((await call("migrate")).data.added, []);
