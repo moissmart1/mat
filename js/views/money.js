@@ -5,7 +5,7 @@
 // root and redraws on every store change. Every figure comes from money.js and
 // format.js; text from people or the Sheet goes in with textContent only.
 
-import { standing, jpyOf, cadCents, shares } from "../money.js";
+import { standing, jpyOf, cadCents, shares, expenseShares } from "../money.js";
 import { tripDay } from "../time.js";
 import { mountSlip, viewerOwed } from "./slip.js";
 import { yen, dollars, typed, dayHead, issuer, pt, freshText, sentence, tripSpan } from "../format.js";
@@ -25,16 +25,24 @@ export function setAsideText(list) {
 
 // The export uses the same exchange rates, rounding, and transfers as the slip.
 export function settlementSummary(state, exportedAt) {
-  const { live, list, bal } = viewerOwed(state);
+  const { live, list, bal, simplify } = viewerOwed(state);
+  const ageMs = Date.parse(exportedAt) - state.loadedAt;
+  const hasLoad = Number.isFinite(state.loadedAt);
+  const fresh = hasLoad && ageMs >= 0 && ageMs <= 60000;
   return {
     trip: state.trip.name,
     exportedAt,
+    lastLoadedAt: hasLoad ? new Date(state.loadedAt).toISOString() : null,
+    settlementCurrency: "CAD",
+    simplified: simplify,
     online: state.online,
-    provisional: [...state.expenses, ...state.payments].some((row) => row.pending || row.failed),
+    provisional: !state.online || !fresh || [...state.expenses, ...state.payments].some((row) => row.pending || row.failed),
     excludedRows: (state.setAside || []).length,
     expenses: live.map((e) => ({
       day: e.day, description: e.title, paidBy: e.paidBy, amount: e.amount,
-      currency: e.currency, cadCents: cadCents(e),
+      currency: e.currency, rate: e.rate, cadCents: cadCents(e),
+      splitMode: e.splitMode || "equal", split: [...e.split], splitValues: [...(e.splitVals || [])],
+      sharesCadCents: expenseShares(e),
     })),
     payments: state.payments.filter((p) => !p.removed).map((p) => ({
       from: p.from, to: p.to, cadCents: Math.round(p.cad * 100), recordedAt: p.stampedAt,
