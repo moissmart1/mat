@@ -124,12 +124,15 @@ test("noticeText and the skip list", () => {
   assert.equal(kept.has("t0"), false, "the oldest go first");
 });
 
-test("a file from the desk that takes too long: the phone's request gives up at its limit (30 seconds) as no signal, the key only in the body", async () => {
+test("a file from the desk that takes too long: the phone's request gives up at its limit (30 seconds) as no signal, the key only in the body", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   assert.equal(API_TIMEOUT_MS, 30000);
   const seen = [];
-  const api = createApi({ url: "https://backend.example.test/exec", getKey: () => "key-invented-0123456789", getActor: () => "A", timeoutMs: 40, isOnline: () => true,
+  const api = createApi({ url: "https://backend.example.test/exec", getKey: () => "key-invented-0123456789", getActor: () => "A", isOnline: () => true,
     fetchImpl: (url, init) => { seen.push({ url, body: init.body }); return new Promise(() => {}); } });
-  await assert.rejects(api("listTicketFile", { handle: "a".repeat(32) }), (e) => e.code === "network");
+  const request = api("listTicketFile", { handle: "a".repeat(32) });
+  t.mock.timers.tick(API_TIMEOUT_MS);
+  await assert.rejects(request, (e) => e.code === "network");
   assert.equal(seen.length, 1);
   assert.equal(seen[0].url.includes("key-invented"), false, "never in the address");
   assert.equal(JSON.parse(seen[0].body).key, "key-invented-0123456789");
