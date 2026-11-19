@@ -56,7 +56,9 @@ module.exports = [
         return { up: s.classList.contains("is-up"), at: a ? a.currentTime : null };
       });
       assert.equal(after.up, false, "the redrawn stub is still tearing");
-      assert.ok(after.at !== null && after.at >= 100, "its tear goes on from where it was, not from the end or the start: " + after.at);
+      // Read back, an animation's time is rounded (99.97 for the 100 set), so
+      // "from where it was" is near 100 ms, far from a restart at 0.
+      assert.ok(after.at !== null && after.at >= 90, "its tear goes on from where it was, not from the end or the start: " + after.at);
     },
   },
 ];
