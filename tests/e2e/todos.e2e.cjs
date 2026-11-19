@@ -21,6 +21,9 @@ const ITEMS = [
 ];
 // 14:00 on Mon Nov 16 in Toronto (04:00 on the 17th in Japan): before the trip.
 const BEFORE = Date.parse("2026-11-16T19:00:00Z");
+// A minute to midnight before the trip's first day (Dec 10) in Japan: from
+// midnight the Tickets key has Before's place (js/views/passcase.js).
+const EVE = Date.parse("2026-12-09T23:59:00+09:00");
 const MIN = 60000;
 
 function seedWith(items = ITEMS) {
@@ -169,7 +172,7 @@ module.exports = [
     },
   },
   {
-    name: "before the trip the tab is there with 0 open; no planner or no items: no tab; during the trip only while something is open, and ticking the last one on the tab lands on Days",
+    name: "before the trip the tab is there with 0 open; no planner or no items: no tab; during the trip no Before key (Tickets has its place) and the open items are a slip on Tickets that goes with the last tick",
     async run({ page, newPhone }) {
       // Before the trip, everything done: still there, count 0 and no pill.
       await ready(page, { items: [ITEMS[4]] });
@@ -182,37 +185,46 @@ module.exports = [
       await until(() => other.evaluate(() => document.querySelectorAll("#rail .tk").length > 0), "the tickets draw");
       assert.equal(await visible(other, "#beforeBtn"), false, "no list, no tab");
       assert.equal(await other.evaluate(() => document.getElementById("beforeBtn").hidden), true);
-      // During the trip with nothing open: no tab.
+      // During the trip with nothing open: no Before key; Tickets has its place, with no slip.
       const third = await newPhone();
       await ready(third, { nowMs: NOON12, items: [ITEMS[4]], go: false });
       await third.evaluate(() => window.__matTest.store.idle());
-      assert.equal(await tabIsIn(third), false, "trip on, 0 open: no tab");
+      assert.equal(await tabIsIn(third), false, "trip on: no Before key");
+      await until(() => visible(third, "#ticketsBtn"), "the Tickets key has its place");
       assert.equal(await third.$("#vDays #todos, #vDays .bw"), null, "and no list in Days");
-      // During the trip with one open: the tab is there; Days still shows no list.
+      await third.click("#ticketsBtn");
+      await until(() => third.evaluate(() => !!document.querySelector("#vTickets .pc-case")), "the case shows");
+      assert.equal(await third.$("#pcSlip"), null, "nothing open: no slip");
+      // During the trip with one open: still no Before key; the slip on Tickets holds it.
       const fourth = await newPhone();
       const backend = await ready(fourth, { nowMs: NOON12, items: [ITEMS[1], ITEMS[4]], go: false });
-      await until(() => tabIsIn(fourth), "1 open: the tab is in the bar");
+      await until(() => visible(fourth, "#ticketsBtn"), "Tickets in the bar");
+      assert.equal(await tabIsIn(fourth), false, "no Before key on a trip day");
       assert.equal(await fourth.$("#vDays #todos, #vDays .bw"), null, "no list, no folded card, inside Days");
       assert.equal(await fourth.$("#bwFold"), null);
-      assert.equal(await fourth.evaluate(() => document.getElementById("beforeN").textContent), "1");
-      await goBefore(fourth);
+      await fourth.click("#ticketsBtn");
+      await until(() => visible(fourth, "#pcSlip"), "the slip");
+      await expectText(fourth, "#pcSlip", "予約票1 still to bookOpen");
+      const asSheet = (p) => p.evaluate(() => document.getElementById("vBefore").classList.contains("as-sheet") && document.getElementById("vBefore").classList.contains("is-active"));
+      await fourth.click("#pcSlip");
+      await until(() => asSheet(fourth), "the pad as a sheet over Tickets");
       await expectText(fourth, row(2) + " .bw-due", /was due Wed Nov 18 · \d+ days late/);
       await openRow(fourth, "2");
       await fourth.click(row(2) + " .bw-tick");
       await until(() => stored(backend, "2").ticked_by === "Mo", "ticked");
-      assert.equal(await onScreen(fourth), "vBefore", "the stamp is seen first");
+      assert.equal(await asSheet(fourth), true, "the stamp is seen first");
       await advance(fourth, backend, 1700);
-      await until(async () => !(await tabIsIn(fourth)), "the tab goes once all is done");
-      assert.equal(await onScreen(fourth), "vDays", "being on it when the last is ticked lands on Days");
-      assert.equal(await fourth.evaluate(() => document.querySelector("#nav [data-tab=days]").classList.contains("is-active")), true);
-      assert.equal(await fourth.evaluate(() => document.activeElement && document.activeElement.id), "dayCount", "focus goes to the day counter, not lost");
-      // A later sync that brings an item back brings the tab back and does not take focus.
-      await fourth.evaluate(() => document.getElementById("dayCount").focus());
+      await until(async () => !(await asSheet(fourth)), "the sheet goes once all is done");
+      await until(async () => !(await visible(fourth, "#pcSlip")), "and the slip with it");
+      assert.equal(await onScreen(fourth), "vTickets", "ticking the last one leaves you on Tickets");
+      assert.equal(await fourth.evaluate(() => document.activeElement && document.activeElement.id), "ticketsBtn", "focus goes to the Tickets key, not lost");
+      // A later sync that brings an item back brings the slip back and does not take focus.
       assert.equal((await backend.call("undo", { logId: Number(backend.fake.tables.Log[backend.fake.tables.Log.length - 1].id) }, "Ajen")).ok, true);
       await fourth.evaluate(() => window.__matTest.store.checkRev());
-      await until(() => tabIsIn(fourth), "back, open again");
-      assert.equal(await onScreen(fourth), "vDays", "still on Days");
-      assert.equal(await fourth.evaluate(() => document.activeElement && document.activeElement.id), "dayCount", "focus left where it was");
+      await until(() => visible(fourth, "#pcSlip"), "back, open again");
+      assert.equal(await onScreen(fourth), "vTickets", "still on Tickets");
+      assert.equal(await tabIsIn(fourth), false, "and still no Before key");
+      assert.equal(await fourth.evaluate(() => document.activeElement && document.activeElement.id), "ticketsBtn", "focus left where it was");
     },
   },
   {
@@ -512,12 +524,14 @@ module.exports = [
     },
   },
   {
-    name: "sideways (844 × 390 and 667 × 375): with no Before key the rail is Days, Money, You, Ring up, stacked and in view",
+    name: "sideways (844 × 390 and 667 × 375): with no Before or Tickets key (before the trip, no planner) the rail is Days, Money, You, Ring up, stacked and in view",
     viewport: { width: 667, height: 375 },
     async run({ page }) {
-      await ready(page, { nowMs: NOON12, items: [ITEMS[4]], go: false });
+      await open(page, { backend: makeBackend(SEED, { now: BEFORE }), nowMs: BEFORE, tab: "days" });
+      await until(() => page.evaluate(() => document.querySelectorAll("#rail .tk").length > 0), "the tickets draw");
       await page.evaluate(() => window.__matTest.store.idle());
       assert.equal(await tabIsIn(page), false);
+      assert.equal(await visible(page, "#ticketsBtn"), false);
       const rail = await railKeys(page);
       assert.deepEqual(rail.map((r) => r.id), FOUR);
       assert.ok(rail.every((r, i) => r.vis && r.h >= 44 && (i === 0 || r.top >= rail[i - 1].bottom - 0.5)), JSON.stringify(rail));
@@ -700,6 +714,8 @@ module.exports.push(
 
 const FIVE = ["days", "before", "ring", "money", "youBtn"];
 const FOUR = ["days", "money", "youBtn", "ring"];
+// From the trip's first day: Tickets in Before's place.
+const FIVE_T = ["days", "tickets", "ring", "money", "youBtn"];
 
 // The rail's keys, top to bottom: id, top, bottom, height and whether the key is wholly on screen.
 function railKeys(page) {
@@ -788,8 +804,8 @@ async function barShape(page) {
 }
 
 // The measured bar in its five-key or four-key state. Returns the id of the one lit lamp.
-function checkBar(shape, where, five) {
-  assert.deepEqual(shape.ids, five ? FIVE : FOUR, "order " + where);
+function checkBar(shape, where, five, ids = null) {
+  assert.deepEqual(shape.ids, ids || (five ? FIVE : FOUR), "order " + where);
   assert.deepEqual(shape.overlap, [], "overlap " + where);
   assert.equal(shape.oneLine, true, "one line " + where);
   assert.equal(shape.inside, true, "inside the bar " + where);
@@ -837,41 +853,32 @@ for (const width of [320, 375, 390, 430]) {
     },
   });
   module.exports.push({
-    name: "the bar at " + width + " px with no Before key: Days, Money, You, Ring up, four equal keys, nothing clipped, then it re-lays to five keys when an item comes back",
+    name: "the bar at " + width + " px with no Before or Tickets key (before the trip, no planner): Days, Money, You, Ring up, four equal keys, nothing clipped, then at midnight on Day 1 it re-lays to five with Tickets",
     viewport: { width, height: 760 },
     async run({ page }) {
-      // The trip is on and nothing is open: no Before key.
-      const backend = await ready(page, { nowMs: NOON12, items: [ITEMS[1], ITEMS[4]], go: false });
-      await until(() => tabIsIn(page), "one open: five keys");
-      checkBar(await barShape(page), "five keys", true);
-      await goBefore(page);
-      await openRow(page, "2");
-      await page.click(row(2) + " .bw-tick");
-      await until(() => stored(backend, "2").ticked_by === "Mo", "ticked");
-      await advance(page, backend, 1700);
-      await until(async () => !(await tabIsIn(page)), "the key goes with the last item, no reload");
-      assert.equal(checkBar(await barShape(page), "four keys after the last tick", false), "days");
-      // The key comes back (the tick is undone elsewhere): the bar re-lays to five.
-      assert.equal((await backend.call("undo", { logId: Number(backend.fake.tables.Log[backend.fake.tables.Log.length - 1].id) }, "Ajen")).ok, true);
-      await page.evaluate(() => window.__matTest.store.checkRev());
-      await until(() => tabIsIn(page), "back to five keys");
-      checkBar(await barShape(page), "five keys again", true);
+      const backend = await open(page, { backend: makeBackend(SEED, { now: EVE }), nowMs: EVE, tab: "days" });
+      await until(() => page.evaluate(() => document.querySelectorAll("#rail .tk").length > 0), "the tickets draw");
+      await page.evaluate(() => window.__matTest.store.idle());
+      assert.equal(checkBar(await barShape(page), "four keys before the trip", false), "days");
+      await advance(page, backend, 90 * 1000);
+      await until(() => visible(page, "#ticketsBtn"), "Day 1: five keys, no reload");
+      assert.equal(checkBar(await barShape(page), "five keys with Tickets", true, FIVE_T), "days");
+      await page.click("#ticketsBtn");
+      assert.equal(checkBar(await barShape(page), "on Tickets", true, FIVE_T), "tickets");
     },
   });
 }
 
 module.exports.push({
-  name: "Ring up keeps focus when the bar re-lays between four and five keys",
+  name: "Ring up keeps focus when the bar re-lays between four and five keys (midnight on Day 1)",
   async run({ page }) {
-    const backend = await ready(page, { nowMs: NOON12, items: [ITEMS[1], ITEMS[4]], go: false });
-    await until(() => tabIsIn(page), "five keys");
+    const backend = await open(page, { backend: makeBackend(SEED, { now: EVE }), nowMs: EVE, tab: "days" });
+    await until(() => page.evaluate(() => document.querySelectorAll("#rail .tk").length > 0), "the tickets draw");
     await page.focus("#ring");
     assert.equal(await page.evaluate(() => document.activeElement.id), "ring");
-    assert.equal((await backend.call("tickTodo", { id: "2" }, "Ajen")).ok, true, "ticked on another phone");
-    await advance(page, backend, 31 * 1000);
-    await page.evaluate(() => window.__matTest.store.checkRev());
-    await advance(page, backend, 1700);
-    await until(async () => !(await tabIsIn(page)), "four keys");
+    await advance(page, backend, 90 * 1000);
+    await until(() => visible(page, "#ticketsBtn"), "five keys");
+    assert.equal(await page.evaluate(() => document.getElementById("ring").nextElementSibling.dataset.tab), "money", "Ring up moved to the middle");
     assert.equal(await page.evaluate(() => document.activeElement.id), "ring", "focus stayed on Ring up");
   },
 });
@@ -953,7 +960,12 @@ module.exports.push({
     const box = await page.locator('#nav [data-tab="money"]').boundingBox();
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.down();
-    await page.waitForTimeout(250);
+    // Measured once the key's own press transition has finished, not after a fixed wait: on a busy
+    // machine 250 ms of real time could still catch the .08 s transition mid-flight (it read 1.06 px).
+    await until(() => page.evaluate(() => {
+      const b = document.querySelector('#nav [data-tab="money"]');
+      return b.matches(":active") && b.getAnimations().length === 0;
+    }), "the key is down and still");
     const pressed = await page.evaluate(() => {
       const b = document.querySelector('#nav [data-tab="money"]');
       return { y: b.getBoundingClientRect().y, shadow: getComputedStyle(b).boxShadow };
@@ -1030,17 +1042,14 @@ module.exports.push({
 });
 
 module.exports.push({
-  name: "the Before tab goes while focus is on it: focus moves to the Days tab",
+  name: "the Before tab goes while focus is on it (midnight on Day 1, Tickets takes its place): focus moves to the Days tab",
   async run({ page }) {
-    // During the trip the tab is only there while something is open.
-    const backend = await ready(page, { nowMs: NOON12, items: [ITEMS[1], ITEMS[4]] });
+    const backend = await ready(page, { nowMs: EVE, items: [ITEMS[1], ITEMS[4]] });
     await page.focus('#nav button[data-tab="before"]');
     assert.equal(await page.evaluate(() => document.activeElement.dataset.tab), "before");
-    assert.equal((await backend.call("tickTodo", { id: "2" }, "Ajen")).ok, true, "ticked on another phone");
-    await advance(page, backend, 31 * 1000);
-    await page.evaluate(() => window.__matTest.store.checkRev());
-    await advance(page, backend, 1700);
+    await advance(page, backend, 90 * 1000);
     await until(async () => !(await tabIsIn(page)), "the tab goes");
+    assert.equal(await onScreen(page), "vDays", "being on it lands on Days");
     assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.dataset.tab), "days", "focus is on Days, not the body");
   },
 });

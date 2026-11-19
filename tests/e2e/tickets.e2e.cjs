@@ -90,7 +90,17 @@ async function showTicket(page, id) {
   await torn(page);
 }
 // The tear has finished (measuring or shooting mid-flight sees it scaled and tilted).
-const torn = (page) => page.evaluate(() => Promise.all(document.getElementById("tix").getAnimations({ subtree: true }).filter((a) => a.animationName === "tear").map((a) => a.finished)));
+// A redraw (a picture arriving) replaces the stub and cancels the old one's
+// tear (AbortError): wait on the tear of the stub that is up now.
+const torn = (page) => page.evaluate(async () => {
+  for (;;) {
+    try {
+      return await Promise.all(document.getElementById("tix").getAnimations({ subtree: true }).filter((a) => a.animationName === "tear").map((a) => a.finished));
+    } catch (e) {
+      if (e.name !== "AbortError") throw e;
+    }
+  }
+});
 const shot = async (page, name) => {
   fs.mkdirSync(SHOTS, { recursive: true });
   await page.screenshot({ path: SHOTS + "/" + name + ".png" });
