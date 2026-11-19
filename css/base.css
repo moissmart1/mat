@@ -213,12 +213,12 @@ i{font-style:normal}
   .phone{width:min(100%, calc(1000px + var(--rail)))}
   .views{right:var(--rail)}
   .view{padding-bottom:28px}
-  #vDays,#vBefore{right:50%}
+  #vDays,#vBefore,#vTickets{right:50%}
   #vMoney{left:50%}
   /* The perforation between the two panes, like the rail's edge. */
   .views::after{content:"";position:absolute;top:0;bottom:0;left:50%;border-left:1.5px dashed var(--key-hi);pointer-events:none}
   /* The panes, for what stands on the block itself (the sheets and their scrims). */
-  #stay,#stayScrim,#allDays,#allDaysScrim,#stop,#stopScrim,#book,#bookScrim{left:0;right:calc(50% + var(--rail) / 2)}
+  #stay,#stayScrim,#allDays,#allDaysScrim,#stop,#stopScrim,#book,#bookScrim,#beforeScrim{left:0;right:calc(50% + var(--rail) / 2)}
   #reg,#line,#lineScrim,#hist,#histScrim,#you,#youScrim{left:calc(50% - var(--rail) / 2);right:var(--rail)}
   /* Done stays in reach while a long sheet scrolls under it (as held sideways). */
   .sheet-top{position:sticky;top:-12px;z-index:1;margin:-12px calc(var(--gr) * -1) 8px calc(var(--gl) * -1);padding:12px var(--gr) 0 var(--gl);background:inherit}

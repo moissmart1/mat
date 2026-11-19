@@ -117,7 +117,7 @@ for (const size of [BIG, LAPTOP]) {
   const at = " (" + size.width + "x" + size.height + ")";
   cases.push(
     {
-      name: "two panes: both views shown, neither inert, a centred square block, equal panes of at most 500 px, the rail holds You and Ring up" + at,
+      name: "two panes: both views shown, neither inert, a centred square block, equal panes of at most 500 px, the rail holds Tickets (a trip day), Ring up and You" + at,
       viewport: size,
       mobile: false,
       async run({ page }) {
@@ -138,7 +138,8 @@ for (const size of [BIG, LAPTOP]) {
         assert.ok(l.days.right <= l.money.left + 0.5, "Days on the left, Money on the right");
         assert.ok(l.money.right <= l.nav.left + 0.5 && l.nav.right <= l.phone.right + 0.5, "the rail on the right edge");
         assert.ok(l.nav.top <= l.phone.top + 0.5 && l.nav.bottom >= l.phone.bottom - 0.5, "the rail runs the block's height");
-        assert.deepEqual(l.keys, ["youBtn", "ring"], "the rail shows You and Ring up only");
+        // A trip day: Tickets has Before's place (the Days and Money keys are hidden, both panes are there).
+        assert.deepEqual(l.keys, ["tickets", "ring", "youBtn"], "the rail shows Tickets, Ring up and You only");
         await scrollsAlone(page, "vMoney", "vDays");
         // The Days pane scrolls too when its ticket is longer than the window.
         const tall = await page.evaluate(() => { const v = document.getElementById("vDays"); return v.scrollHeight > v.clientHeight; });
@@ -338,7 +339,7 @@ cases.push(
       assert.ok(l.phone.width <= 560 && l.phone.width >= 500, "a column of at most 560 px: " + l.phone.width);
       assert.ok(Math.abs(l.phone.left - (l.innerWidth - l.phone.right)) <= 1, "centred");
       assert.ok(Math.abs(l.nav.bottom - l.phone.bottom) < 1 && Math.abs(l.nav.width - l.phone.width) < 1 && l.nav.height < 120, "the bar across the foot: " + JSON.stringify(l.nav));
-      assert.deepEqual(l.keys, ["days", "money", "youBtn", "ring"], "the same keys as a phone");
+      assert.deepEqual(l.keys, ["days", "tickets", "ring", "money", "youBtn"], "the same keys as a phone (a trip day: Tickets in Before's place)");
       assert.equal(l.moneyShown && !l.daysShown, true, "one view at a time");
     },
   },
@@ -458,7 +459,7 @@ cases.push(
       assert.equal(await page.evaluate(() => matchMedia("(hover:hover)").matches), false, "a touch device, no hover");
       const l = await layout(page);
       assert.ok(l.daysShown && l.moneyShown && !l.daysInert && !l.moneyInert, "both panes in use");
-      assert.deepEqual(l.keys, ["youBtn", "ring"]);
+      assert.deepEqual(l.keys, ["tickets", "ring", "youBtn"]);
       assert.equal((await shapeOf(page)).geo, "WIDE");
     },
   },
@@ -546,35 +547,39 @@ cases.push(
     },
   },
   {
-    name: "WIDE: only a key that shows is marked current, and when Before goes focus lands on a key that shows",
+    name: "WIDE: only a key that shows is marked current, and when Before goes (Tickets takes its place on Day 1) focus lands on a key that shows",
     viewport: BIG,
     mobile: false,
     async run({ page }) {
       const BHEAD = ["#", "Item", "Who", "Book by", "Status", "Notes", "Booking link"];
       const CHEAD = ["#", "Date / time", "Agent / session", "Tab", "Cell(s)", "Item", "Old value", "New value", "Why", "Proof / source", "Verified?"];
       const items = [{ "#": 2, Item: "Tea ceremony class", "Book by": "2026-11-18", Status: "Pending" }, { "#": 5, Item: "Pocket wifi pickup", "Book by": "2026-11-10", Status: "Booked" }];
-      const backend = makeBackend({ ...WITH_PLAN, plannerId: "fakePlannerSheet_desk", plannerTabs: { "Book Now": [["Before we go: bookings"], BHEAD, ...items.map((o) => BHEAD.map((h) => (o[h] === undefined ? "" : o[h])))], "Change Log": [CHEAD] } }, { now: NOON12 - 300000 });
+      // A minute to midnight before the first day (Dec 10) in Japan: the last minute Before has its key.
+      const EVE = Date.parse("2026-12-09T23:59:00+09:00");
+      const backend = makeBackend({ ...WITH_PLAN, plannerId: "fakePlannerSheet_desk", plannerTabs: { "Book Now": [["Before we go: bookings"], BHEAD, ...items.map((o) => BHEAD.map((h) => (o[h] === undefined ? "" : o[h])))], "Change Log": [CHEAD] } }, { now: EVE - 300000 });
       assert.equal((await backend.fake({ key: "test-key", actor: "Mo", action: "syncTodos", args: {} })).ok, true);
-      backend.now = NOON12;
-      await open(page, { backend, nowMs: NOON12, tab: "money" });
+      backend.now = EVE;
+      await open(page, { backend, nowMs: EVE, tab: "money" });
       await until(() => visible(page, "#beforeBtn"), "the Before key is in the rail");
       const marked = () => page.evaluate(() => [...document.querySelectorAll("#nav [aria-current]")].map((b) => (b.getBoundingClientRect().width > 0 ? "" : "hidden:") + (b.dataset.tab || b.id)));
       assert.deepEqual(await marked(), [], "nothing hidden is marked");
       await page.click("#beforeBtn");
-      await until(() => visible(page, "#todos"), "the list shows");
+      await until(() => page.evaluate(() => document.getElementById("vBefore").classList.contains("is-active") && !document.getElementById("todos").hidden), "the list shows");
       assert.deepEqual(await marked(), ["before"]);
       await page.focus("#beforeBtn");
-      assert.equal((await backend.fake({ key: "test-key", actor: "Ajen", action: "tickTodo", args: { id: "2" } })).ok, true, "ticked on another phone");
-      await advance(page, backend, 31 * 1000);
-      await page.evaluate(() => window.__matTest.store.checkRev());
-      await advance(page, backend, 1700);
+      // Midnight: Day 1. Before gives its place to Tickets while it has focus.
+      await advance(page, backend, 90 * 1000);
       await until(async () => !(await visible(page, "#beforeBtn")), "the key goes");
+      await until(() => visible(page, "#ticketsBtn"), "Tickets takes its place");
       const f = await page.evaluate(() => {
         const a = document.activeElement;
         return { body: a === document.body, shows: !!a && a.getBoundingClientRect().width > 0 };
       });
       assert.deepEqual(f, { body: false, shows: true }, "focus is on something that shows");
       assert.deepEqual(await marked(), [], "nothing hidden is marked");
+      // Tickets in the rail is marked current once it is the tab.
+      await page.click("#ticketsBtn");
+      assert.deepEqual(await marked(), ["tickets"]);
     },
   },
 );

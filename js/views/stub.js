@@ -335,7 +335,12 @@ export function mountStub(root, store, keep) {
     back.dataset.close = "";
     top.append(el("span", "", "切取 Torn off · " + (stop.date ? dayHead(stop.date, []).en : "")), back);
 
-    const stub = el("div", "tstub" + (again ? " is-up" : ""));
+    // A redraw while the stub is still tearing off (its pictures arriving)
+    // carries the tear on from where it was, rather than jumping to the end.
+    const was = again ? host.querySelector(".tstub") : null;
+    const tearing = was && typeof was.getAnimations === "function" ? was.getAnimations().find((a) => a.animationName === "tear" && a.playState === "running") : null;
+    const tearAt = tearing ? tearing.currentTime : null;
+    const stub = el("div", "tstub" + (again && tearAt === null ? " is-up" : ""));
     if (h.colour) {
       stub.style.setProperty("--line", h.colour);
       stub.style.setProperty("--line-ink", h.ink);
@@ -366,6 +371,7 @@ export function mountStub(root, store, keep) {
     wl.hidden = !locked;
     ov.append(top, stub, wl);
     host.replaceChildren(ov);
+    if (tearAt !== null) for (const a of stub.getAnimations()) if (a.animationName === "tear") a.currentTime = tearAt;
 
     // The per-person pages: the seals follow the swipe, the facts follow the page.
     const pp = ov.querySelector("[data-pp]");
