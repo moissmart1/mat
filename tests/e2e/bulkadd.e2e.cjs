@@ -385,8 +385,13 @@ cases.push({
     let most = 0;
     let sent = 0;
     const held = [];
+    const trace = [];
     backend.handle = async (body) => {
-      if (body.action !== "addTicket") return handle(body);
+      if (body.action !== "addTicket") {
+        trace.push(body.action);
+        return handle(body);
+      }
+      trace.push("add");
       sent += 1;
       out += 1;
       most = Math.max(most, out);
@@ -394,6 +399,8 @@ cases.push({
         await new Promise((r) => setTimeout(r, 40));
         if (landed >= 2) {
           held.push(body);
+          // A tunnel: from here nothing gets through, so no check of the trip's version restores the signal either.
+          backend.failWith = "network";
           throw new Error("network");
         }
         landed += 1;
@@ -405,7 +412,7 @@ cases.push({
     await page.click("#bulkPunch");
     await until(() => held.length === 1, "two land, the third is on its way and gets no reply", 20000);
     await until(async () => (await queued(page)).length === 4, "the four not landed are in mat.queue");
-    assert.equal(sent, 3, "after the first no-reply the rest wait on the phone without being sent");
+    assert.equal(sent, 3, "after the first no-reply the rest wait on the phone without being sent (sent " + sent + ", most " + most + ", " + trace.join(" ") + ")");
     assert.equal(most, 1, "at most one ticket request in flight (first run)");
     // Every one confirmed is on the phone before any reply: in mat.queue without its data, its picture in the keep.
     const q = await queued(page);
