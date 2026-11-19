@@ -219,7 +219,7 @@ i{font-style:normal}
   .views::after{content:"";position:absolute;top:0;bottom:0;left:50%;border-left:1.5px dashed var(--key-hi);pointer-events:none}
   /* The panes, for what stands on the block itself (the sheets and their scrims). */
   #stay,#stayScrim,#allDays,#allDaysScrim,#stop,#stopScrim,#book,#bookScrim,#beforeScrim{left:0;right:calc(50% + var(--rail) / 2)}
-  #reg,#line,#lineScrim,#hist,#histScrim,#you,#youScrim{left:calc(50% - var(--rail) / 2);right:var(--rail)}
+  #reg,#line,#lineScrim,#hist,#histScrim,#you,#youScrim,#bulk,#bulkScrim{left:calc(50% - var(--rail) / 2);right:var(--rail)}
   /* Done stays in reach while a long sheet scrolls under it (as held sideways). */
   .sheet-top{position:sticky;top:-12px;z-index:1;margin:-12px calc(var(--gr) * -1) 8px calc(var(--gl) * -1);padding:12px var(--gr) 0 var(--gl);background:inherit}
   .sheet.stop .sheet-top,.sheet.stay .sheet-top{top:-14px;margin-top:-14px;padding-top:14px}

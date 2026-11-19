@@ -30,6 +30,7 @@ import { isWide, onWide } from "./shape.js";
 import { createWhere } from "./where.js";
 import { createKeep, fetchMissing, toBase64, ticketMark, fetchesAll, pruneKeep } from "./tickets.js";
 import { mountStub } from "./views/stub.js";
+import { mountBulkAdd } from "./views/bulkadd.js";
 import { clearTrip, forgetPhone } from "./forget.js";
 
 // How often a visible phone asks the backend whether anything changed.
@@ -377,6 +378,11 @@ function start() {
       you.close(false);
       history.open();
     },
+    // 一括 Add tickets: its own sheet, where You stands (the Money pane on a computer).
+    onBulk: () => {
+      you.close(false);
+      bulk.open();
+    },
     // Ticket pictures: back to every one, the fetching starts at once.
     onTixMode: (mode) => {
       if (mode === "all" && store.state.ticketsReady) fetchMissing(store, keep, { allowed: () => fetchesAll(raw) });
@@ -408,6 +414,27 @@ function start() {
       you.close(false);
     },
   });
+  // Bulk add of tickets (js/views/bulkadd.js), opened from You. Whatever
+  // closes You closes it too (a tab, another sheet, Forget); what it sorted, or
+  // its adding, carries on behind and is there when it is opened again.
+  const bulk = mountBulkAdd(phone, store, keep, {
+    onOpenDay: (date) => {
+      register.close();
+      borrowed = false;
+      closeDaySheets();
+      tabs.showTab("days", false);
+      days.goDay(Math.max(0, (store.state.days || []).findIndex((d) => d && d.date === date)));
+    },
+    onClose: (restoreFocus) => {
+      const b = document.getElementById("youBtn");
+      if (restoreFocus && b) b.focus({ preventScroll: true });
+    },
+  });
+  const closeYou = you.close;
+  you.close = (restoreFocus) => {
+    bulk.close(false);
+    closeYou(restoreFocus);
+  };
   const line = mountLine(phone, store, {
     onEdit: (id) => {
       line.close(false);
@@ -652,6 +679,7 @@ function start() {
     line.close(false);
     history.close(false);
     closeDaySheets();
+    bulk.close(false);
     you.open();
   });
 
@@ -704,8 +732,9 @@ function start() {
     if (store.state.status === "ready") store.loadHistory();
   });
   // A new release reloads the page only when nothing would be lost (js/update.js).
-  // Nothing unsent or still sending, and no notice waiting to be read (it would be wiped).
-  nothingUnsent = () => store.outbox().unsent === 0 && !store.busy() && !store.state.notice;
+  // Nothing unsent or still sending, no notice waiting to be read (it would be
+  // wiped), and Add tickets not reading or adding, open or closed (fix round 1, I4).
+  nothingUnsent = () => store.outbox().unsent === 0 && !store.busy() && !store.state.notice && !bulk.isBusy();
   if (document.visibilityState !== "hidden") startChecking();
 }
 
