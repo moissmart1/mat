@@ -1,6 +1,6 @@
 /* Copyright (c) 2026 moissmart1. All rights reserved. No licence is granted: do not copy, adapt or reuse this code or design, and do not use it to train or prompt an AI system to reproduce it. See LICENSE. */
 // Starts the app: takes the trip key from the invite link, builds the api and
-// the store, mounts the screens (Days, Before we go and Money) and boots.
+// the store, mounts the screens (Days, Before we go, Tickets and Money) and boots.
 
 import { API_URL } from "./config.js";
 import { createApi } from "./api.js";
@@ -21,6 +21,7 @@ import { mountUndoBar } from "./views/ubar.js";
 import { mountNet } from "./views/net.js";
 import { mountTodos } from "./views/todos.js";
 import { mountStampBook } from "./views/stampbook.js";
+import { mountPassCase } from "./views/passcase.js";
 import { tabName } from "./todos.js";
 import { rollingCount } from "./fx.js";
 import { createUpdater, otherVersionIn } from "./update.js";
@@ -125,7 +126,7 @@ function withKey(storage, keyHere) {
 // others inert; with `remember` it keeps the choice (mat.tab) and the trip day
 // it was made on (mat.tabDay, by the real time, never the demo clock).
 function mountTabs(store, storage) {
-  const views = { days: document.getElementById("vDays"), before: document.getElementById("vBefore"), money: document.getElementById("vMoney") };
+  const views = { days: document.getElementById("vDays"), before: document.getElementById("vBefore"), tickets: document.getElementById("vTickets"), money: document.getElementById("vMoney") };
   const nav = document.getElementById("nav");
   const read = (k) => {
     try {
@@ -140,33 +141,45 @@ function mountTabs(store, storage) {
   let settled = false; // the opening screen has been decided with the trip known
   const shownHooks = []; // called with the tab's name each time a tab is shown
 
-  // A computer's window (WIDE) shows Money and Days side by side, Before over
-  // the Days pane while it is the tab. `tab` stays what a phone would show,
-  // so a narrower window goes back to it.
+  // A computer's window (WIDE) shows Money and Days side by side, Before or
+  // Tickets over the Days pane while it is the tab. `tab` stays what a phone
+  // would show, so a narrower window goes back to it.
   let wide = isWide();
-  let cameFrom = null; // WIDE: the tab Before was opened from
-  const shows = (name, t) => (wide ? name === "money" || name === (t === "before" ? "before" : "days") : name === t);
+  let cameFrom = null; // WIDE: the tab Before or Tickets was opened from
+  // The tabs that stand in the Days pane in WIDE.
+  const inPane = (t) => t === "before" || t === "tickets";
+  // On Tickets, the Before pad can be up as a sheet over it (setSheet).
+  let sheet = false;
+  const shows = (name, t) => (sheet && t === "tickets" && name === "before") || (wide ? name === "money" || name === (inPane(t) ? t : "days") : name === t);
 
+  const sheetHooks = []; // called with true or false each time the Before sheet comes or goes
   function showTab(t, remember = true) {
     const changed = t !== tab;
     tab = t;
+    // Leaving Tickets takes the Before sheet down with it.
+    if (sheet && t !== "tickets") {
+      sheet = false;
+      for (const f of sheetHooks) f(false);
+    }
     for (const b of nav.querySelectorAll("button[data-tab]")) {
       const on = b.dataset.tab === t;
       b.classList.toggle("is-active", on);
-      // WIDE hides the Days and Money keys (the panes are both there): only Before can be the current key.
-      if (on && !(wide && b.dataset.tab !== "before")) b.setAttribute("aria-current", "page");
+      // WIDE hides the Days and Money keys (the panes are both there): only Before or Tickets can be the current key.
+      if (on && !(wide && !inPane(b.dataset.tab))) b.setAttribute("aria-current", "page");
       else b.removeAttribute("aria-current");
     }
     for (const [name, view] of Object.entries(views)) {
       const on = shows(name, t);
       view.classList.toggle("is-active", on);
-      view.inert = !on;
+      // Under the Before sheet the Tickets tab is put away until it closes.
+      view.inert = !on || (sheet && name === "tickets");
     }
+    views.before.classList.toggle("as-sheet", sheet && t === "tickets");
     // The hooks are for arriving: a tap on the tab already showing leaves it as it is.
     if (changed) for (const f of shownHooks) f(t);
-    // The Before tab comes and goes with the list: it is never what the app opens on.
+    // The Before and Tickets tabs come and go with the trip: neither is what the app opens on.
     // In WIDE there is nothing to choose between, so what is remembered is left as it was.
-    if (!remember || wide || t === "before") return;
+    if (!remember || wide || t === "before" || t === "tickets") return;
     const trip = store.state.trip;
     try {
       storage.setItem("mat.tab", t);
@@ -208,11 +221,18 @@ function mountTabs(store, storage) {
     // WIDE: Before takes the Days pane and the Days key brings back the tab it
     // was opened from (Money's pane never went away), so a narrower window
     // shows what it showed before.
-    if (wide && b.dataset.tab === "before" && tab !== "before") cameFrom = tab;
-    else if (wide && b.dataset.tab === "days" && tab === "before") return showTab(cameFrom || "days");
+    if (wide && inPane(b.dataset.tab) && !inPane(tab)) cameFrom = tab;
+    else if (wide && b.dataset.tab === "days" && inPane(tab)) return showTab(cameFrom || "days");
     showTab(b.dataset.tab);
   });
-  return { showTab, tab: () => tab, onShown: (f) => shownHooks.push(f) };
+  // The Before pad as a sheet over the Tickets tab (on: true) or not.
+  const setSheet = (on) => {
+    if (sheet === on || (on && tab !== "tickets")) return;
+    sheet = on;
+    showTab(tab, false);
+    for (const f of sheetHooks) f(on);
+  };
+  return { showTab, tab: () => tab, onShown: (f) => shownHooks.push(f), setSheet, sheet: () => sheet, onSheet: (f) => sheetHooks.push(f) };
 }
 
 function start() {
@@ -300,6 +320,7 @@ function start() {
     if (!ev.target.closest("button[data-tab]")) return;
     borrowed = false;
     closeDaySheets();
+    closeBeforeSheet(false);
   });
   // A phone is never left pretending unseen (R34): the demo ends by itself
   // when the app comes back after more than 10 minutes away, or on another
@@ -337,7 +358,7 @@ function start() {
     where,
     getKey: () => storage.getItem("mat.key"),
     // A computer's window shows Days and Money side by side (Before takes the Days pane while it is the tab).
-    screen: () => (tabs.tab() === "before" ? "Before we go" : isWide() ? "Days and Money" : tabs.tab() === "days" ? "Days" : "Money"),
+    screen: () => (tabs.tab() === "before" ? "Before we go" : tabs.tab() === "tickets" ? "Tickets" : isWide() ? "Days and Money" : tabs.tab() === "days" ? "Days" : "Money"),
     // Try another day: Days follows the demo clock from the picked day's
     // 07:00. Nothing is stored, so a reload ends it.
     onDemo: (date) => {
@@ -414,42 +435,138 @@ function start() {
     you.close(false);
     closeDaySheets();
   };
-  // "Before we go": the bookings and prep from the planner, on its own tab.
-  // The tab is in the bar only while the list says so; if it goes while it is
-  // showing, the person lands on Days.
+  // "Before we go": the bookings and prep from the planner, on its own tab
+  // until the trip's first day. The tab is in the bar only while the list
+  // says so; if it goes while it is showing, the person lands on Days. From
+  // the first day its place is the Tickets key (the pass case), and the items
+  // still open are a slip on the Tickets tab that shows the pad as a sheet.
   const beforeBtn = document.getElementById("beforeBtn");
   const beforeN = document.getElementById("beforeN");
+  const ticketsBtn = document.getElementById("ticketsBtn");
+  const ticketsN = document.getElementById("ticketsN");
   const pillRoll = rollingCount(beforeN); // a change after the count has settled rolls in
+  const tixRoll = rollingCount(ticketsN);
+  let listState = { show: false, open: 0 }; // what the Before list last said
+  let caseState = { on: false, todayLeft: 0 }; // what the pass case last said
+  let passCase = null;
+  // A key that goes while it has focus hands it on: the Days key, or in WIDE
+  // (where it is hidden) the rail's first key that shows.
+  const focusAway = () => {
+    const keys = [...document.querySelectorAll("#nav button")];
+    const daysBtn = document.querySelector('#nav button[data-tab="days"]');
+    const to = daysBtn && daysBtn.getClientRects().length ? daysBtn : keys.find((k) => k.getClientRects().length);
+    if (to) to.focus({ preventScroll: true });
+  };
+  // Lays the bar out from both: Before (before the trip) or Tickets (from its first day) in the second place.
+  function layBar() {
+    const tripOn = caseState.on;
+    const showBefore = listState.show && !tripOn;
+    const open = listState.open;
+    const hadFocus = (!showBefore && document.activeElement === beforeBtn) || (!tripOn && document.activeElement === ticketsBtn);
+    beforeBtn.hidden = !showBefore;
+    ticketsBtn.hidden = !tripOn;
+    // Five keys: Ring up is the middle one (before Money). Four: it is last. The DOM order is the visual and focus order.
+    const five = showBefore || tripOn;
+    const ringBtn = document.getElementById("ring");
+    const navEl = document.getElementById("nav");
+    const moneyBtn = navEl.querySelector('button[data-tab="money"]');
+    const wantBefore = five ? moneyBtn : null;
+    if (ringBtn && moneyBtn && (five ? ringBtn.nextElementSibling !== moneyBtn : ringBtn.nextElementSibling !== null)) {
+      const had = document.activeElement === ringBtn;
+      navEl.insertBefore(ringBtn, wantBefore);
+      if (had) ringBtn.focus({ preventScroll: true });
+    }
+    beforeN.hidden = !showBefore || open < 1;
+    beforeN.textContent = open > 0 ? String(open) : "";
+    // A change while the app is open rolls the new number in; the first count shown, and loading, do not.
+    if (showBefore && open > 0) pillRoll.set(open);
+    else pillRoll.reset();
+    beforeBtn.setAttribute("aria-label", tabName(open));
+    // The Tickets key: today's tickets still to come, no badge at none.
+    const left = caseState.todayLeft;
+    ticketsN.hidden = !tripOn || left < 1;
+    ticketsN.textContent = left > 0 ? String(left) : "";
+    ticketsN.classList.toggle("is-2", left > 9);
+    if (tripOn && left > 0) tixRoll.set(left);
+    else tixRoll.reset();
+    ticketsBtn.setAttribute("aria-label", left > 0 ? "Tickets, " + left + " still to come today" : "Tickets");
+    // The slip on the Tickets tab: the items still open, from the first day on.
+    if (passCase) passCase.setBefore(tripOn && listState.show ? open : 0);
+    // The list has gone (all ticked): its sheet goes with it.
+    if (!listState.show && tabs.sheet()) closeBeforeSheet(false);
+    if (!showBefore && tabs.tab() === "before") tabs.showTab("days", false);
+    if (!tripOn && tabs.tab() === "tickets") tabs.showTab("days", false);
+    if (hadFocus) focusAway();
+  }
   const todos = mountTodos(document.getElementById("vBefore"), store, {
     clock,
-    onState: ({ show, open }) => {
-      // A hidden button cannot keep focus: if it has it, Days takes it.
-      const hadFocus = !show && document.activeElement === beforeBtn;
-      beforeBtn.hidden = !show;
-      // Five keys: Ring up is the middle one (before Money). Four: it is last. The DOM order is the visual and focus order.
-      const ringBtn = document.getElementById("ring");
-      const navEl = document.getElementById("nav");
-      const moneyBtn = navEl.querySelector('button[data-tab="money"]');
-      const wantBefore = show ? moneyBtn : null;
-      if (ringBtn && moneyBtn && (show ? ringBtn.nextElementSibling !== moneyBtn : ringBtn.nextElementSibling !== null)) {
-        const had = document.activeElement === ringBtn;
-        navEl.insertBefore(ringBtn, wantBefore);
-        if (had) ringBtn.focus({ preventScroll: true });
-      }
-      beforeN.hidden = !show || open < 1;
-      beforeN.textContent = open > 0 ? String(open) : "";
-      // A change while the app is open rolls the new number in; the first count shown, and loading, do not.
-      if (show && open > 0) pillRoll.set(open);
-      else pillRoll.reset();
-      beforeBtn.setAttribute("aria-label", tabName(open));
-      if (!show && tabs.tab() === "before") tabs.showTab("days", false);
-      if (hadFocus) {
-        // The Days key, or in WIDE (where it is hidden) the rail's first key that shows.
-        const keys = [...document.querySelectorAll("#nav button")];
-        const daysBtn = document.querySelector('#nav button[data-tab="days"]');
-        const to = daysBtn && daysBtn.getClientRects().length ? daysBtn : keys.find((k) => k.getClientRects().length);
-        if (to) to.focus({ preventScroll: true });
-      }
+    onState: (st) => {
+      listState = st;
+      layBar();
+    },
+  });
+
+  // The Before pad as a sheet over the Tickets tab: a Done key on its top,
+  // a scrim behind it; Done, the scrim, Escape or any tab key close it.
+  const vBefore = document.getElementById("vBefore");
+  const sheetTop = document.createElement("div");
+  sheetTop.className = "sheet-top bs-top";
+  const sheetName = document.createElement("span");
+  sheetName.textContent = "Before we go";
+  const sheetDone = document.createElement("button");
+  sheetDone.type = "button";
+  sheetDone.id = "beforeDone";
+  sheetDone.textContent = "Done";
+  sheetTop.append(sheetName, sheetDone);
+  vBefore.prepend(sheetTop);
+  const beforeScrim = document.createElement("div");
+  beforeScrim.className = "scrim";
+  beforeScrim.id = "beforeScrim";
+  beforeScrim.hidden = true;
+  phone.append(beforeScrim);
+  let sheetOpener = null;
+  tabs.onSheet((on) => {
+    beforeScrim.hidden = !on;
+    phone.classList.toggle("before-open", on);
+    if (on) {
+      vBefore.scrollTop = 0;
+      todos.shown();
+    }
+  });
+  function openBeforeSheet(from) {
+    if (tabs.tab() !== "tickets" || !listState.show) return;
+    sheetOpener = from || null;
+    tabs.setSheet(true);
+    sheetDone.focus({ preventScroll: true });
+  }
+  function closeBeforeSheet(restoreFocus = true) {
+    if (!tabs.sheet()) return;
+    const back = sheetOpener;
+    sheetOpener = null;
+    tabs.setSheet(false);
+    if (!restoreFocus) return;
+    const to = back && back.isConnected ? back : document.getElementById("pcSlip") || ticketsBtn;
+    if (to && to.getClientRects().length) to.focus({ preventScroll: true });
+  }
+  sheetDone.addEventListener("click", () => closeBeforeSheet());
+  beforeScrim.addEventListener("click", () => closeBeforeSheet());
+  document.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape" && !ev.isComposing && tabs.sheet()) closeBeforeSheet();
+  });
+
+  // The Tickets tab: the pass case (js/views/passcase.js).
+  passCase = mountPassCase(document.getElementById("vTickets"), store, {
+    clock,
+    keep,
+    where,
+    onTicket: (id, button) => {
+      closeForDays();
+      stub.open(id, button);
+    },
+    onBefore: (button) => openBeforeSheet(button),
+    onState: (st) => {
+      caseState = st;
+      layBar();
     },
   });
   // Showing the tab folds the done group and fetches quietly if the list is an hour old.

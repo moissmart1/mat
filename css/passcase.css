@@ -1,0 +1,145 @@
+/* Copyright (c) 2026 moissmart1. All rights reserved. No licence is granted: do not copy, adapt or reuse this code or design, and do not use it to train or prompt an AI system to reproduce it. See LICENSE. */
+/* The Tickets tab (js/views/passcase.js): 定期入れ, the pass case, option A of
+   the tickets-tab mock-up (Mo's pick, 2026-11-18). New here: the leather case,
+   its clear window, the card slots, the reservation slip tucked behind the top
+   and the back pocket. The ticket stock, the band, the day number, the 券 box
+   and the stub-shaped key are the app's own (css/days.css, css/tickets.css).
+   Also: the Before pad shown as a sheet over the tab (#vBefore.as-sheet). */
+:root{--leather:#2A1D17;--foil:#C9A66B}
+
+.pc{padding-bottom:8px}
+.pc-bar{align-items:baseline}
+.pc-h{margin:0;min-width:0}
+.pc-h i{white-space:nowrap}
+.pc-come{flex:none;color:var(--dim);font-weight:700;font-size:13px;white-space:nowrap}
+
+/* ---------- the reservation slip, tucked behind the top of the case ---------- */
+.pc-hold{position:relative;padding:0 0 4px}
+.pc-slip{position:relative;z-index:0;display:flex;align-items:baseline;gap:8px;width:calc(100% - 58px);min-height:44px;margin:4px 30px -10px 28px;padding:7px 12px 18px;
+  border:0;border-top:3px double var(--ai);border-radius:2px 2px 0 0;background:var(--grain),#F4F1E8;color:var(--ai);text-align:left;
+  transform:rotate(-1.4deg);box-shadow:inset 0 -1px 0 rgba(255,255,255,.4),0 4px 8px rgba(0,0,0,.4);transition:transform .12s ease-out}
+.pc-slip:active{transform:rotate(-1.4deg) translateY(1.5px)}
+.pc-slip b{font-size:15px;font-weight:900;letter-spacing:.2em;white-space:nowrap}
+.pc-slip span{min-width:0;color:var(--print);font-size:13.5px;font-weight:900;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pc-slip u{margin-left:auto;color:var(--print);font-size:13.5px;font-weight:900;text-decoration:none;border-bottom:1.5px dotted var(--print);white-space:nowrap}
+.pc-slip:focus-visible{outline-offset:3px}
+
+/* ---------- the case ---------- */
+.pc-case{position:relative;z-index:1;margin:0 12px;padding:12px 11px 14px;border-radius:16px;
+  background:radial-gradient(120% 60% at 20% 0%, rgba(255,220,180,.09), transparent 60%), var(--grain), var(--leather);
+  box-shadow:inset 0 1px 0 rgba(255,230,200,.12), inset 0 -2px 0 rgba(0,0,0,.5), 0 18px 30px -12px #000}
+/* The stitching round the edge. */
+.pc-case::before{content:"";position:absolute;inset:5px;border:1.5px dashed rgba(201,166,107,.32);border-radius:12px;pointer-events:none}
+/* The gold foil lines: 次 Next, 明日から Later days, 使用済 Used. */
+.pc-foil{position:relative;display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin:0 4px 6px;color:var(--foil);font-size:12.5px;font-weight:900;letter-spacing:.04em;
+  text-shadow:0 -1px 0 rgba(0,0,0,.6), 0 1px 0 rgba(255,220,160,.12)}
+.pc-foil i{font-weight:700;letter-spacing:0}
+.pc-foil>span:last-child{font-weight:700;text-align:right;white-space:nowrap}
+.pc-foil>span:first-child{min-width:0}
+
+/* The clear window, with the light on its plastic. */
+.pc-win{position:relative;padding:6px;border-radius:9px;background:rgba(0,0,0,.35);box-shadow:inset 0 2px 6px rgba(0,0,0,.7), 0 1px 0 rgba(255,230,200,.1)}
+.pc-win::after{content:"";position:absolute;inset:6px;border-radius:5px;pointer-events:none;
+  background:linear-gradient(118deg, rgba(255,255,255,.34) 0%, rgba(255,255,255,.06) 26%, transparent 40%, transparent 74%, rgba(255,255,255,.12) 86%, transparent 94%)}
+/* The ticket in the window: the day ticket's stock and band. */
+.pc-tk{--line:var(--key-hi);--line-ink:#fff;display:block;width:100%;padding:0;border:0;border-radius:5px;overflow:hidden;text-align:left;color:var(--print);font-weight:700;
+  background:linear-gradient(104deg, rgba(255,255,255,.26), rgba(255,255,255,0) 42%), var(--grain), var(--stock) var(--mat-pattern);box-shadow:0 1px 2px rgba(0,0,0,.4);
+  transition:transform .12s ease-out}
+.pc-tk:active{transform:scale(.99)}
+.pc-tk:focus-visible{outline-offset:3px}
+.pc-band{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:32px;padding:0 7px 0 12px;background:var(--line);color:var(--line-ink);font-size:13.5px;font-weight:900}
+.pc-bn{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pc-bn i{font-weight:700;font-size:12px;margin-left:6px}
+.pc-band .num{font-size:14px;flex:none}
+.pc-tb{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;padding:9px 12px 11px}
+.pc-tm{display:block;min-width:0}
+.pc-kind{display:flex;justify-content:space-between;gap:8px;font-size:12px}
+.pc-kind i{font-weight:500;margin-left:4px}
+.pc-kind b{font-size:14px;font-weight:900;font-variant-numeric:tabular-nums}
+.pc-title{display:block;margin-top:6px;font-size:24px;font-weight:900;line-height:1.1;letter-spacing:.02em;overflow-wrap:anywhere}
+.pc-detail{display:block;margin-top:4px;font-size:12.5px;overflow-wrap:anywhere}
+.pc-lv{display:flex;align-items:center;flex-wrap:wrap;gap:0 6px;margin-top:8px;font-size:14.5px;font-weight:900}
+.pc-tag{display:inline-block;background:var(--print);color:var(--stock);font-size:11px;font-weight:900;padding:1px 6px 2px;border-radius:2px}
+.pc-side{display:grid;align-content:center;justify-items:center;gap:4px;width:84px}
+.pc-th{display:block;width:84px;height:84px;padding:4px;background:#fff;border-radius:2px;box-shadow:0 0 0 1px rgba(21,18,15,.2)}
+.pc-th img{display:block;width:100%;height:100%;object-fit:contain}
+.pc-seat{max-width:100%;font-size:10.5px;font-weight:700;text-align:center;line-height:1.2}
+/* The status line: the 券 box (solid on this phone, dashed when it needs signal) or 番号のみ. */
+.pc-st{display:flex;align-items:flex-start;gap:5px;margin-top:5px;font-size:12.5px;font-weight:700;line-height:1.25;min-width:0}
+.pc-kb{flex:none;border:1.5px solid currentColor;border-radius:2px;padding:0 4px 1px;font-weight:900;font-size:12px;line-height:1.25}
+.pc-kb.is-dash{border-style:dashed}
+.pc-refno{display:block;font-family:var(--dot);font-size:15px;font-weight:400;letter-spacing:.04em;white-space:nowrap;text-align:right}
+.pc-refno small{display:block;font-family:var(--f);font-size:10.5px;font-weight:700;letter-spacing:0}
+.pc-tb .pc-refno{align-self:center;max-width:110px;white-space:normal;overflow-wrap:anywhere}
+/* The empty window: the case is still the case. */
+.pc-none{position:relative;display:grid;place-items:center;align-content:center;gap:8px;min-height:190px;padding:20px;text-align:center;color:var(--stock);
+  border:1.6px dashed rgba(207,232,238,.5);border-radius:5px}
+.pc-none b{font-size:18px;font-weight:900}
+.pc-none span{font-size:14px;font-weight:700}
+
+/* 切符 Show ticket under the window: the stub-shaped key (.r-tk), paper-white. */
+.pc-show{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;min-height:58px;margin:10px 0 14px;padding:0 18px;border:0;border-radius:3px;
+  background:var(--paper);color:var(--print);text-align:left;
+  -webkit-mask:radial-gradient(circle at 0 50%,transparent 7px,#000 7.5px) left/51% 100% no-repeat,radial-gradient(circle at 100% 50%,transparent 7px,#000 7.5px) right/51% 100% no-repeat;
+          mask:radial-gradient(circle at 0 50%,transparent 7px,#000 7.5px) left/51% 100% no-repeat,radial-gradient(circle at 100% 50%,transparent 7px,#000 7.5px) right/51% 100% no-repeat;
+  transition:transform .12s ease-out}
+.pc-show:active{transform:scale(.98)}
+.pc-show span{font-size:18px;font-weight:900;white-space:nowrap}
+.pc-show span b{margin-right:9px;letter-spacing:.06em}
+.pc-show i{min-width:0;font-size:12.5px;font-weight:700;opacity:.8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pc-show:focus-visible{outline-offset:3px}
+
+/* ---------- card slots: each ticket stands out of its pocket, the leather lip stitched across it ---------- */
+.pc-slots{display:grid;gap:3px;margin:0 0 12px}
+.pc-win+.pc-slots{margin-top:12px}
+.pc-slot{position:relative;padding:0 4px 9px}
+.pc-slot::after{content:"";position:absolute;left:0;right:0;bottom:0;height:16px;border-radius:2px 2px 6px 6px;pointer-events:none;
+  background:var(--grain), #33241C;border-top:1.5px dashed rgba(201,166,107,.35);box-shadow:0 -5px 8px -3px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,230,200,.08)}
+.pc-pk{--line:var(--key-hi);position:relative;display:grid;grid-template-columns:minmax(44px,auto) minmax(0,1fr) auto;align-items:center;gap:8px;width:100%;min-height:50px;padding:6px 10px 14px 14px;border:0;
+  border-radius:4px 4px 0 0;text-align:left;color:var(--print);font-weight:700;box-shadow:inset 6px 0 0 var(--line);
+  background:linear-gradient(104deg, rgba(255,255,255,.26), rgba(255,255,255,0) 42%), var(--grain), var(--stock) var(--mat-pattern)}
+.pc-pk:focus-visible{outline-offset:2px;z-index:1}
+.pc-t{font-size:15px;font-weight:900;font-variant-numeric:tabular-nums}
+.pc-t small{display:block;font-size:10.5px;font-weight:700}
+.pc-n{min-width:0}
+.pc-nt{display:block;font-size:14.5px;font-weight:900;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pc-n .pc-st{margin-top:3px;font-size:12px}
+.pc-d{font-size:11.5px;font-weight:900;text-align:right;line-height:1.15}
+.pc-d em{display:block;font-style:normal;font-size:17px}
+/* Not on this phone yet: the pocket holds only the outline of a ticket. */
+.pc-pk.is-needs{background:repeating-linear-gradient(135deg, rgba(207,232,238,.06) 0 6px, transparent 6px 12px);border:1.6px dashed rgba(207,232,238,.55);border-bottom:0;color:var(--stock)}
+/* Reference only: a plain cream slip, the number printed where a code would be. */
+.pc-pk.is-ref{background:var(--grain),#F4F1E8;color:var(--print)}
+/* The back pocket: used, struck through, dimmed. */
+.pc-pk.is-used{opacity:.55}
+.pc-pk.is-used .pc-t,.pc-pk.is-used .pc-nt{text-decoration:line-through;text-decoration-thickness:1.5px}
+
+@media (max-width:350px){
+  .pc-case{margin:0 8px;padding:12px 8px 14px}
+  .pc-slip{margin-left:22px;margin-right:22px;width:calc(100% - 44px)}
+  .pc-title{font-size:21px}
+  .pc-side,.pc-th{width:72px}
+  .pc-th{height:72px}
+  .pc-show{padding:0 14px}
+  .pc-show span{font-size:16px}
+  .pc-pk{grid-template-columns:minmax(40px,auto) minmax(0,1fr) auto;padding-left:12px;gap:6px}
+}
+@media (prefers-reduced-motion: reduce){ .pc-tk,.pc-show,.pc-slip{transition:none} }
+
+/* ---------- the Tickets key ---------- */
+/* "Tickets" is a little wider than "Before": set a hair tighter so it keeps its margin in a fifth of a narrow bar. */
+.nav #ticketsBtn{letter-spacing:-.03em}
+.nav #ticketsBtn small,.nav #ticketsBtn .pill{letter-spacing:0}
+/* Two digits: the badge sits on the key's corner, so 定期入れ never has to give way. */
+.nav #ticketsN.is-2{position:absolute;top:1px;right:1px}
+
+/* ---------- the Before pad as a sheet over the Tickets tab ---------- */
+#vBefore .bs-top{display:none}
+#vBefore.as-sheet{z-index:24;top:max(10%, calc(76px + var(--inset-t)));padding-top:0;padding-bottom:calc(24px + env(safe-area-inset-bottom, 0px));
+  background:var(--ground);border-top:1px solid #000;border-radius:18px 18px 0 0;box-shadow:0 -24px 40px -10px #000;transition:none;animation:bsUp .5s var(--sheet) both}
+#vBefore.as-sheet .bs-top{display:flex;position:sticky;top:0;z-index:2;margin:0 0 4px;padding:12px var(--gr) 6px var(--gl);background:var(--ground)}
+@keyframes bsUp{from{transform:translateY(104%)}to{transform:none}}
+@media (prefers-reduced-motion: reduce){ #vBefore.as-sheet{animation:none} }
+@media (orientation:landscape) and (max-height:520px){
+  #vBefore.as-sheet{top:16px}
+}
