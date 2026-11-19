@@ -492,8 +492,8 @@ function start() {
     ticketsBtn.setAttribute("aria-label", left > 0 ? "Tickets, " + left + " still to come today" : "Tickets");
     // The slip on the Tickets tab: the items still open, from the first day on.
     if (passCase) passCase.setBefore(tripOn && listState.show ? open : 0);
-    // The list has gone (all ticked): its sheet goes with it.
-    if (!listState.show && tabs.sheet()) closeBeforeSheet(false);
+    // The list has gone (all ticked): its sheet goes with it, and focus that was in it goes to the Tickets key.
+    if (!listState.show && tabs.sheet()) closeBeforeSheet(document.getElementById("vBefore").contains(document.activeElement));
     if (!showBefore && tabs.tab() === "before") tabs.showTab("days", false);
     if (!tripOn && tabs.tab() === "tickets") tabs.showTab("days", false);
     if (hadFocus) focusAway();
