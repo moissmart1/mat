@@ -3,7 +3,7 @@
 // Everything is made up: people A, B and C, invented places, references and codes.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseCsv, parseList, listRefused, idsAtStart, rowsForFile, sortFiles, factsFor, seatFor, stopLabel } from "../js/bulk.js";
+import { parseCsv, parseList, listRefused, idsAtStart, rowsForFile, sortFiles, factsFor, seatFor, stopLabel, refUsable, nameHasRef, LIST_CUT, listTwice } from "../js/bulk.js";
 
 const HEAD = "ticket_id,booking_key,start_date,start_time,end_date,end_time,type,title,provider,confirmation,traveler,ticket_ref,seat,holder,how_to_use,file_url,manage_url,deadline,deadline_what,notes,status,book_now_no,updated,added_by";
 const COLS = HEAD.split(",");
@@ -89,12 +89,68 @@ test("rule 1: several ids at the start, space-separated, belong to every one of 
 
 // ---------- rule 2: the reference in the name ----------
 
-test("rule 2: a confirmation or ticket_ref of 5 or more characters, ignoring case and punctuation", () => {
+test("rule 2: a usable confirmation or ticket_ref as whole parts of the name, ignoring case and punctuation", () => {
   const rows = [R({ ticket_id: "T001", confirmation: "QX-77 81" }), R({ ticket_id: "T002", ticket_ref: "ZZ12" }), R({ ticket_id: "T003", ticket_ref: "KM-55021" })];
   assert.equal(rowsForFile("booking qx7781.pdf", rows).rows[0].ticket_id, "T001");
   assert.equal(rowsForFile("e_ticket_km55021.png", rows).rows[0].ticket_id, "T003");
+  assert.equal(rowsForFile("e_ticket_km55021.png", rows).ref, "KM-55021");
   // Four characters are too few to trust.
   assert.equal(rowsForFile("zz12.png", rows).how, "none");
+  // Inside a longer part of the name: not found.
+  assert.equal(rowsForFile("xqx7781y.png", rows).how, "none");
+});
+
+// Fix round 1, C1: the reviewer's two cases. Neither may ever be sure.
+test("C1: a placeholder reference ('E-ticket') never matches a file whose name has the word", () => {
+  const rows = [R({ ticket_id: "T001", ticket_ref: "E-ticket", start_date: "2026-12-11", start_time: "10:00", title: "Museum" })];
+  assert.equal(rowsForFile("Klook eticket aquarium.png", rows).how, "none");
+  const out = sortFiles({ files: [png("f", "Klook eticket aquarium.png")], rows, state: state() });
+  assert.equal(out.items.length, 0, "never sure");
+  assert.equal(out.cards[0].kind, "norow");
+});
+
+test("C1: a short number ('61211') never matches a screenshot's date and time", () => {
+  const stops = STOPS.concat([{ id: "s-cb", date: "2026-12-11", time: "15:00", title: "Coffee break" }]);
+  const rows = [R({ ticket_id: "T002", confirmation: "61211", start_date: "2026-12-11", start_time: "14:00", title: "Something" })];
+  assert.equal(rowsForFile("Screenshot 2026-12-11 at 09.30.15.png", rows).how, "none");
+  const out = sortFiles({ files: [png("f", "Screenshot 2026-12-11 at 09.30.15.png")], rows, state: state({ stops }) });
+  assert.equal(out.items.length, 0, "never sure");
+  // Nor a long number that is the date, nor one stitched from the date and time.
+  assert.equal(rowsForFile("Screenshot 2026-12-11 at 09.30.15.png", [R({ ticket_id: "T003", confirmation: "20261211" })]).how, "none");
+  assert.equal(rowsForFile("Screenshot 2026 12 11 09 30 15.png", [R({ ticket_id: "T004", confirmation: "12110930" })]).how, "none");
+});
+
+test("C1: refUsable: 6+ with a letter and a digit, or 8+ digits; never a word, date, time or stamp", () => {
+  for (const v of ["QZ48810", "GD-7700", "KM-55021", "AB12CD", "123456789", "QX-77 81"]) assert.equal(refUsable(v), true, v);
+  for (const v of ["", "E-ticket", "QR code", "Mobile", "On app", "Confirmation", "Invoice", "Receipt", "Booking", "61211", "1234567", "2026-12-11", "20261211", "11122026", "12/11/2026", "09:30", "09.30.15", "0930pm", "IMG_1234", "IMG-20261211", "PXL_20261211_093015", "Screenshot 2026-12-11", "ticket01", "Booking 12", "11Dec2026", "2026dec11"]) assert.equal(refUsable(v), false, v);
+});
+
+test("C1: nameHasRef: whole parts only; a number as one whole part", () => {
+  assert.equal(nameHasRef("Sky QZ-48810.png", "QZ48810"), true);
+  assert.equal(nameHasRef("Sky QZ48810.png", "QZ-48810"), true);
+  assert.equal(nameHasRef("SkyQZ48810.png", "QZ48810"), false);
+  assert.equal(nameHasRef("Order 123456789.pdf", "123456789"), true);
+  assert.equal(nameHasRef("Order 1234567890.pdf", "123456789"), false);
+  assert.equal(nameHasRef("Order 12345 6789.pdf", "123456789"), false);
+});
+
+test("C1: a file found by its reference is a card that says so, its line's stop the first choice", () => {
+  const rows = [R({ ticket_id: "T014", confirmation: "QZ48810", start_date: "2026-12-15", start_time: "13:00", title: "Aquarium" })];
+  const out = sortFiles({ files: [png("f", "Aquarium QZ48810.png")], rows, state: state() });
+  assert.equal(out.items.length, 0);
+  const c = out.cards[0];
+  assert.equal(c.kind, "ref");
+  assert.equal(c.ask, "Its name has the reference of T014 · check it.");
+  assert.equal(c.hint, "“QZ48810” is in the file’s name.");
+  assert.deepEqual(c.choices.map((x) => [x.stop, x.who, x.rowIds]), [["s-aq", "", ["T014"]]]);
+  assert.equal(c.onList, true);
+  // Answered: in, as checked.
+  const yes = sortFiles({ files: [png("f", "Aquarium QZ48810.png")], rows, state: state(), answers: new Map([["f#0", c.choices[0]]]) });
+  assert.deepEqual(yes.items.map((i) => [i.stop, i.from]), [["s-aq", "card"]]);
+  // A line whose stop is itself odd keeps that card, and says the reference too.
+  const odd = sortFiles({ files: [png("g", "Boat QZ48810.png")], rows: [R({ ticket_id: "T019", confirmation: "QZ48810", start_date: "2026-12-16", start_time: "19:30", title: "Lantern boat" })], state: state() });
+  assert.equal(odd.cards[0].kind, "nostop");
+  assert.match(odd.cards[0].hint, /^Its name has the reference of T019 · check it\. /);
 });
 
 test("rule 2: several lines with the reference: the one whose traveler is named too; still several, odd", () => {
@@ -313,9 +369,70 @@ test("facts: the stop's empty ticket fields from the line, never overwriting; a 
   ];
   const stops = [{ id: "s1", tkRef: "", tkName: "Already", tkSeat: "" }, { id: "s2" }];
   const items = [{ stop: "s1", who: "", rowIds: ["T001"] }, { stop: "s2", who: "B", rowIds: ["T002"] }];
-  assert.deepEqual(factsFor(items, rows, stops), { s1: { tkRef: "QX7781", tkSeat: "Car 3 7A-C" }, s2: { tkRef: "KM55021", tkName: "B" } });
+  // Fix round 1, M6: a person's line gives the stop only its reference, never the name on it.
+  assert.deepEqual(factsFor(items, rows, stops), { s1: { tkRef: "QX7781", tkSeat: "Car 3 7A-C" }, s2: { tkRef: "KM55021" } });
   assert.equal(seatFor(items[1], rows), "12B");
   assert.equal(seatFor(items[0], rows), "");
+});
+
+test("M6: persons' lines with different references give the stop none; a line for everyone wins", () => {
+  const rows = [R({ ticket_id: "T1", confirmation: "AA11111", traveler: "A", holder: "A" }), R({ ticket_id: "T2", confirmation: "BB22222", traveler: "B", holder: "B" }), R({ ticket_id: "T3", confirmation: "CC33333", holder: "Lead" })];
+  const stops = [{ id: "s1" }];
+  assert.deepEqual(factsFor([{ stop: "s1", who: "A", rowIds: ["T1"] }, { stop: "s1", who: "B", rowIds: ["T2"] }], rows, stops), {});
+  assert.deepEqual(factsFor([{ stop: "s1", who: "A", rowIds: ["T1"] }, { stop: "s1", who: "", rowIds: ["T3"] }], rows, stops), { s1: { tkRef: "CC33333", tkName: "Lead" } });
+});
+
+test("M1: the only stop near the time, with no word shared and over half an hour off, is a card", () => {
+  const at = (time, title) => sortFiles({ files: [png("f", "T001 x.png")], rows: [R({ ticket_id: "T001", start_date: "2026-12-11", start_time: time, title })], state: state() });
+  const far = at("11:00", "Bus");
+  assert.equal(far.items.length, 0);
+  assert.equal(far.cards[0].kind, "far");
+  assert.equal(far.cards[0].ask, "Is it this stop?");
+  assert.equal(far.cards[0].hint, "Day 2: the list says 11:00, the stop is at 10:00.");
+  assert.deepEqual(far.cards[0].choices.map((c) => c.stop), ["s-mu"]);
+  assert.deepEqual(at("10:20", "Bus").items.map((i) => i.stop), ["s-mu"]);
+  assert.deepEqual(at("11:00", "Museum visit").items.map((i) => i.stop), ["s-mu"]);
+});
+
+test("M2: a quote inside a plain cell is a plain character; a list cut inside a quote is said", () => {
+  assert.deepEqual(parseCsv('1,x"y,z\n2,w'), [["1", 'x"y', "z"], ["2", "w"]]);
+  const ok = parseList(HEAD + "\n" + 'T001,,2026-12-15,13:00,,,activity,Bob\'s "big" boat,,,ALL\nT002,,2026-12-15,14:00\n');
+  assert.deepEqual(ok.rows.map((r) => [r.ticket_id, r.title]), [["T001", 'Bob\'s "big" boat'], ["T002", ""]]);
+  assert.deepEqual(ok.warn, []);
+  const cut = parseList(HEAD + "\nT001,,2026-12-15,13:00,,,activity,\"never closed\nT002,,2026-12-15,14:00\n");
+  assert.deepEqual(cut.warn, [LIST_CUT]);
+});
+
+test("M3: a ticket_id twice: the first line is used and it is said", () => {
+  const t = csv([R({ ticket_id: "T005", start_date: "2026-12-15", title: "First" }), R({ ticket_id: "T005", start_date: "2026-12-16", title: "Second" }), R({ ticket_id: "T006", start_date: "2026-12-15" })]);
+  const got = parseList(t);
+  assert.deepEqual(got.rows.map((r) => [r.ticket_id, r.title]), [["T005", "First"], ["T006", ""]]);
+  assert.deepEqual(got.warn, [listTwice(["T005"])]);
+  assert.equal(listTwice(["T005"]), "T005 is on the list twice; only its first line is used.");
+});
+
+test("M5: already there is per person: two people's codes with the same first page both go in", () => {
+  const rows = [R({ ticket_id: "T1", traveler: "A", start_date: "2026-12-15", start_time: "13:00" }), R({ ticket_id: "T2", traveler: "B", start_date: "2026-12-15", start_time: "13:00" })];
+  const same = { mime: "image/jpeg", w: 900, h: 1200, size: 5000, hash: "cover" };
+  const files = [pdf("a", "T1 a.pdf", 2, { sig: same }), pdf("b", "T2 b.pdf", 2, { sig: same })];
+  const out = sortFiles({ files, rows, state: state() });
+  assert.deepEqual(out.items.map((i) => i.who), ["A", "B"]);
+  // The stop has A's: only A's is already there.
+  const there = sortFiles({ files, rows, state: state(), isThere: (k, stop, who) => stop === "s-aq" && who === "A" });
+  assert.deepEqual(there.items.map((i) => i.who), ["B"]);
+  assert.deepEqual(there.out.map((o) => o.kind), ["there"]);
+});
+
+test("M9: a cut PDF carries which limit cut it", () => {
+  const rows = [R({ ticket_id: "T012", start_date: "2026-12-12", start_time: "09:00", title: "Kitamine pass" })];
+  const stopFull = sortFiles({ files: [pdf("f", "T012 pass.pdf", 11)], rows, state: state({ tickets: [{ id: "a", stop: "s-tr1" }] }) });
+  assert.equal(stopFull.cards[0].choices[0].cut, "stop");
+  const ans = new Map([["f#0", stopFull.cards[0].choices[0]]]);
+  assert.equal(sortFiles({ files: [pdf("f", "T012 pass.pdf", 11)], rows, state: state({ tickets: [{ id: "a", stop: "s-tr1" }] }), answers: ans }).items[0].cut, "stop");
+  const tickets = Array.from({ length: 117 }, (_, i) => ({ id: "t" + i, stop: "s-fl" }));
+  const tripFull = sortFiles({ files: [pdf("f", "T012 pass.pdf", 5)], rows, state: state({ tickets }) });
+  assert.equal(tripFull.cards[0].choices[0].cut, "trip");
+  assert.equal(tripFull.cards[0].choices[0].pages, 3);
 });
 
 test("stopLabel: day number, weekday and time, title", () => {

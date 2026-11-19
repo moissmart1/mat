@@ -4,17 +4,18 @@
 // each dropped file to a line of the list and a stop. Pure: no DOM, no
 // storage, no clock. The later auto-add reuses it.
 //
-// - parseList(text) -> { rows, error }: the CSV read in full (quoted fields,
-//   commas and line breaks inside quotes, "" for a quote, a UTF-8 BOM, CRLF).
-//   Column names are trimmed and lower-cased; unknown columns are kept and
-//   ignored. A missing ticket_id or start_date column: rows [] and error, a
-//   sentence (the files are then matched without the list).
-// - rowsForFile(name, rows, people) -> { rows, how }: the list's lines a file
-//   belongs to. how: "id" (the name starts with one or more ticket ids,
-//   space-, _-, - or .-separated), "ref" (a confirmation or ticket_ref of 5 or
-//   more characters is in the name, ignoring case and punctuation; several:
-//   the one whose traveler is named too), "several" (still more than one),
-//   "none".
+// - parseList(text) -> { rows, error, warn }: the CSV read in full (quoted
+//   fields, commas and line breaks inside quotes, "" for a quote, a UTF-8
+//   BOM, CRLF). Column names are trimmed and lower-cased; unknown columns
+//   are kept and ignored. A missing ticket_id or start_date column: rows []
+//   and error, a sentence (the files are then matched without the list).
+//   warn: sentences (a list cut short inside a quote; a ticket_id twice).
+// - rowsForFile(name, rows, people) -> { rows, how, ref }: the list's lines a
+//   file belongs to. how: "id" (the name starts with one or more ticket ids,
+//   space-, _-, - or .-separated), "ref" (a usable confirmation or ticket_ref,
+//   refUsable, is whole parts of the name, nameHasRef; several: the one whose
+//   traveler is named too), "several" (still more than one), "none". Only
+//   "id" can be sure; a file found by "ref" is always a card.
 // - sortFiles({ files, rows, listError, state, answers, isThere }) -> the
 //   sorting: what goes in (items), what needs a look (cards, in order), what
 //   is left out (out, each with its kind and why), the list's lines with no
@@ -22,16 +23,17 @@
 //   files: [{ key, name, kind, pages, sig }] (kind: the sniffed type or null;
 //   pages: the pictures it makes, a PDF's page count; sig: { mime, w, h,
 //   size, hash } of its first picture, for already-there).
-//   answers: placement key -> { out: true, why } | { stop, who, rowIds, pages }.
-//   isThere(fileKey, stopId): the stop already has this picture.
-// - factsFor(items, stops) -> { stopId: patch }: the stop's ticket facts from
-//   the list, only where the stop's own field is empty.
+//   answers: placement key -> { out: true, why } | { stop, who, rowIds, pages, cut }.
+//   isThere(fileKey, stopId, who): the stop already has this picture for who.
+// - factsFor(items, rows, stops) -> { stopId: patch }: the stop's ticket
+//   facts from the list, only where the stop's own field is empty.
 
 import { LIMITS } from "./tickets.js";
 import { minutesOf } from "./plan.js";
 
 export const REQUIRED = ["ticket_id", "start_date"];
 export const NEAR_MIN = 90;
+export const SURE_GAP_MIN = 30;
 const KINDS = ["image/jpeg", "image/png", "application/pdf"];
 const WD = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -52,12 +54,16 @@ export function listRefused(col) {
   return "The list has no " + col + " column, so it wasn’t used. The files are matched without it.";
 }
 
-export function parseCsv(text) {
+// The table, and whether the text ended inside a quoted cell (fix round 1,
+// M2: a quote opens a quoted cell only at the start of a cell; one in the
+// middle of a plain cell is a plain character, as spreadsheets write it).
+function readCsv(text) {
   const s = String(text || "").replace(/^﻿/, "");
   const out = [];
   let row = [];
   let f = "";
   let q = false;
+  let atStart = true;
   for (let i = 0; i < s.length; i++) {
     const c = s[i];
     if (q) {
@@ -67,38 +73,68 @@ export function parseCsv(text) {
           i++;
         } else q = false;
       } else f += c;
-    } else if (c === '"') q = true;
-    else if (c === ",") {
+    } else if (c === '"' && atStart) {
+      q = true;
+      atStart = false;
+    } else if (c === ",") {
       row.push(f);
       f = "";
+      atStart = true;
     } else if (c === "\n" || c === "\r") {
       if (c === "\r" && s[i + 1] === "\n") i++;
       row.push(f);
       out.push(row);
       row = [];
       f = "";
-    } else f += c;
+      atStart = true;
+    } else {
+      f += c;
+      atStart = false;
+    }
   }
   if (f !== "" || row.length) {
     row.push(f);
     out.push(row);
   }
-  return out.filter((r) => r.some((x) => x.trim() !== ""));
+  return { table: out.filter((r) => r.some((x) => x.trim() !== "")), open: q };
 }
 
+export function parseCsv(text) {
+  return readCsv(text).table;
+}
+
+export const LIST_CUT = "The list ends inside a quoted cell, so its last lines may be missing. Check the file.";
+export const listTwice = (ids) => (ids.length === 1 ? ids[0] + " is on the list twice; only its first line is used." : ids.join(", ") + " are on the list twice; only the first line of each is used.");
+
+// { rows, error, warn }: warn, sentences about a list that was used but is
+// odd (cut short inside a quote; a ticket_id twice, of which the first line
+// is used and the rest dropped).
 export function parseList(text) {
-  const table = parseCsv(text);
-  if (!table.length) return { rows: [], error: listRefused("ticket_id") };
+  const { table, open } = readCsv(text);
+  if (!table.length) return { rows: [], error: listRefused("ticket_id"), warn: [] };
   const head = table[0].map((h) => low(h));
-  for (const col of REQUIRED) if (!head.includes(col)) return { rows: [], error: listRefused(col) };
+  for (const col of REQUIRED) if (!head.includes(col)) return { rows: [], error: listRefused(col), warn: [] };
+  const seen = new Set();
+  const twice = [];
   const rows = table.slice(1).map((cells) => {
     const r = {};
     head.forEach((h, i) => {
       if (h && !(h in r)) r[h] = str(cells[i]);
     });
     return r;
-  }).filter((r) => r.ticket_id);
-  return { rows, error: null };
+  }).filter((r) => {
+    if (!r.ticket_id) return false;
+    if (seen.has(r.ticket_id)) {
+      if (!twice.includes(r.ticket_id)) twice.push(r.ticket_id);
+      return false;
+    }
+    seen.add(r.ticket_id);
+    return true;
+  });
+  const warn = [];
+  if (open) warn.push(LIST_CUT);
+  if (twice.length) warn.push(listTwice(twice));
+  return { rows, error: null, warn };
 }
 
 // ---------- a file to the list ----------
@@ -122,13 +158,63 @@ export function idsAtStart(name, rows) {
 
 const firstName = (p) => low(String(p && p.name).split(/\s+/)[0]);
 
+// ---------- rule 2: a reference in the name (fix round 1, C1) ----------
+// Only a reference that cannot be a placeholder, a word or a stamp is looked
+// for, and only as whole parts of the name; a file found this way is always
+// a card, never sure.
+const COMMON = new Set(["eticket", "etickets", "ticket", "tickets", "booking", "bookings", "confirmation", "confirmed", "invoice", "receipt", "order", "orders", "voucher", "vouchers", "boarding", "boardingpass", "pass", "qrcode", "mobile", "onapp", "reservation", "itinerary", "page", "copy", "file", "document", "scan", "photo", "image", "img", "screenshot", "download", "print", "pdf", "number", "ref", "reference", "code"]);
+const STAMP = /^(img|image|dsc|dscn|dcim|pxl|screenshot|screen|scan|photo|vid|mvimg|pic|whatsapp|signal|snapshot)\d/;
+const YMD = /(19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])/;
+const DMY = /(0[1-9]|[12]\d|3[01])(0[1-9]|1[0-2])(19|20)\d{2}|(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])(19|20)\d{2}/;
+const MONTHS = "jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec";
+const WORDY_DATE = new RegExp("^(\\d{1,2}(" + MONTHS + ")\\d{2,4}|(" + MONTHS + ")\\d{1,2}\\d{4}|\\d{4}(" + MONTHS + ")\\d{1,2})$");
+
+// A confirmation or ticket_ref worth looking for in a file name: 6 or more
+// letters and digits, with both a letter and a digit, or 8 or more digits;
+// never a common word (with or without a short number), a date, a time or a
+// camera or screenshot stamp.
+export function refUsable(v) {
+  const raw = str(v);
+  const s = squash(raw);
+  if (s.length < 6) return false;
+  if (/^\s*\d{1,4}\s*[-/.]\s*\d{1,2}\s*[-/.]\s*\d{1,4}\s*$/.test(raw) || /^\s*\d{1,2}\s*[:.h]\s*\d{2}(\s*[:.]\s*\d{2})?\s*(am|pm)?\s*$/i.test(raw)) return false;
+  if (STAMP.test(s) || WORDY_DATE.test(s) || /^\d{3,4}(am|pm)$/.test(s)) return false;
+  const letters = s.replace(/\p{N}+/gu, "");
+  const digits = s.replace(/[^\p{N}]+/gu, "");
+  if (COMMON.has(s) || (COMMON.has(letters) && digits.length < 4)) return false;
+  if (!letters) return digits.length >= 8 && !YMD.test(s) && !DMY.test(s);
+  if (!digits) return false;
+  if (YMD.test(s) && digits.length >= 8) return false;
+  return true;
+}
+
+// The parts of a file name, its kind left off: "Sky QZ-48810.png" -> ["sky", "qz", "48810"].
+const parts = (name) => String(name || "").replace(/\.[a-z0-9]{2,5}$/i, "").toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+
+// The reference is whole parts of the name, side by side (a number: one
+// whole part, so it is never stitched from a date and a time).
+export function nameHasRef(name, ref) {
+  if (!refUsable(ref)) return false;
+  const want = squash(ref);
+  const p = parts(name);
+  if (/^\p{N}+$/u.test(want)) return p.includes(want);
+  for (let i = 0; i < p.length; i++) {
+    let acc = "";
+    for (let j = i; j < p.length && acc.length < want.length; j++) {
+      acc += p[j];
+      if (acc === want) return true;
+    }
+  }
+  return false;
+}
+
 export function rowsForFile(name, rows, people = []) {
   const list = Array.isArray(rows) ? rows : [];
   const ids = idsAtStart(name, list);
   if (ids.length) return { rows: ids.map((id) => list.find((r) => r.ticket_id === id)), how: "id" };
-  const flat = squash(name);
-  const hit = list.filter((r) => [r.confirmation, r.ticket_ref].some((v) => squash(v).length >= 5 && flat.includes(squash(v))));
-  if (hit.length === 1) return { rows: hit, how: "ref" };
+  const refOf = (r) => [r.confirmation, r.ticket_ref].find((v) => nameHasRef(name, v)) || "";
+  const hit = list.filter((r) => refOf(r));
+  if (hit.length === 1) return { rows: hit, how: "ref", ref: str(refOf(hit[0])) };
   if (hit.length > 1) {
     // The traveler's name as a word of the file name (a one-letter name is not found inside other words).
     const tokens = new Set(String(name || "").toLowerCase().split(/[^\p{L}\p{N}]+/u));
@@ -136,7 +222,7 @@ export function rowsForFile(name, rows, people = []) {
       const t = low(r.traveler);
       return t && t !== "all" && tokens.has(t);
     });
-    if (named.length === 1) return { rows: named, how: "ref" };
+    if (named.length === 1) return { rows: named, how: "ref", ref: str(refOf(named[0])) };
     return { rows: named.length ? named : hit, how: "several" };
   }
   return { rows: [], how: "none" };
@@ -199,7 +285,16 @@ function stopForRow(row, s) {
     // Untimed stops count only by name.
     close = close.concat(named(onDay.filter((x) => minutesOf(x.time) === null)));
   }
-  if (close.length === 1) return { sure: close[0] };
+  if (close.length === 1) {
+    // Fix round 1, M1: the only stop near the time is sure when it shares a
+    // word with the line or is within half an hour; else it is checked.
+    const c = close[0];
+    const gap = t === null || minutesOf(c.time) === null ? 0 : Math.abs(minutesOf(c.time) - t);
+    if (gap > SURE_GAP_MIN && !shares(words(c.title), near)) {
+      return { card: { kind: "far", ask: "Is it this stop?", hint: "Day " + n + ": the list says " + row.start_time + ", the stop is at " + c.time + ".", short: "check the stop on D" + n, choices: [c.id] } };
+    }
+    return { sure: c };
+  }
   if (close.length > 1) {
     const byName = named(close);
     if (byName.length === 1) return { sure: byName[0] };
@@ -244,15 +339,17 @@ function natural(file, found, s) {
   const stranger = whos.find((w) => typeof w !== "string");
   const results = rows.map((r) => stopForRow(r, s));
   const odd = results.find((x) => x.card);
+  // Found by a reference in its name (fix round 1, C1): said on the card.
+  const byRef = found.how === "ref" ? "Its name has the reference of " + rowIds.join(" ") + " · check it." : "";
   if (stranger) {
     const offer = [...new Set(results.filter((x) => x.sure).map((x) => x.sure.id))];
-    return { card: { kind: "stranger", ask: "For " + stranger.stranger + ", who isn’t on the trip.", hint: "It can go in for everyone, or stay out.", short: "for " + stranger.stranger, choices: offer.map((id) => ({ stop: id, who: "", rowIds })), who: "", rowIds } };
+    return { card: { kind: "stranger", ask: "For " + stranger.stranger + ", who isn’t on the trip.", hint: (byRef ? byRef + " " : "") + "It can go in for everyone, or stay out.", short: "for " + stranger.stranger, choices: offer.map((id) => ({ stop: id, who: "", rowIds })), who: "", rowIds } };
   }
   if (odd) {
     const extra = results.filter((x) => x.sure).map((x) => x.sure.id);
     const ids = [...new Set([...odd.card.choices, ...extra])];
     const who = whos.length === 1 ? whos[0] : "";
-    return { card: { ...odd.card, choices: ids.map((id) => ({ stop: id, who, rowIds })), who, rowIds } };
+    return { card: { ...odd.card, hint: (byRef ? byRef + " " : "") + odd.card.hint, choices: ids.map((id) => ({ stop: id, who, rowIds })), who, rowIds } };
   }
   // Every line has its stop. Grouped by stop: one picture per stop.
   const byStop = new Map();
@@ -269,7 +366,12 @@ function natural(file, found, s) {
     // The same picture as someone's own code on several stops: a person decides.
     return { card: { kind: "split", ask: "One file, lines on " + byStop.size + " stops.", hint: "It is someone’s own ticket, so it goes on one stop only.", short: "lines on " + byStop.size + " stops", choices: [...byStop.entries()].map(([id, idx]) => ({ stop: id, who: whoAt(idx), rowIds: idx.map((i) => rowIds[i]) })), who: "", rowIds } };
   }
-  return { places: [...byStop.entries()].map(([id, idx]) => ({ stop: id, who: whoAt(idx), rowIds: idx.map((i) => rowIds[i]) })) };
+  const places = [...byStop.entries()].map(([id, idx]) => ({ stop: id, who: whoAt(idx), rowIds: idx.map((i) => rowIds[i]) }));
+  if (byRef) {
+    // Never sure: the line's stop is the first choice.
+    return { card: { kind: "ref", ask: byRef, hint: "“" + found.ref + "” is in the file’s name.", short: "found by its reference", choices: places, who: places.length === 1 ? places[0].who : "", rowIds } };
+  }
+  return { places };
 }
 
 const sigEq = (a, b) => !!a && !!b && a.mime === b.mime && a.w === b.w && a.h === b.h && a.size === b.size && (!a.hash || !b.hash || a.hash === b.hash);
@@ -303,7 +405,7 @@ export function sortFiles({ files = [], rows = [], listError = null, state = {},
     const base = { file, label, pages: Math.max(1, Number(file.pages) || 1) };
     const take = (key, a, from, short) => {
       if (a.out) out.out.push({ kind: "leftOut", file, label, key, why: "left out" + (a.why ? ": " + a.why : short ? ": " + short : "") });
-      else if (stopsById.has(a.stop)) placed.push({ ...base, key, stop: a.stop, who: a.who || "", rowIds: a.rowIds || [], want: a.pages || null, from });
+      else if (stopsById.has(a.stop)) placed.push({ ...base, key, stop: a.stop, who: a.who || "", rowIds: a.rowIds || [], want: a.pages || null, cut: a.cut || "", from });
       else return false;
       return true;
     };
@@ -317,7 +419,7 @@ export function sortFiles({ files = [], rows = [], listError = null, state = {},
     nat.places.forEach((p, i) => {
       const key = file.key + "#" + i;
       const a = ans.get(key);
-      if (!(a && take(key, a, "sure"))) placed.push({ ...base, key, stop: p.stop, who: p.who, rowIds: p.rowIds, want: null, from: "sure" });
+      if (!(a && take(key, a, "sure"))) placed.push({ ...base, key, stop: p.stop, who: p.who, rowIds: p.rowIds, want: null, cut: "", from: "sure" });
     });
   }
 
@@ -333,7 +435,8 @@ export function sortFiles({ files = [], rows = [], listError = null, state = {},
   const limitCards = [];
   for (const p of placed) {
     const st = stopsById.get(p.stop);
-    const there = isThere(p.file.key, p.stop) || out.items.some((q) => q.stop === p.stop && sigEq(q.file.sig, p.file.sig));
+    // Fix round 1, M5: the same picture is already there only for the same person (two people's codes can share a cover page).
+    const there = isThere(p.file.key, p.stop, p.who) || out.items.some((q) => q.stop === p.stop && q.who === p.who && sigEq(q.file.sig, p.file.sig));
     if (there) {
       out.out.push({ kind: "there", file: p.file, label: p.label, key: p.key, stop: p.stop, why: "already there" });
       continue;
@@ -350,13 +453,13 @@ export function sortFiles({ files = [], rows = [], listError = null, state = {},
         ask: full ? (tripFull ? "The trip is full: " + LIMITS.perTrip + " pictures." : lab.title + " is full: " + LIMITS.perStop + " of " + LIMITS.perStop + ".") : p.pages + " pages, " + room + " fit.",
         hint: tripFull ? "A trip holds " + LIMITS.perTrip + " pictures." : "A stop holds " + LIMITS.perStop + " pictures; " + lab.title + " has " + has + ".",
         short: full ? (tripFull ? "trip full, " + LIMITS.perTrip + " of " + LIMITS.perTrip : "stop full, " + LIMITS.perStop + " of " + LIMITS.perStop) : p.pages + " pages, " + room + " fit",
-        choices: room > 0 ? [{ stop: p.stop, who: p.who, rowIds: p.rowIds, pages: room }] : [],
+        choices: room > 0 ? [{ stop: p.stop, who: p.who, rowIds: p.rowIds, pages: room, cut: tripFull ? "trip" : "stop" }] : [],
       });
       continue;
     }
     extra.set(p.stop, (extra.get(p.stop) || 0) + want);
     trip += want;
-    out.items.push({ key: p.key, file: p.file, label: p.label, stop: p.stop, who: p.who, rowIds: p.rowIds, pages: want, from: p.from });
+    out.items.push({ key: p.key, file: p.file, label: p.label, stop: p.stop, who: p.who, rowIds: p.rowIds, pages: want, cut: want < p.pages ? p.cut || "stop" : "", from: p.from });
   }
   out.cards = pending.concat(limitCards);
   out.after = trip;
@@ -366,23 +469,38 @@ export function sortFiles({ files = [], rows = [], listError = null, state = {},
 
 // The stop facts from the list's lines, only where the stop's field is empty
 // (never overwritten): tkRef the confirmation (else the ticket_ref), tkName
-// the holder, tkSeat the seat of a line for everyone (a person's seat goes
-// on their own picture).
+// the holder, tkSeat the seat. Fix round 1, M6: these are the stop's shared
+// fields, so they come from lines for everyone; a person's own line gives
+// only the reference, and only when every person's line on that stop has
+// the same one (a person's seat goes on their own picture).
 export function factsFor(items, rows, stops) {
   const byId = new Map((rows || []).map((r) => [r.ticket_id, r]));
   const out = {};
+  const want = new Map(); // stop -> { all: { k: v }, refs: Set of the persons' references, persons }
   for (const it of items) {
     const stop = (stops || []).find((x) => x && x.id === it.stop);
     if (!stop) continue;
+    if (!want.has(it.stop)) want.set(it.stop, { stop, all: {}, refs: new Set(), persons: 0 });
+    const w = want.get(it.stop);
     for (const id of it.rowIds || []) {
       const r = byId.get(id);
       if (!r) continue;
-      const want = { tkRef: str(r.confirmation) || str(r.ticket_ref), tkName: str(r.holder), tkSeat: it.who ? "" : str(r.seat) };
-      for (const [k, v] of Object.entries(want)) {
-        if (!v || str(stop[k])) continue;
-        out[it.stop] = out[it.stop] || {};
-        if (!out[it.stop][k]) out[it.stop][k] = v.slice(0, LIMITS.fact);
+      const ref = str(r.confirmation) || str(r.ticket_ref);
+      if (it.who) {
+        w.persons += 1;
+        w.refs.add(ref);
+        continue;
       }
+      for (const [k, v] of [["tkRef", ref], ["tkName", str(r.holder)], ["tkSeat", str(r.seat)]]) if (v && !w.all[k]) w.all[k] = v;
+    }
+  }
+  for (const [id, w] of want) {
+    const patch = { ...w.all };
+    if (!patch.tkRef && w.persons && w.refs.size === 1 && [...w.refs][0]) patch.tkRef = [...w.refs][0];
+    for (const [k, v] of Object.entries(patch)) {
+      if (str(w.stop[k])) continue;
+      out[id] = out[id] || {};
+      out[id][k] = v.slice(0, LIMITS.fact);
     }
   }
   return out;
