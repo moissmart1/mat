@@ -34,6 +34,7 @@
 <link rel="stylesheet" href="css/history.css">
 <link rel="stylesheet" href="css/stampbook.css">
 <link rel="stylesheet" href="css/tickets.css">
+<link rel="stylesheet" href="css/passcase.css">
 <script type="module" src="js/app.js"></script>
 </head>
 <body>
@@ -41,11 +42,13 @@
   <div class="views">
     <section class="view is-active" id="vDays" aria-label="Days"></section>
     <section class="view" id="vBefore" aria-label="Before we go" inert></section>
+    <section class="view" id="vTickets" aria-label="Tickets" inert></section>
     <section class="view" id="vMoney" aria-label="Money" inert></section>
   </div>
   <nav class="nav" id="nav">
     <button type="button" data-tab="days" class="is-active">Days<small>きっぷ</small></button>
     <button type="button" data-tab="before" id="beforeBtn" hidden>Before<span class="sub"><small>出発前</small><span class="pill" id="beforeN" aria-hidden="true" hidden></span></span></button>
+    <button type="button" data-tab="tickets" id="ticketsBtn" aria-label="Tickets" hidden>Tickets<span class="sub"><small>定期入れ</small><span class="pill" id="ticketsN" aria-hidden="true" hidden></span></span></button>
     <button type="button" data-tab="money">Money<small>精算</small></button>
     <button type="button" id="youBtn">You<small>設定</small></button>
     <button type="button" class="ring" id="ring" aria-label="Ring up"><span class="ring-p" aria-hidden="true">＋</span><small class="ring-w" aria-hidden="true">Ring up</small></button>

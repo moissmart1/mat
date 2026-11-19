@@ -149,19 +149,22 @@ for (const size of [...SIZES, TAB]) {
       viewport: size,
       async run({ page }) {
         await days(page);
+        await until(() => page.evaluate(() => !document.getElementById("ticketsBtn").hidden), "the Tickets key");
         // Each rail button is a full tap target.
         const small = await page.evaluate(() =>
           [...document.querySelectorAll("#nav button")].filter((b) => !b.hidden).map((b) => b.getBoundingClientRect()).filter((r) => r.height < 44 || r.width < 44).length,
         );
         assert.equal(small, 0, "every rail button is at least 44 px each way");
-        // The same keys as the portrait bar, stacked in the same order, Ring up in the middle (no planner list here, so no Before key: Days, Money, You, Ring up).
+        // The same keys as the portrait bar, stacked in the same order, Ring up in the middle (a trip day: Tickets has Before's place).
         const rail = await page.evaluate(() =>
           [...document.querySelectorAll("#nav button")].filter((b) => !b.hidden).map((b) => {
             const r = b.getBoundingClientRect();
             return { id: b.dataset.tab || b.id, top: r.top, bottom: r.bottom, h: r.height, vis: r.top >= 0 && r.bottom <= innerHeight };
           }),
         );
-        assert.deepEqual(rail.map((r) => r.id), ["days", "money", "youBtn", "ring"]);
+        const keys = await page.evaluate(() => [...document.querySelectorAll("#nav button")].filter((b) => !b.hidden).map((b) => b.dataset.tab || b.id));
+        assert.deepEqual(keys, ["days", "tickets", "ring", "money", "youBtn"]);
+        assert.equal(rail.length, 5);
         assert.ok(rail.every((r, i) => r.vis && r.h >= 44 && (i === 0 || r.top >= rail[i - 1].bottom - 0.5)), "stacked, in view, 44 px or more: " + JSON.stringify(rail));
         const ring = await page.evaluate(() => {
           const r = document.getElementById("ring");
