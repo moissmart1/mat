@@ -6,7 +6,8 @@
 // sheet is linked), the Google Sheet and "Report a problem".
 // One sheet, no sub-pages.
 //
-// mountYou(root, store, { onHistory(), onDemo(date), getKey(), screen(), where, onForget() }) -> { open(), close(restoreFocus), isOpen() }
+// mountYou(root, store, { onHistory(), onBulk(), onDemo(date), getKey(), screen(), where, onForget() }) -> { open(), close(restoreFocus), isOpen() }
+// onBulk(): 一括 Add tickets was tapped (js/views/bulkadd.js); its row is there once the trip has the ticket tabs.
 // where: the phone's position (js/where.js). Its row, 現在地 Location, says
 // On or Off and turns it on or off; when the phone said no, it says so and
 // where to change it. Only the choice is shown, never a position. A phone
@@ -87,6 +88,7 @@ const MARKUP = `
   </div>
   <button type="button" class="set-r" id="setSound"><span>Stamp sound</span><b id="setSoundV">On</b></button>
   <button type="button" class="set-r set-where" id="setWhere" hidden><span><span class="set-where-l"><span class="here">現在地</span>Location</span><small id="setWhereS"></small><small id="setWhereWhy" hidden></small></span><b id="setWhereV" data-w="Phone said no"></b></button>
+  <button type="button" class="set-r" id="setBulk" hidden><span><span class="set-bulk-l"><span class="ikk" aria-hidden="true">一括</span>Add tickets</span><small>Many ticket files at once, yours or anyone’s on the trip</small></span><b>Open</b></button>
   <button type="button" class="set-r" id="setTix" hidden><span>Ticket pictures<small id="setTixS"></small></span><b id="setTixV">On Wi‑Fi and mobile</b></button>
   <button type="button" class="set-r" id="setHist"><span>History<small>Every change, with undo</small></span><b>Open</b></button>
   <button type="button" class="set-r" id="setFreshRow"><span>Last updated<small>Tap to fetch the latest</small></span><b id="setFresh" data-w="Up to date 00:00"></b></button>
@@ -162,7 +164,7 @@ const FORGET_FOR = "Takes the trip and your link off this phone";
 const FORGET_SURE = "Tap again to take everything off this phone";
 const FORGET_MS = 5000; // how long the row waits for the second tap
 
-export function mountYou(root, store, { onHistory = () => {}, onDemo = () => {}, demo = null, getKey = () => null, screen = () => "Money", where = null, onForget = async () => {}, onTixMode = () => {} } = {}) {
+export function mountYou(root, store, { onHistory = () => {}, onBulk = () => {}, onDemo = () => {}, demo = null, getKey = () => null, screen = () => "Money", where = null, onForget = async () => {}, onTixMode = () => {} } = {}) {
   const scrim = el("div", "scrim");
   scrim.id = "youScrim";
   scrim.hidden = true;
@@ -376,6 +378,7 @@ export function mountYou(root, store, { onHistory = () => {}, onDemo = () => {},
     drawPic(s);
     soundV.textContent = soundOn() ? "On" : "Off";
     drawTix();
+    bulkRow.hidden = store.state.ticketsReady !== true;
     drawWhere();
     drawDemoDays(s);
     setDemo(!demoDays.hidden);
@@ -561,6 +564,8 @@ export function mountYou(root, store, { onHistory = () => {}, onDemo = () => {},
   // Ticket pictures (once the trip has them): every one fetched in the
   // background, or only one being opened (roaming data). onTixMode(mode) is told.
   const tixRow = $("setTix");
+  const bulkRow = $("setBulk");
+  bulkRow.addEventListener("click", () => onBulk());
   const tixV = $("setTixV");
   const tixS = $("setTixS");
   const TIX_ALL = "Every phone keeps every ticket, so they open with no signal. Up to about 50 MB in all.";

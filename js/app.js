@@ -30,6 +30,7 @@ import { isWide, onWide } from "./shape.js";
 import { createWhere } from "./where.js";
 import { createKeep, fetchMissing, toBase64, ticketMark, fetchesAll, pruneKeep } from "./tickets.js";
 import { mountStub } from "./views/stub.js";
+import { mountBulkAdd } from "./views/bulkadd.js";
 import { clearTrip, forgetPhone } from "./forget.js";
 
 // How often a visible phone asks the backend whether anything changed.
@@ -377,6 +378,11 @@ function start() {
       you.close(false);
       history.open();
     },
+    // 一括 Add tickets: its own sheet, where You stands (the Money pane on a computer).
+    onBulk: () => {
+      you.close(false);
+      bulk.open();
+    },
     // Ticket pictures: back to every one, the fetching starts at once.
     onTixMode: (mode) => {
       if (mode === "all" && store.state.ticketsReady) fetchMissing(store, keep, { allowed: () => fetchesAll(raw) });
@@ -408,6 +414,27 @@ function start() {
       you.close(false);
     },
   });
+  // Bulk add of tickets (js/views/bulkadd.js), opened from You. Whatever
+  // closes You closes it too (a tab, another sheet, Forget); what it sorted, or
+  // its adding, carries on behind and is there when it is opened again.
+  const bulk = mountBulkAdd(phone, store, keep, {
+    onOpenDay: (date) => {
+      register.close();
+      borrowed = false;
+      closeDaySheets();
+      tabs.showTab("days", false);
+      days.goDay(Math.max(0, (store.state.days || []).findIndex((d) => d && d.date === date)));
+    },
+    onClose: (restoreFocus) => {
+      const b = document.getElementById("youBtn");
+      if (restoreFocus && b) b.focus({ preventScroll: true });
+    },
+  });
+  const closeYou = you.close;
+  you.close = (restoreFocus) => {
+    bulk.close(false);
+    closeYou(restoreFocus);
+  };
   const line = mountLine(phone, store, {
     onEdit: (id) => {
       line.close(false);
@@ -652,6 +679,7 @@ function start() {
     line.close(false);
     history.close(false);
     closeDaySheets();
+    bulk.close(false);
     you.open();
   });
 
