@@ -61,6 +61,25 @@ const waitOpen = (page, id) => until(() => isOpen(page, id), "#" + id + " opens"
 const waitClosed = (page, id) => until(async () => !(await isOpen(page, id)), "#" + id + " closes");
 const activeView = (page) => page.evaluate(() => document.querySelector(".view.is-active").id);
 
+// Taps a stop on the Days ticket and waits until it has opened all the way
+// (0.2 s) and today's next stop has closed, so the ticket has stopped moving.
+// A tap on Edit while it still moves fails Playwright's "stable" check, and
+// its retry scrolls Edit into view aligned to the rail's end: the rail snaps
+// to the day before, which un-chooses the stop and leaves Edit inert.
+async function openStop(page, row) {
+  await page.click(row + " .r-b");
+  await until(
+    () => page.evaluate((sel) => {
+      const r = document.querySelector(sel);
+      return r.classList.contains("is-open") && [...r.closest(".tk").querySelectorAll(".r[data-id]")].every((x) => {
+        const d = x.querySelector(".r-more > div");
+        return !d || d.clientHeight === (x.classList.contains("is-open") ? d.scrollHeight : 0);
+      });
+    }, row),
+    "the stop opens",
+  );
+}
+
 async function keys(page, seq) {
   for (const k of seq.split(" ")) await page.click('#pad .key[data-k="' + k + '"]');
 }
@@ -286,18 +305,8 @@ for (const size of [...SIZES, TAB]) {
       async run({ page }) {
         await days(page);
         const row = '#rail .pg[data-date="' + D12 + '"] .r[data-id="' + DINNER + '"]';
-        await page.click(row + " .r-b");
         // Opened all the way (0.2 s), so Edit is still where it was tapped.
-        await until(
-          () => page.evaluate((sel) => {
-            const r = document.querySelector(sel);
-            return r.classList.contains("is-open") && [...r.closest(".tk").querySelectorAll(".r[data-id]")].every((x) => {
-              const d = x.querySelector(".r-more > div");
-              return !d || d.clientHeight === (x.classList.contains("is-open") ? d.scrollHeight : 0);
-            });
-          }, row),
-          "the stop opens",
-        );
+        await openStop(page, row);
         await page.click(row + " .r-edit");
         await waitOpen(page, "stop");
         await expectReach(page, "#stDone");
@@ -439,8 +448,7 @@ cases.push({
       bar.setProperty("bottom", "auto", "important");
     });
     const row = '#rail .pg[data-date="' + D12 + '"] .r[data-id="' + DINNER + '"]';
-    await page.click(row + " .r-b");
-    await until(() => page.evaluate((sel) => document.querySelector(sel).classList.contains("is-open"), row), "the stop opens");
+    await openStop(page, row);
     await until(() => page.evaluate((sel) => {
       const e = document.querySelector(sel + " .r-edit");
       return !!e && e.getBoundingClientRect().height > 0;
