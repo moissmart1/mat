@@ -569,6 +569,7 @@ function start() {
       layBar();
     },
   });
+  layBar(); // the handle exists now: the slip's count and the badge catch up
   // Showing the tab folds the done group and fetches quietly if the list is an hour old.
   tabs.onShown((t) => {
     if (t === "before") todos.shown();
