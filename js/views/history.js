@@ -31,6 +31,10 @@ function el(tag, cls, text) {
   return n;
 }
 
+function errorText(code) {
+  return code === "network" ? NO_HISTORY : HISTORY_FAILED;
+}
+
 export function mountHistory(root, store) {
   const scrim = el("div", "scrim");
   scrim.id = "histScrim";
@@ -48,7 +52,7 @@ export function mountHistory(root, store) {
   const done = sheet.querySelector("#histDone");
 
   let opened = false;
-  let phase = "loading"; // "loading" until this opening's fetch has answered, then "done" or "failed"
+  let opening = false; // This opening is waiting for the first page.
   let openNo = 0;
   const busy = new Set(); // entries whose Undo is on its way: no second tap
 
@@ -78,19 +82,18 @@ export function mountHistory(root, store) {
     const h = s.history;
     // Nothing held yet: wait for the fetch. What is already held shows at once
     // and is replaced when the fetch lands.
-    if (phase === "loading" && !h.entries.length) {
+    if (opening && !h.entries.length) {
       tape.replaceChildren(el("p", "tp-msg", LOADING));
       return;
     }
-    const error = h.error ? (h.error === "network" ? NO_HISTORY : HISTORY_FAILED) : "";
     if (!h.entries.length) {
-      tape.replaceChildren(el("p", "tp-msg", error || NOTHING_YET));
+      tape.replaceChildren(el("p", "tp-msg", h.error ? errorText(h.error) : NOTHING_YET));
       return;
     }
     const nodes = [];
-    const stale = !!error && phase === "failed";
+    const stale = !!h.firstPageError;
     if (stale) {
-      const notice = el("p", "tp-msg", LAST_LOADED + " " + error);
+      const notice = el("p", "tp-msg", LAST_LOADED + " " + errorText(h.firstPageError));
       notice.setAttribute("role", "status");
       nodes.push(notice);
     }
@@ -116,7 +119,7 @@ export function mountHistory(root, store) {
       more.setAttribute("aria-busy", h.loading ? "true" : "false");
       nodes.push(more);
     }
-    if (error && phase !== "failed") nodes.push(el("p", "tp-msg", error));
+    if (h.error && h.error !== h.firstPageError) nodes.push(el("p", "tp-msg", errorText(h.error)));
     tape.replaceChildren(...nodes);
   }
 
@@ -138,7 +141,7 @@ export function mountHistory(root, store) {
     if (opened) return;
     opened = true;
     const mine = ++openNo;
-    phase = "loading";
+    opening = true;
     busy.clear();
     render(store.state);
     sheet.classList.add("is-open");
@@ -150,7 +153,7 @@ export function mountHistory(root, store) {
     done.focus({ preventScroll: true });
     await store.loadHistory();
     if (mine !== openNo || !opened) return;
-    phase = store.state.history.error ? "failed" : "done";
+    opening = false;
     render(store.state);
   }
 

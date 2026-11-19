@@ -270,18 +270,30 @@ module.exports = [
     },
   },
   {
-    name: "with 230 expenses the tape shows 200 and Show older adds the rest",
+    name: "Show older adds the rest of a cached tape and stays stale until the first page refreshes",
     async run({ page }) {
       const expenses = [];
       for (let i = 0; i < 230; i++) expenses.push(SHARED(i));
-      await open(page, { seed: { expenses, payments: [] }, nowMs: NOON12 });
+      const backend = await open(page, { seed: { expenses, payments: [] }, nowMs: NOON12 });
       await until(() => page.evaluate(() => document.querySelectorAll("#rc .rc-row").length > 0), "the receipt draws");
+      await waitCachedHistory(page);
+      backend.failWith = "network";
       await openTape(page, 200);
+      const stale = "Showing the last loaded history. History needs a connection.";
+      await expectText(page, "#tape .tp-msg", stale);
+      backend.failWith = null;
       assert.equal(await text(page, "#histMore"), "Show older");
       await page.click("#histMore");
       await waitRowsN(page, 230);
       await until(async () => !(await visible(page, "#histMore")), "Show older goes");
       assert.equal(await page.locator("#histMore").count(), 0);
+      await expectText(page, "#tape .tp-msg", stale);
+      assert.equal(await page.locator("#tape .tp-undo").count(), 0);
+      await page.click("#histDone");
+      await waitHistClosed(page);
+      await openTape(page, 200);
+      await until(async () => (await page.locator("#tape .tp-undo").count()) > 0, "Undo returns after a fresh first page");
+      assert.equal(await page.locator("#tape .tp-msg").count(), 0);
     },
   },
   {

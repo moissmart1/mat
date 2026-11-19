@@ -1197,10 +1197,16 @@ test("loadHistory({ older: true }) appends the next page", async () => {
   await p.store.loadHistory();
   assert.equal(p.store.state.history.entries.length, 200);
   assert.equal(p.store.state.history.more, true);
+  p.net.failing.add("history");
+  await p.store.loadHistory();
+  p.net.failing.delete("history");
   await p.store.loadHistory({ older: true });
   assert.equal(p.store.state.history.entries.length, 205);
   assert.equal(p.store.state.history.more, false);
   assert.equal(new Set(p.store.state.history.entries.map((e) => e.id)).size, 205);
+  assert.equal(p.store.state.history.firstPageError, "network", "an older page cannot refresh the newest entries");
+  await p.store.loadHistory();
+  assert.equal(p.store.state.history.firstPageError, null);
 });
 
 test("historyFor rejects with network when there is no signal", async () => {
