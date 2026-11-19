@@ -274,8 +274,8 @@ button.s-wl > span{text-decoration:underline dotted rgba(21,18,15,.5) 1.5px;text
 .nav .ring{flex:1.2 1 0;height:64px;padding:0 2px;background:var(--paper);color:var(--print);
   box-shadow:inset 0 1px 0 #fff,inset 0 -2px 0 rgba(0,0,0,.22),0 2px 3px rgba(0,0,0,.5)}
 .nav .ring::before{display:none}
-/* Four keys (no Before key): Ring up is last and the row is even. */
-.nav #beforeBtn[hidden] ~ .ring{flex:1 1 0}
+/* Four keys (no Before or Tickets key): Ring up is last and the row is even. */
+.nav #beforeBtn[hidden] + #ticketsBtn[hidden] ~ .ring{flex:1 1 0}
 .nav .ring:active{box-shadow:inset 0 1px 0 #fff,inset 0 -1px 0 rgba(0,0,0,.22)}
 .nav .ring-p{display:block;font-size:22px;line-height:.9;margin-top:-3px}
 .nav .ring[hidden]{display:none}
@@ -298,19 +298,20 @@ button.s-wl > span{text-decoration:underline dotted rgba(21,18,15,.5) 1.5px;text
     background:var(--ground);border-top:0;border-left:1.5px dashed var(--key-hi);box-shadow:none}
   .nav button{flex:1 1 0;min-height:44px;height:auto;max-height:64px}
   .nav .ring{flex:1.2 1 0;max-height:72px;height:auto}
-  .nav #beforeBtn[hidden] ~ .ring{flex:1 1 0}
+  .nav #beforeBtn[hidden] + #ticketsBtn[hidden] ~ .ring{flex:1 1 0}
 }
 
 /* WIDE: both panes are always in view, so the rail holds only what is not a
-   pane: Before (when the list is there), Ring up and You. While Before stands
-   in the Days pane, the Days key is the way back. The register opens in the
+   pane: Before (when the list is there) or Tickets (from the trip's first
+   day), Ring up and You. While Before or Tickets stands in the Days pane, the
+   Days key is the way back. The register opens in the
    Money pane, so the rail stays in reach beside it. */
 @media (min-width:1000px) and (min-height:521px){
   .nav button[data-tab="days"],.nav button[data-tab="money"]{display:none}
-  .phone:has(#vBefore.is-active) .nav button[data-tab="days"]{display:grid}
+  .phone:has(#vBefore.is-active) .nav button[data-tab="days"],.phone:has(#vTickets.is-active) .nav button[data-tab="days"]{display:grid}
   .nav button{flex:0 1 64px}
   .nav .ring{flex:0 1 76px}
-  .nav #beforeBtn[hidden] ~ .ring{flex:0 1 76px}
+  .nav #beforeBtn[hidden] + #ticketsBtn[hidden] ~ .ring{flex:0 1 76px}
   .phone.reg-open .nav{opacity:1;pointer-events:auto}
 }
 /* A mouse: keys answer the pointer before they are pressed, on screens that are neither phone shape. */
