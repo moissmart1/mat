@@ -76,9 +76,11 @@ module.exports = [
       await page.dispatchEvent("#setForget", "click");
       await page.dispatchEvent("#setForget", "click");
       await until(() => visible(page, "#gate"), "the no-key screen shows");
+      // The no-key screen (over everything) shows at once; Settings closes once
+      // the pictures, the offline copy and the worker are gone, the end of Forget.
+      await until(() => page.evaluate(() => !document.getElementById("you").classList.contains("is-open")), "Settings closed");
       assert.equal(await text(page, "#gate p"), "This phone needs the trip link. Open it from your chat again, or paste it here.");
       assert.deepEqual(await matKeys(page), []);
-      assert.equal(await page.evaluate(() => document.getElementById("you").classList.contains("is-open")), false, "Settings closed");
       assert.equal(await drawsTrip(page), false);
       await page.reload();
       await until(() => visible(page, "#gate"), "still no trip after a reload");
