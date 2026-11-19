@@ -61,6 +61,16 @@ function statusLine(st) {
 }
 const statusWords = (st) => (st.kind === "ref" ? "reference only" + (st.ref ? ", " + st.ref : "") : st.label + (st.kind === "have" ? ", on this phone" : ", needs signal once"));
 
+// A seat breaks only at its " · ", never inside "10A–C".
+function seatEl(seat) {
+  const n = el("span", "pc-seat");
+  seat.split(" · ").forEach((part, i) => {
+    if (i) n.append(" · ");
+    n.append(el("span", "pc-sp", part));
+  });
+  return n;
+}
+
 export function mountPassCase(root, store, { clock, keep, where = null, onTicket = () => {}, onBefore = () => {}, onState = () => {} } = {}) {
   const section = el("section", "pc");
   section.setAttribute("aria-labelledby", "pcTitle");
@@ -98,7 +108,10 @@ export function mountPassCase(root, store, { clock, keep, where = null, onTicket
     const b = button("pc-tk");
     b.dataset.id = t.id;
     b.dataset.act = "win";
-    if (t.colour) b.style.setProperty("--line", t.colour);
+    if (t.colour) {
+      b.style.setProperty("--line", t.colour);
+      if (t.ink) b.style.setProperty("--line-ink", t.ink); // the same ink the Days ticket and the stub use for this colour
+    }
     b.setAttribute("aria-label", "Show ticket: " + (t.title || "the next ticket") + (t.time ? ", " + t.time : "") + ", " + statusWords(t.status));
     const band = el("span", "pc-band");
     const name = el("span", "pc-bn");
@@ -107,7 +120,7 @@ export function mountPassCase(root, store, { clock, keep, where = null, onTicket
       if (t.line.jp && t.line.en) name.append(el("i", "", t.line.en));
     } else name.append("切符", el("i", "", "Ticket"));
     const num = el("span", "num");
-    num.append(el("small", "", "D"), " " + String(t.day).padStart(2, "0"));
+    if (t.day > 0) num.append(el("small", "", "D"), " " + String(t.day).padStart(2, "0"));
     band.append(name, num);
     const body = el("span", "pc-tb");
     const main = el("span", "pc-tm");
@@ -119,7 +132,7 @@ export function mountPassCase(root, store, { clock, keep, where = null, onTicket
     if (t.detail) main.append(el("span", "pc-detail", t.detail));
     if (t.lead) {
       const lv = el("span", "pc-lv");
-      lv.append(deco("span", "pc-tag", "こんど"), t.lead);
+      lv.append(deco("span", "pc-tag", "こんど"), el("span", "pc-lt", t.lead));
       main.append(lv);
     }
     main.append(statusLine(t.status));
@@ -133,7 +146,7 @@ export function mountPassCase(root, store, { clock, keep, where = null, onTicket
     } else if (t.first) {
       const side = el("span", "pc-side");
       side.append(thumb(t.first));
-      if (t.seat) side.append(el("span", "pc-seat", t.seat));
+      if (t.seat) side.append(seatEl(t.seat));
       body.append(side);
     }
     b.append(band, body);
@@ -278,8 +291,16 @@ export function mountPassCase(root, store, { clock, keep, where = null, onTicket
       }
       return;
     }
-    const next = JSON.stringify([c, beforeOpen]);
-    if (next === sig) return;
+    // The "in N min" line changes every minute: that text is updated where it
+    // stands, so the case, its buttons and the picture are not rebuilt (focus
+    // and the picture stay). Anything else that changed redraws.
+    const next = JSON.stringify([c.next ? { ...c.next, lead: !!c.next.lead } : null, { ...c, next: null }, beforeOpen]);
+    if (next === sig) {
+      const lt = section.querySelector("#pcWin .pc-lt");
+      const want = c.next && c.next.lead ? c.next.lead : "";
+      if (lt && lt.textContent !== want) lt.textContent = want;
+      return;
+    }
     sig = next;
     draw(c);
   }

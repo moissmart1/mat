@@ -12,7 +12,8 @@ const fs = require("node:fs");
 const { WITH_PLAN, NOON12, makeBackend, open, advance, until, text, expectText, visible } = require("./helpers.cjs");
 const { png } = require("./pictures.cjs");
 
-const SHOTS = "/Users/owner/Projects/triplit/reports/tickets-tab-built";
+// Pictures of the case are taken only when MAT_TAB_SHOTS names an output folder.
+const SHOTS = process.env.MAT_TAB_SHOTS || "";
 const KEY = "test-key";
 const SENSO = "planstop1101"; // Dec 11, 10:00: reference only (used)
 const MEIJI = "planstop1201"; // 09:00: one code (used)
@@ -112,7 +113,10 @@ const closeStub = async (page) => {
   await page.click("#tix [data-close]");
   await until(() => page.evaluate(() => document.getElementById("tix").hidden), "the stub goes");
 };
-const torn = (page) => page.evaluate(() => Promise.all(document.getAnimations().filter((a) => a.animationName === "tear" || a.animationName === "bsUp").map((a) => a.finished)));
+// The tear (or the sheet's rise) has stopped. Not `animation.finished`: that rejects with
+// AbortError when the stub repaints and cancels the animation; a cancelled one is gone from
+// getAnimations(), so waiting for none to be running is right either way.
+const torn = (page) => until(() => page.evaluate(() => !document.getAnimations().some((a) => (a.animationName === "tear" || a.animationName === "bsUp") && a.playState !== "finished")), "the tear has finished");
 const noSideways = (page) => page.evaluate(() => {
   const v = document.getElementById("vTickets");
   const over = [...v.querySelectorAll("*")].filter((e) => e.getBoundingClientRect().right > innerWidth + 0.5).map((e) => e.className);
@@ -120,6 +124,7 @@ const noSideways = (page) => page.evaluate(() => {
 });
 // Whole-page screenshot of the case: the view laid out at its full height for the picture.
 async function shot(page, name) {
+  if (!SHOTS) return;
   fs.mkdirSync(SHOTS, { recursive: true });
   await page.evaluate(() => document.fonts && document.fonts.ready);
   // The views fade over .16 s of real time: wait until the one leaving has gone.
@@ -480,6 +485,56 @@ cases.push({
     await until(() => page.evaluate(() => document.getElementById("vDays").classList.contains("is-active")), "Days is back");
     assert.deepEqual(await keys(page), ["tickets", "ring", "youBtn"]);
     assert.equal(await page.evaluate(() => localStorage.getItem("mat.tab")), "money", "what the app remembers is left alone");
+  },
+});
+
+cases.push({
+  name: "the window's band: a light line colour gets the dark ink the stub uses, not white",
+  async run({ page }) {
+    await ready(page);
+    await goTickets(page);
+    const band = () => page.evaluate(() => {
+      const b = document.querySelector("#pcWin .pc-band");
+      const w = document.querySelector("#pcWin .pc-tk");
+      return { colour: w.style.getPropertyValue("--line"), ink: w.style.getPropertyValue("--line-ink"), text: getComputedStyle(b).color };
+    });
+    const w = await band();
+    assert.equal(w.colour.toLowerCase(), "#9acd32", "Day 3 is a light green line");
+    assert.equal(w.text, "rgb(21, 18, 15)", "dark text on the light band");
+    await page.click("#pcWin .pc-tk");
+    await stubUp(page);
+    const stubInk = await page.evaluate(() => document.querySelector("#tix .tstub").style.getPropertyValue("--line-ink"));
+    assert.equal(w.ink, stubInk, "the same ink as the stub");
+    await torn(page);
+    await closeStub(page);
+  },
+});
+
+cases.push({
+  name: "a minute passing changes the lead line in place: focus returns to the opener after the stub, and the picture is not redrawn",
+  async run({ page }) {
+    const backend = await ready(page);
+    await goTickets(page);
+    await expectText(page, "#pcWin .pc-lv", "こんどLeave by 13:30 · in 10 min");
+    await until(() => page.evaluate(() => {
+      const img = document.querySelector("#pcWin .pc-th img");
+      return img && img.complete && img.naturalWidth > 0;
+    }), "the window's picture");
+    await page.evaluate(() => {
+      window.__pcKeep = { btn: document.querySelector("#pcShow"), win: document.querySelector("#pcWin .pc-tk"), img: document.querySelector("#pcWin .pc-th img") };
+    });
+    await page.click("#pcShow");
+    await stubUp(page);
+    await torn(page);
+    await advance(page, backend, 2 * 60 * 1000);
+    await until(() => page.evaluate(() => document.querySelector("#pcWin .pc-lv").textContent.includes("in 8 min")), "the line counts down");
+    await closeStub(page);
+    const r = await page.evaluate(() => ({
+      focus: document.activeElement === window.__pcKeep.btn,
+      sameWin: document.querySelector("#pcWin .pc-tk") === window.__pcKeep.win,
+      sameImg: document.querySelector("#pcWin .pc-th img") === window.__pcKeep.img && window.__pcKeep.img.isConnected,
+    }));
+    assert.deepEqual(r, { focus: true, sameWin: true, sameImg: true });
   },
 });
 

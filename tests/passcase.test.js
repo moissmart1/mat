@@ -119,6 +119,13 @@ test("the window's lead line comes from the existing leave-by: travel minutes, o
   assert.equal(c.today[0].lead, null, "only the window has a lead line");
 });
 
+test("a ticket carries its line's ink beside the colour; a stop outside the trip's days has day 0", () => {
+  const c = passCase(full(), NOON, { have });
+  assert.equal(c.next.colour, "#336699");
+  assert.equal(typeof c.next.ink, "string");
+  assert.ok(c.next.day >= 1);
+});
+
 test("empty: no ticket on any stop, or tickets not loaded yet", () => {
   const none = passCase(state({ stops: [stop("a", "2026-12-12", "09:00")] }), NOON, { have });
   assert.equal(none.empty, true);

@@ -96,6 +96,7 @@ export function passCase(s, nowMs, { have = () => false, here = null } = {}) {
           day: di >= 0 ? di + 1 : 0,
           line: h.line,
           colour: h.colour,
+          ink: h.ink,
           status: statusOf(mark, stop),
           first: mark.kind === "ref" ? null : firstPicture(tickets.filter((p) => p.stop === stop.id), s.me, have),
           lead: null,
