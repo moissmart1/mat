@@ -108,6 +108,29 @@ module.exports = [
     },
   },
   {
+    name: "refused: Safari shows the Settings line; the Home Screen app says to go to Safari instead",
+    async run({ page }) {
+      await geoStub(page, { mode: "refused", permission: "denied" });
+      await ready(page, { storage: { "mat.where": "refused" } });
+      await openYou(page);
+      assert.equal(await text(page, "#setWhereS"), "To change it: iPhone Settings, Apps, Safari, Location. Then tap here to try again.");
+    },
+  },
+  {
+    name: "refused on the Home Screen app: the row says iPhone will not ask again and how to allow it in Safari",
+    async run({ page }) {
+      await page.addInitScript(() => Object.defineProperty(navigator, "standalone", { value: true, configurable: true }));
+      await geoStub(page, { mode: "refused", permission: "denied" });
+      await ready(page, { storage: { "mat.where": "refused" } });
+      await openYou(page);
+      assert.equal(await text(page, "#setWhereV"), "Phone said no");
+      assert.equal(
+        await text(page, "#setWhereS"),
+        "On the Home Screen app, iPhone won’t ask again here. Open your own link in Safari, go to You and tap Location. If Safari doesn’t ask, tap the page menu beside the address (aA), then Website Settings, Location, Allow. Then come back here and tap Location.",
+      );
+    },
+  },
+  {
     name: "refused, then allowed in Settings: tapping the row tries again and turns it On; coming back on screen alone never prompts",
     async run({ page }) {
       await geoStub(page, { mode: "refused", permission: "denied" });

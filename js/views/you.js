@@ -418,6 +418,8 @@ export function mountYou(root, store, { onHistory = () => {}, onDemo = () => {},
 
   const WHERE_FOR = "For leave-by, distances and the stamp. Your position stays on this phone. A stamp pressed in the day’s place gets a small mark the others can see.";
   const WHERE_NO = "To change it: iPhone Settings, Apps, Safari, Location. Then tap here to try again.";
+  // The Home Screen app: iPhone will not ask again from there, so the way out is Safari.
+  const WHERE_NO_APP = "On the Home Screen app, iPhone won’t ask again here. Open your own link in Safari, go to You and tap Location. If Safari doesn’t ask, tap the page menu beside the address (aA), then Website Settings, Location, Allow. Then come back here and tap Location.";
   function drawWhere() {
     whereRow.hidden = !where || !where.supported();
     if (whereRow.hidden) return;
@@ -426,7 +428,7 @@ export function mountYou(root, store, { onHistory = () => {}, onDemo = () => {},
     whereV.textContent = no ? "Phone said no" : st === "on" ? "On" : "Off";
     whereV.classList.toggle("on", st === "on");
     whereV.classList.toggle("no", no);
-    whereS.textContent = no ? WHERE_NO : WHERE_FOR;
+    whereS.textContent = no ? (standalone() ? WHERE_NO_APP : WHERE_NO) : WHERE_FOR;
     // The phone's own answer to the last refusal (memory only, js/where.js), as text.
     const why = no && typeof where.why === "function" ? where.why() : null;
     whereWhy.hidden = !why;
