@@ -158,3 +158,13 @@
 .ba-plain:active{transform:translateY(1.5px);box-shadow:var(--key-down)}
 
 @media (prefers-reduced-motion: reduce){ .ba-punch,.ba-opts>button,.ba-prog .ba-bar i{transition:none} }
+
+/* ---------- tickets from the list (auto-add): the notice in You ---------- */
+/* The mock-up's notice inset (option C, "Later · tickets that came by themselves"). */
+#setListNt{display:flex;align-items:center;gap:10px;width:calc(100% - 4px);min-height:46px;margin:2px 2px 8px;padding:6px 12px;border:0;border-radius:6px;background:var(--paper);color:var(--print);font:inherit;font-size:14px;font-weight:900;text-align:left;box-shadow:var(--paper-edge);transition:transform .15s ease-out,box-shadow .15s}
+#setListNt[hidden]{display:none}
+#setListNt:active{transform:translateY(1.5px);box-shadow:var(--paper-down)}
+#setListNt .nt-k{flex:none;padding:1px 6px 2px;border:1.5px solid var(--shu);border-radius:2px;color:var(--shu);font-size:12px}
+#setListNt .nt-t{min-width:0;overflow-wrap:anywhere}
+#setListNt u{margin-left:auto;flex:none;text-decoration:none;border-bottom:1.5px dotted var(--print);white-space:nowrap}
+#setListNt.is-warn .nt-k{border-color:var(--print);color:var(--print)}

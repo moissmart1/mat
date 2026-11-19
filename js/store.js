@@ -59,7 +59,7 @@ const TODO_PULLS = 4;
 
 // How often an open phone asks for the planner's payments on its own.
 const PAY_AUTO_MS = 10 * 60 * 1000;
-const DATA_KEYS = ["trip", "people", "days", "stops", "stays", "expenses", "payments", "rateToday", "rateSource", "sheetUrl", "plannerLinked", "todos", "todosPulledAt", "paymentsPulledAt", "stampDefs", "stamps", "paymentProblems", "todoProblems", "tickets"];
+const DATA_KEYS = ["trip", "people", "days", "stops", "stays", "expenses", "payments", "rateToday", "rateSource", "sheetUrl", "plannerLinked", "todos", "todosPulledAt", "paymentsPulledAt", "stampDefs", "stamps", "paymentProblems", "todoProblems", "tickets", "ticketList"];
 // Every kind of item the store keeps, the field it is found by and the flag
 // that marks it gone. Stays and day headers only ever change here through an
 // undo from History (their writes come in later tasks). A todo is an item
@@ -204,7 +204,7 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
 
   const state = {
     status: "boot", online: true, rev: null, me: null,
-    trip: null, people: [], days: [], stops: [], stays: [], expenses: [], payments: [], rateToday: null, rateSource: null, sheetUrl: "", plannerLinked: false, todos: [], todosPulledAt: "", paymentsPulledAt: "", stampDefs: [], stamps: [], paymentProblems: { at: "", list: [], more: 0 }, todoProblems: { at: "", list: [], more: 0 }, tickets: [], ticketsReady: false,
+    trip: null, people: [], days: [], stops: [], stays: [], expenses: [], payments: [], rateToday: null, rateSource: null, sheetUrl: "", plannerLinked: false, todos: [], todosPulledAt: "", paymentsPulledAt: "", stampDefs: [], stamps: [], paymentProblems: { at: "", list: [], more: 0 }, todoProblems: { at: "", list: [], more: 0 }, tickets: [], ticketsReady: false, ticketList: false,
     loadedAt: null, seenAt: null, lastChange: null, notice: null, setAside: [], keyRefused: false,
     // personal: this phone opened its own person's link (load said so); me is then theirs.
     // cleared: the trip was taken off this phone after its key was refused ({ kept: own unsent lines kept }).
@@ -964,6 +964,8 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
   // History has each one.
   function ticketOp(t, { by, at, size } = {}) {
     const meta = { id: t.id, stop: t.stop, who: t.who || "", seat: t.seat || "", page: t.page, mime: t.mime, w: t.w, h: t.h };
+    // From the planner's list (auto-add): the line it came from, so the backend never takes it twice.
+    if (typeof t.from === "string" && t.from) meta.from = t.from;
     const chars = typeof t.data === "string" ? t.data.length : Number(size) || 0;
     const after = { ...meta, size: chars, chunks: Math.max(1, Math.ceil(chars / 45000)), by: by || null, at: at || new Date(now()).toISOString() };
     const op = {
@@ -1017,6 +1019,20 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
   // One picture's data, { id, mime, data }, straight from the backend (a read, never queued).
   async function fetchTicket(id) {
     const r = await call("ticket", { id });
+    return r.data;
+  }
+
+  // Tickets from the planner's list (auto-add), the owner's phone only: plain
+  // reads, never queued, nothing kept here (the sheet holds what they bring,
+  // in memory). listTickets -> { rows, files, at, stored }; listTicketFile ->
+  // { handle, name, mime, data }. Rejects as call does (a refused key takes
+  // the trip off the phone as for any request).
+  async function listTickets({ force = false } = {}) {
+    const r = await call("listTickets", { force: force === true });
+    return r.data;
+  }
+  async function listTicketFile(handle) {
+    const r = await call("listTicketFile", { handle });
     return r.data;
   }
 
@@ -1704,8 +1720,9 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
     setMe, setPerson, markSeen, forgot, unsentCount, notify, clearNotice, claudeToken, syncPayments, autoPayments,
     syncTodos, tickTodo, claimTodo,
     pressStamp,
-    addTicket, ticketOutcome, fetchTicket,
-    removeTicket: (id) => takeBackLive("ticket", id) || change("ticket", id, "remove", "removeTicket", { gone: true }),
+    addTicket, ticketOutcome, fetchTicket, listTickets, listTicketFile,
+    // opts as for change(): bulk add's list mode waits on each (quiet, onUnsure).
+    removeTicket: (id, opts) => takeBackLive("ticket", id) || change("ticket", id, "remove", "removeTicket", { gone: true }, opts || {}),
     addExpense,
     updateExpense: (id, patch) => change("expense", id, "edit", "updateExpense", patch),
     deleteExpense: (id) => takeBackLive("expense", id) || change("expense", id, "delete", "deleteExpense", { deleted: true }),
