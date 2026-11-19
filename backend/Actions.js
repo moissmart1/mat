@@ -282,8 +282,8 @@ function rev_() {
 
 function maxLogId_() {
   var max = 0;
-  logRows_().forEach(function (r) {
-    var id = Number(r.id);
+  columnValues_("Log", "id").forEach(function (value) {
+    var id = Number(value);
     if (isFinite(id) && id > max) max = id;
   });
   return max;
@@ -814,8 +814,8 @@ function undoPicture_(entry, rows, ctx) {
 
 // The row whose key cell (an id, or a day's date) is ref. Dates go through
 // cellDate_ in case Sheets hands a date cell back as a Date.
-function findPlanRow_(plan, ref) {
-  var rows = readTable_(plan.tab);
+function findPlanRow_(plan, ref, rows) {
+  rows = rows || readTable_(plan.tab);
   for (var i = 0; i < rows.length; i++) if (cellDate_(rows[i][plan.key]) === ref) return rows[i];
   return null;
 }
@@ -1999,9 +1999,9 @@ function ticketsShown_(removedStops) {
 }
 
 // The ids of removed stops, for the limits: their pictures do not count (minor 6).
-function removedStops_() {
+function removedStops_(rows) {
   var out = {};
-  readTable_("Stops").forEach(function (r) { if (cellText_(r.id) !== "" && cellSet_(r.deleted_at)) out[cellText_(r.id)] = true; });
+  rows.forEach(function (r) { if (cellText_(r.id) !== "" && cellSet_(r.deleted_at)) out[cellText_(r.id)] = true; });
   return out;
 }
 
@@ -2013,7 +2013,7 @@ function countedTickets_(rows, removed) {
 }
 
 function liveTickets_() {
-  return countedTickets_(readTable_("Tickets"), removedStops_());
+  return countedTickets_(readTable_("Tickets"), removedStops_(readTable_("Stops")));
 }
 
 // Deletes TicketData rows whose ticket no Tickets row names (a failed add's), bottom up.
@@ -2051,9 +2051,10 @@ function addTicket_(args, ctx) {
   var t = v.value;
   // The tie (from) is the owner's phone's own mark: another traveller's is refused, nothing stored.
   if (t.from !== "" && !ctx.owner) return err_("bad_input", MSG_.listOwnerOnly.replace("{owner}", peopleNames_()[0] || "the trip’s organiser"));
-  var stopRow = findPlanRow_(planKind_("stop"), t.stop);
+  var stops = readTable_("Stops");
+  var stopRow = findPlanRow_(planKind_("stop"), t.stop, stops);
   if (!stopRow || cellSet_(stopRow.deleted_at)) return err_("not_found", MSG_.noStop);
-  var live = countedTickets_(all, removedStops_());
+  var live = countedTickets_(all, removedStops_(stops));
   // From the list (auto-add): a second live picture of the same line, page
   // and person is refused under the lock, so two phones, or a run repeated
   // after a lost reply, never add it twice.
@@ -2073,8 +2074,7 @@ function addTicket_(args, ctx) {
     size: String(t.data.length), chunks: String(chunks.length), by: ctx.actor, at: nowIso_(), gone: "",
   };
   if (t.from !== "") row.planner_id = t.from;
-  appendObj_("Tickets", row);
-  var saved = ticketFromRow(findRow_("Tickets", t.id));
+  var saved = ticketFromRow(appendObj_("Tickets", row, true));
   var after = ticketSnap_(saved, cellText_(stopRow.title));
   var log = appendLog_(ctx, "add", "ticket", t.id, summarize("add", "ticket", null, after), null, after);
   return ok_({ ticket: saved, logId: log.id }, bumpRev_());

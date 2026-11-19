@@ -76,6 +76,17 @@ test("addTicket keeps the picture in chunks and the row last; load lists it with
   assert.deepEqual(got.data, { id: t.id, mime: "image/png", data });
 });
 
+test("adding a picture reads the stops and tickets once and only needs ids from the History log", async () => {
+  const call = trip();
+  const before = { ...call.fake.tableReads };
+  const r = await add(call);
+  assert.equal(r.ok, true, r.message);
+  const reads = (tab) => (call.fake.tableReads[tab] || 0) - (before[tab] || 0);
+  assert.deepEqual([reads("Stops"), reads("Tickets"), reads("Log")], [1, 1, 0]);
+  const loaded = (await call("load")).data.tickets;
+  assert.deepEqual(loaded.find((t) => t.id === r.data.ticket.id), r.data.ticket);
+});
+
 test("load reads the Tickets tab but never TicketData", async () => {
   const call = trip();
   await add(call);
@@ -402,6 +413,8 @@ test("Sheets.js: appendObjs_ writes one block, columnValues_ and cellsAt_ read i
   ctx.deleteRowsAt_("TicketData", [2, 3, 4, 6]);
   assert.deepEqual(calls.deleteRows, [[6, 1], [2, 3]]);
   assert.deepEqual(Array.from(ctx.columnValues_("TicketData", "ticket")), ["bbbbbbbb"]);
+  const saved = ctx.appendObj_("Tickets", { id: "testpicture1", seat: "+5" }, true);
+  assert.deepEqual([saved.id, saved.seat, saved.gone], ["testpicture1", "+5", ""]);
 });
 
 // ---------- who is calling (security, 2026-11-18) ----------
