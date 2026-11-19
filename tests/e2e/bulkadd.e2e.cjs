@@ -492,6 +492,109 @@ cases.push({
 });
 
 cases.push({
+  name: "fix round 3, R2: a trip load landing mid-run (another phone's change) takes no picture off the phone; with no signal after it and MAT reloaded, all six arrive exactly once",
+  async run({ page }) {
+    const backend = makeBackend(TRIP, { now: NOON12 });
+    await ready(page, { backend });
+    await openBulk(page);
+    await page.setInputFiles("#bulkList", listFile());
+    await page.setInputFiles("#bulkFiles", FILES().slice(0, 5));
+    await sorted(page, 5);
+    // The first picture is held on its way. Meanwhile another phone changes the trip and this phone loads it (the keep is cleaned after a load).
+    const handle = backend.handle;
+    let release;
+    const gate = new Promise((r) => (release = r));
+    let seen = 0;
+    backend.handle = async (body) => {
+      if (body.action === "addTicket") {
+        seen += 1;
+        if (seen === 1) {
+          await gate;
+          backend.failWith = "network";
+          throw new Error("network");
+        }
+      }
+      return handle(body);
+    };
+    await page.click("#bulkPunch");
+    await until(() => seen >= 1, "the first picture leaves", 20000);
+    const other = await handle({ key: "test-key", actor: "Ajen", action: "updateStop", args: { id: SKY, patch: { tkRef: "OTHER-2" } } });
+    assert.equal(other.ok, true, other.message);
+    await page.evaluate(() => globalThis.__matTest.store.checkRev());
+    await until(() => page.evaluate((id) => globalThis.__matTest.store.state.stops.find((s) => s.id === id).tkRef === "OTHER-2", SKY), "this phone has the other phone's change");
+    // No signal from here: the first gets no reply, the rest wait on the phone.
+    release();
+    await until(() => page.evaluate(() => !!document.querySelector("#bulk .ba-done-h")), "the run ends", 20000);
+    await until(async () => (await queued(page)).length === 6, "all six wait on the phone");
+    const q = await queued(page);
+    await until(async () => {
+      const kept = await keptIds(page);
+      return q.every((x) => kept.includes(x.id));
+    }, "every one of them is in the keep");
+    assert.equal(backend.fake.tables.Tickets.length, 0);
+    await page.reload();
+    await page.clock.resume();
+    await drawn(page);
+    assert.equal((await queued(page)).length, 6, "still waiting after the reload");
+    backend.failWith = null;
+    await page.evaluate(() => globalThis.__matTest.store.checkRev());
+    await until(async () => backend.fake.tables.Tickets.length === 6 && (await queued(page)).length === 0, "every picture arrives", 20000);
+    await page.evaluate(() => globalThis.__matTest.store.checkRev());
+    await page.evaluate(() => globalThis.__matTest.store.idle());
+    const rows = backend.fake.tables.Tickets;
+    assert.equal(rows.length, 6, "exactly once");
+    assert.equal(new Set(rows.map((r) => r.id)).size, 6);
+    for (const r of rows) assert.ok(backend.fake.tables.TicketData.some((d) => d.ticket === r.id), "data for " + r.id);
+    assert.equal((await page.evaluate(() => globalThis.__matTest.store.state.notice || "")), "", "no lost-picture notice");
+  },
+});
+
+cases.push({
+  name: "fix round 3: weak signal (small requests pass, only ticket requests get no reply): at most two ticket requests in flight, every ticket exactly once",
+  async run({ page }) {
+    const backend = makeBackend(TRIP, { now: NOON12 });
+    await ready(page, { backend });
+    await openBulk(page);
+    await page.setInputFiles("#bulkList", listFile());
+    await page.setInputFiles("#bulkFiles", FILES().slice(0, 5));
+    await sorted(page, 5);
+    const handle = backend.handle;
+    let weak = true;
+    let landed = 0;
+    let out = 0;
+    let most = 0;
+    backend.handle = async (body) => {
+      if (body.action !== "addTicket") return handle(body);
+      out += 1;
+      most = Math.max(most, out);
+      try {
+        await new Promise((r) => setTimeout(r, 40));
+        if (weak && landed >= 2) throw new Error("network");
+        landed += 1;
+        return await handle(body);
+      } finally {
+        out -= 1;
+      }
+    };
+    await page.click("#bulkPunch");
+    await until(() => page.evaluate(() => !!document.querySelector("#bulk .ba-done-h")), "the run ends", 30000);
+    assert.ok(most <= 2, "at most two ticket requests in flight while weak (saw " + most + ")");
+    // Better signal: the waiting ones go up, still never more than two at once.
+    weak = false;
+    for (let i = 0; i < 10 && backend.fake.tables.Tickets.length < 6; i += 1) {
+      await page.evaluate(() => globalThis.__matTest.store.checkRev());
+      await page.evaluate(() => globalThis.__matTest.store.idle());
+    }
+    await until(async () => backend.fake.tables.Tickets.length === 6 && (await queued(page)).length === 0, "every ticket arrives", 20000);
+    assert.ok(most <= 2, "at most two ticket requests in flight (saw " + most + ")");
+    const rows = backend.fake.tables.Tickets;
+    assert.equal(rows.length, 6, "exactly once");
+    assert.equal(new Set(rows.map((r) => r.id)).size, 6);
+    for (const r of rows) assert.ok(backend.fake.tables.TicketData.some((d) => d.ticket === r.id), "data for " + r.id);
+  },
+});
+
+cases.push({
   name: "fix round 1, I1: a stop's details filled on another phone while the pictures go up are not overwritten; it is listed",
   async run({ page }) {
     const backend = makeBackend(TRIP, { now: NOON12 });

@@ -528,8 +528,8 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     const nodes = [];
     if (phase === "adding") {
       // Fix round 1 (I2): until every picture is kept on this phone, MAT must stay open; after that nothing confirmed is lost.
-      if (a.step === "making") nodes.push(progress("Making pictures: " + a.made + " of " + a.total, "Keep MAT open until each one is kept on this phone. Nothing is sent yet.", a.made, a.total));
-      else if (a.step === "sending") nodes.push(progress("While adding: " + a.settled + " of " + plural(a.pics, "picture", "pictures"), "Each one is kept on this phone; one that can’t go up now goes up when MAT next has signal.", a.settled, a.pics));
+      if (a.step === "making") nodes.push(progress("Making pictures: " + a.made + " of " + a.total, "Keep MAT open until they are all added. Nothing is sent yet.", a.made, a.total));
+      else if (a.step === "sending") nodes.push(progress("While adding: " + a.settled + " of " + plural(a.pics, "picture", "pictures"), "Keep MAT open until they are all added. One that can’t go up now is kept on this phone and goes up when MAT next has signal.", a.settled, a.pics));
       else nodes.push(progress("Filling in the stops’ details…", "From the list, only where a stop’s field is empty.", 1, 1));
     }
     if (phase === "added") {
@@ -641,18 +641,18 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
 
   // ---- 入鋏: adding ----
   //
-  // Fix round 1 (I2): three steps, so that nothing the person confirmed hangs
-  // on anything else, and closing MAT part way loses nothing confirmed.
-  // 1. Every picture is made (a PDF's pages drawn here) and put in the keep.
+  // Three steps, so that nothing the person confirmed hangs on anything else.
+  // Closing MAT part way loses the pictures not yet handed over (fix round 3).
+  // 1. Every picture is made (a PDF's pages drawn here), in memory only.
   // 2. Then the pictures are handed to store.addTicket one at a time (fix
   //    round 2, R1), each one's outcome awaited before the next, as the
-  //    single add does. One with no signal waits on the phone (in mat.queue,
+  //    single add does; each is put in the keep right before its own add
+  //    (fix round 3, R2). One with no signal waits on the phone (in mat.queue,
   //    its data in the keep) and goes up later through the store's flush,
   //    which is one at a time, after a reload too.
   // 3. Then the stops' facts, each worked out as it is sent (I1).
   // A wipe (Forget, a refused key) or Cancel stops waiting at once (aborts).
 
-  const KEEP_WAIT_MS = 10000;
   let aborts = new Set();
   const orAbort = (p) => new Promise((resolve) => {
     aborts.add(resolve);
@@ -664,7 +664,6 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
       resolve(null);
     });
   });
-  const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   // Every stop as it was when the sort was last drawn (I1): a stop changed
   // since then gets no facts from the list.
@@ -711,13 +710,10 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     draw();
     say.textContent = "Adding " + plural(r.items.length, "ticket", "tickets") + ".";
 
-    // 1. Every picture made and put in the keep, nothing sent yet.
+    // 1. Every picture made (in memory only), nothing kept or sent yet.
     const pics = []; // { it, id, pic, k }
-    const puts = [];
     const hold = (it, pic, k) => {
-      const id = newId();
-      puts.push(keep.put(id, pic.blob, { gen: at }));
-      pics.push({ it, id, pic, k });
+      pics.push({ it, id: newId(), pic, k });
     };
     for (const it of adding.items) {
       if (dead()) break;
@@ -745,9 +741,6 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
       if (mine === gen) draw();
     }
     if (dead()) return;
-    // A keep that never answers (a known WebKit fault) does not hold the rest up: the data also travels with each add.
-    await orAbort(Promise.race([Promise.all(puts), pause(KEEP_WAIT_MS)]));
-    if (dead()) return;
 
     // 2. Handed over ONE AT A TIME, each one's outcome awaited before the next, as the single add does (fix round 2, R1): never two ticket sends of ours in flight. One that cannot go up (no signal, busy) settles as waiting and the next is handed over; with no signal the store keeps each without sending it.
     adding.step = "sending";
@@ -756,6 +749,8 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     draw();
     for (const { it, id, pic, k } of pics.splice(0)) {
       if (dead()) break;
+      // Into the keep right before its own add, as the single add does (fix round 3, R2): a load's cleanup of the keep can never take a picture this loop has not reached. Not waited for: a keep that never answers must not hold the rest up; the data travels with the add.
+      keep.put(id, pic.blob, { gen: at });
       const sameWho = liveOn(it.stop).filter((t) => (t.who || "") === it.who).length;
       const token = store.addTicket({ id, stop: it.stop, who: it.who, seat: seatFor(it, rows), page: Math.min(LIMITS.perStop, Math.max(k + 1, sameWho + 1)), mime: pic.mime, w: pic.w, h: pic.h, data: pic.data });
       const res = await orAbort(store.ticketOutcome(token));
