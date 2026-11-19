@@ -268,7 +268,10 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
       });
     }
     state.setAside = aside;
-    state.settlementProvisional = false;
+    // Undo keeps a separate operation while it reconciles a possibly landed add.
+    state.settlementProvisional = resolving.some((op) =>
+      (op.kind === "expense" || op.kind === "payment") && (op.lost || op.delayed)
+    );
     for (const op of ops) {
       if (op.kind === "expense" || op.kind === "payment") {
         // Once delayed, a retry remains provisional until the write is acknowledged.
@@ -1159,7 +1162,10 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
       try {
         r = await call("undo", { logId: op.logId });
       } catch (err) {
-        if (transient(err)) return "offline";
+        if (transient(err)) {
+          op.uop.delayed = true;
+          return "offline";
+        }
         stopResolving(op);
         if (refusedAsStale(err)) {
           // Already undone (an earlier undo whose reply was lost) is fine;
