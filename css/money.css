@@ -196,9 +196,9 @@ button.s-wl > span{text-decoration:underline dotted rgba(21,18,15,.5) 1.5px;text
 @media (prefers-reduced-motion: reduce){ .big.land{animation:none} .fold{transition:none} }
 
 /* ---------- the till receipt ---------- */
-.rc-search{padding:12px 0 8px;color:var(--dim);font-size:13px}
+.rc-search{margin:0 var(--gr) 0 var(--gl);padding:12px 0 8px;color:var(--dim);font-size:13px}
 .rc-search label{display:block;margin-bottom:4px}
-.rc-search input{width:100%;padding:8px 10px;background:var(--key);color:var(--text);border:1px solid var(--key-hi);border-radius:4px;font:inherit;font-size:16px}
+.rc-search input{min-height:44px;width:100%;padding:8px 10px;background:var(--key);color:var(--text);border:1px solid var(--key-hi);border-radius:4px;font:inherit;font-size:16px}
 .rc{position:relative;margin:26px var(--gr) 10px var(--gl);padding:16px 14px 14px;background:var(--grain), var(--paper);color:var(--print);box-shadow:var(--lift);
   font-weight:700;font-size:15.5px;line-height:1.3}
 .rc:empty{display:none}

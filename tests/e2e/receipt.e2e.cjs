@@ -25,6 +25,19 @@ const BOARD = {
 };
 
 module.exports = [
+  ...[[393, 852], [320, 568], [844, 390], [1440, 900]].map(([width, height]) => ({
+    name: "expense search fits the receipt gutters at " + width + "x" + height,
+    viewport: { width, height },
+    mobile: width < 1000,
+    async run({ page }) {
+      await open(page, { seed: SEED, nowMs: NOON12 });
+      await waitRows(page, 8);
+      const box = await page.locator("#rcQuery").boundingBox();
+      const slip = await page.locator("#slip").boundingBox();
+      assert.ok(box.height >= 44);
+      assert.ok(Math.abs(box.x - slip.x) < 1 && Math.abs(box.width - slip.width) < 1);
+    },
+  })),
   {
     name: "receipt search finds a description without changing the trip totals",
     async run({ page }) {
