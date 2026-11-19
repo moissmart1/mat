@@ -6,7 +6,8 @@
 //   getProp_, setProp_, delProp_, withLock_, getRate_, getRateInfo_, tripKey_, nowIso_, sheetUrl_,
 //   claudeToken_, ensureClaudeToken_, newId_, plannerId_, plannerRows_, holderOf_ (Keys.js),
 //   hasTab_, plannerTab_, plannerSetCell_, plannerAppendRow_, torontoNow_, withPlannerLock_,
-//   appendObjs_, columnValues_, cellsAt_, deleteRowsAt_ (ticket pictures)
+//   appendObjs_, columnValues_, cellsAt_, deleteRowsAt_ (ticket pictures),
+//   deskPost_, deskReady_, cacheGet_, cachePut_ (tickets from the planner's list)
 // It also uses the pure helpers from Pure.js.
 
 var MSG_ = {
@@ -65,6 +66,14 @@ var MSG_ = {
   notYours: "You can only change your own settings.",
   ownLink: "Open your own link to change an e-Transfer address.",
   notYourClaim: "Someone else is on this one. Ask them to hand it back first.",
+  // Tickets from the planner's list (auto-add).
+  listOwnerOnly: "Only {owner} can bring in tickets from the list.",
+  noDesk: "The list’s ticket files aren’t set up yet. Ask Mo to set up the ticket shelf.",
+  deskUnreachable: "The list’s ticket files can’t be reached right now. Try again later.",
+  noListTab: "The planner has no Tickets tab.",
+  listFileTooBig: "That file is too big to fetch: add it by hand.",
+  listFileGone: "That file isn’t with the list’s tickets any more.",
+  listTwice: "That ticket from the list is already on this stop.",
 };
 var STAMP_REFUSALS_ = { not_open: "stampNotOpen", closed: "stampClosed", late: "stampLate", future: "stampFuture" };
 
@@ -196,6 +205,15 @@ function dispatch_(body, holder) {
     return token ? ok_({ token: token }, rev_()) : err_("not_found", MSG_.noClaude);
   }
   // (linkPlanner is gone: the owner sets PLANNER_ID in Script Properties.)
+  // Tickets from the planner's list (auto-add): reads, for the owner on their
+  // own key only (the claudeLink rule); never the check key, the shared key
+  // or the connector (neither list names them). No lock: nothing is written
+  // but the time of the last look.
+  if (action === "listTickets" || action === "listTicketFile") {
+    var first = peopleNames_()[0];
+    if (!ownerOnly_(holder)) return err_("bad_input", MSG_.listOwnerOnly.replace("{owner}", first || "the trip’s organiser"));
+    return action === "listTickets" ? listTickets_(args) : listTicketFile_(args);
+  }
 
   var write;
   switch (action) {
@@ -400,6 +418,11 @@ function load_(holder) {
   data.stops.forEach(function (st) { if (st.deleted) removed[st.id] = true; });
   var tickets = ticketsShown_(removed);
   if (tickets !== null) data.tickets = tickets;
+  // Tickets from the planner's list (auto-add): only the owner's own phone
+  // is told it can look, once the planner, the desk and the planner_id
+  // column are there. Everyone else's load has no such key.
+  if (tickets !== null && holder && holder.kind === "person" && data.people.length && data.people[0].name === holder.name &&
+      plannerId_() !== null && deskReady_() && hasColumn_("Tickets", "planner_id")) data.ticketList = true;
   return ok_(data, rev);
 }
 
@@ -2026,20 +2049,107 @@ function addTicket_(args, ctx) {
   var stopRow = findPlanRow_(planKind_("stop"), t.stop);
   if (!stopRow || cellSet_(stopRow.deleted_at)) return err_("not_found", MSG_.noStop);
   var live = countedTickets_(all, removedStops_());
+  // From the list (auto-add): a second live picture of the same line, page
+  // and person is refused under the lock, so two phones, or a run repeated
+  // after a lost reply, never add it twice.
+  if (t.from !== "") {
+    if (!hasColumn_("Tickets", "planner_id")) return err_("needs_migrate", MSG_.needsMigrate);
+    var twice = live.some(function (r) { return cellText_(r.planner_id) === t.from && cellNum_(r.page) === t.page && cellText_(r.who) === t.who; });
+    if (twice) return err_("bad_input", MSG_.listTwice);
+  }
   if (live.length >= TICKET_LIMITS.perTrip) return err_("bad_input", MSG_.ticketsPerTrip);
   if (live.filter(function (r) { return cellText_(r.stop) === t.stop; }).length >= TICKET_LIMITS.perStop) return err_("bad_input", MSG_.ticketsPerStop);
 
   sweepTicketChunks_(known);
   var chunks = ticketChunks(t.data);
   appendObjs_("TicketData", chunks.map(function (c, i) { return { ticket: t.id, n: String(i), data: c }; }));
-  appendObj_("Tickets", {
+  var row = {
     id: t.id, stop: t.stop, who: t.who, seat: t.seat, page: String(t.page), mime: t.mime, w: String(t.w), h: String(t.h),
     size: String(t.data.length), chunks: String(chunks.length), by: ctx.actor, at: nowIso_(), gone: "",
-  });
+  };
+  if (t.from !== "") row.planner_id = t.from;
+  appendObj_("Tickets", row);
   var saved = ticketFromRow(findRow_("Tickets", t.id));
   var after = ticketSnap_(saved, cellText_(stopRow.title));
   var log = appendLog_(ctx, "add", "ticket", t.id, summarize("add", "ticket", null, after), null, after);
   return ok_({ ticket: saved, logId: log.id }, bumpRev_());
+}
+
+// ---- tickets from the planner's list (auto-add) ----
+// listTickets { force } -> { rows, files, at, stored }: the planner's Tickets
+// tab (listRowsFrom: only the columns the phone matches with) and the desk's
+// list of the ticket files (deskFilesFrom: handles, never a Drive id). The
+// desk is asked at most once in 10 minutes unless forced, and never twice in
+// 30 seconds (LIST_TICKETS_AT); between, its last list comes from the script
+// cache (stored: true), the planner is read afresh. listTicketFile { handle }
+// -> { handle, name, mime, data }: one file's bytes, one per request.
+var LIST_GAP_MS_ = 10 * 60 * 1000;
+var LIST_FORCE_GAP_MS_ = 30 * 1000;
+var LIST_CACHE_KEY_ = "LIST_TICKET_FILES";
+var LIST_CACHE_S_ = 600;
+
+// The trip's first person on their own key (the claudeLink rule).
+function ownerOnly_(holder) {
+  var owner = peopleNames_()[0];
+  return !!holder && holder.kind === "person" && !!owner && holder.name === owner;
+}
+
+function cachedDeskFiles_() {
+  try {
+    var v = JSON.parse(cacheGet_(LIST_CACHE_KEY_) || "null");
+    return v && Array.isArray(v.files) ? deskFilesFrom({ ok: true, files: v.files }) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function listTickets_(args) {
+  if (args.force !== undefined && typeof args.force !== "boolean") return err_("bad_input", MSG_.badRequest);
+  if (!plannerId_()) return err_("no_planner", MSG_.noPlanner);
+  if (!ticketsReady_() || !hasColumn_("Tickets", "planner_id")) return err_("needs_migrate", MSG_.needsMigrate);
+  if (!deskReady_()) return err_("no_desk", MSG_.noDesk);
+  var rows;
+  try {
+    rows = plannerTab_("Tickets");
+  } catch (e) {
+    return err_("planner_unreadable", MSG_.plannerUnreadable);
+  }
+  if (rows === null) return err_("planner_columns", MSG_.noListTab);
+  var read = listRowsFrom(rows, tripYear_());
+  if (read.missing) return err_("planner_columns", read.missing);
+  var last = getProp_("LIST_TICKETS_AT") || "";
+  var since = Date.parse(nowIso_()) - Date.parse(last);
+  var files = null;
+  if (since >= 0 && (since < LIST_FORCE_GAP_MS_ || (args.force !== true && since < LIST_GAP_MS_))) files = cachedDeskFiles_();
+  var stored = files !== null;
+  var at = last;
+  if (files === null) {
+    var answer = deskPost_({ action: "tickets" });
+    if (answer && answer.ok === false && answer.why === "no folder") return err_("no_desk", MSG_.noDesk);
+    files = deskFilesFrom(answer);
+    if (files === null) return err_("desk_unreachable", MSG_.deskUnreachable);
+    at = nowIso_();
+    setProp_("LIST_TICKETS_AT", at);
+    try {
+      cachePut_(LIST_CACHE_KEY_, JSON.stringify({ at: at, files: files }), LIST_CACHE_S_);
+    } catch (e) {
+      // too big for the cache: the next look asks the desk again
+    }
+  }
+  return ok_({ rows: read.rows, files: files, at: at, stored: stored }, rev_());
+}
+
+function listTicketFile_(args) {
+  var h = args.handle;
+  if (typeof h !== "string" || !DESK_HANDLE_RE_.test(h)) return err_("bad_input", MSG_.badRequest);
+  if (!deskReady_()) return err_("no_desk", MSG_.noDesk);
+  var answer = deskPost_({ action: "ticketFile", h: h });
+  var why = answer && answer.ok === false ? answer.why : "";
+  if (why === "too big") return err_("too_big", MSG_.listFileTooBig);
+  if (why === "not found" || why === "bad request") return err_("not_found", MSG_.listFileGone);
+  var file = deskFileFrom(answer, h);
+  if (!file) return err_("desk_unreachable", MSG_.deskUnreachable);
+  return ok_({ handle: h, name: file.name, mime: file.mime, data: file.data }, rev_());
 }
 
 // { id } -> { id, mime, data }: the chunks joined in order. Refused for a removed or unknown one.
