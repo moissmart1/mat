@@ -117,7 +117,7 @@ export function viewerOwed(s) {
   const live = s.expenses.filter((e) => !e.deleted);
   const mine = s.people.find((p) => p.name === s.me);
   const simplify = mine ? mine.simplify !== false : true;
-  const provisional = s.expenses.concat(s.payments).some((item) => item.pending || item.failed);
+  const provisional = !!s.settlementProvisional;
   return { names, live, simplify, provisional, list: owedList(names, live, s.payments, simplify), bal: balances(names, live, s.payments) };
 }
 
@@ -138,6 +138,8 @@ export function mountSlip(slip, store) {
   const ui = { armed: null, amt: "", typed: false, err: false, work: null, lines: false, rm: null, older: false, ask: false };
   let fresh = new Set(); // payment ids to draw with the hit, once
   let armTimer = null;
+  const notice = el("p", "slip-provisional", "Provisional. Some changes haven’t synced. Check the amount again before sending money.");
+  notice.id = "slipProvisional";
   let shown = null; // signature of the last drawing
   let view = null;
   // The settled seal. phase: null (not settled), "stamped" (the last stamp
@@ -443,9 +445,15 @@ export function mountSlip(slip, store) {
     if (ui.rm && !v.stamps.some((p) => p.id === ui.rm)) ui.rm = null;
     if (!v.me) ui.ask = false;
 
+    notice.hidden = !v.provisional;
+    const copyButton = slip.querySelector("#copyTo");
+    if (copyButton) {
+      if (v.provisional) copyButton.setAttribute("aria-describedby", notice.id);
+      else copyButton.removeAttribute("aria-describedby");
+    }
     const hits = calm() ? new Set() : fresh;
     const sig = JSON.stringify([
-      v.me, v.simplify, v.provisional, v.open, v.address, v.purpose, v.mark,
+      v.me, v.simplify, v.open, v.address, v.purpose, v.mark,
       v.stamps.map((p) => [p.id, p.from, p.to, p.cad, p.seed, p.rot, paidDay(v, p)]),
       ui.work ? [v.live.map((e) => [e.id, e.title, e.amount, e.currency, e.rate, e.paidBy, e.split, e.splitMode, e.splitVals, e.day]), v.payments.map((p) => [p.id, p.removed])] : 0,
       { ...ui, amt: undefined },
@@ -478,9 +486,6 @@ export function mountSlip(slip, store) {
     but.append(el("b", "", "但"), el("span", "", v.purpose));
     const body = [cols(), ...rows, but, foot, ...(v.me ? [simpBlock(v)] : [])];
     const st = seal.phase === "sealed" || seal.phase === "filed" ? settledOf(v.open, v.stamps) : null;
-    const notice = el("p", "slip-provisional", "Provisional. Some changes haven’t synced. Check the amount again before sending money.");
-    notice.id = "slipProvisional";
-    notice.hidden = !v.provisional;
     if (st) slip.replaceChildren(holes(), head, notice, foldOf(body), stubOf(st), sealOf(st));
     else slip.replaceChildren(head, notice, ...body);
     fileClasses();

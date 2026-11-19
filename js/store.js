@@ -268,7 +268,13 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
       });
     }
     state.setAside = aside;
+    state.settlementProvisional = false;
     for (const op of ops) {
+      if (op.kind === "expense" || op.kind === "payment") {
+        // Once delayed, a retry remains provisional until the write is acknowledged.
+        if (op.status === "queued" || op.status === "failed" || op.lost || !state.online) op.delayed = true;
+        if (op.delayed) state.settlementProvisional = true;
+      }
       const list = lists[op.kind];
       const i = list.findIndex((x) => keyOf(op.kind, x) === op.id);
       const next = op.view(i >= 0 ? bare(list[i]) : null);
@@ -423,6 +429,7 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
       loadedAt: null, lastChange: null, notice: null, setAside: [],
       history: { entries: [], more: false, loading: false, error: null },
       cleared: had ? { kept: mine.length } : null,
+      settlementProvisional: false,
     });
     historyLoaded = false;
     emit();

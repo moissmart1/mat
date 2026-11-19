@@ -3515,3 +3515,27 @@ test("round 2: an address key that is taken becomes the saved trip at once, so a
   assert.equal(storage.getItem("mat.key"), mine);
   assert.equal(again.store.state.me, "Trenton");
 });
+
+test("settlement is provisional during a queued retry through acknowledgement, and ordinary sends stay quiet", async () => {
+  const p = phone();
+  await p.store.boot();
+  const release = p.net.hold("addExpense");
+  p.store.addExpense(draft());
+  assert.equal(p.store.state.settlementProvisional, false);
+  release();
+  await p.store.idle();
+
+  p.net.offline = true;
+  await p.store.checkRev();
+  p.store.addExpense(draft());
+  await p.store.idle();
+  assert.equal(p.store.state.settlementProvisional, true);
+  p.net.offline = false;
+  const ack = p.net.hold("addExpense");
+  await p.store.checkRev();
+  await p.store.checkRev();
+  assert.equal(p.store.state.settlementProvisional, true);
+  ack();
+  await p.store.idle();
+  assert.equal(p.store.state.settlementProvisional, false);
+});
