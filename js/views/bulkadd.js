@@ -10,11 +10,14 @@
 // (bundle, cards, the quiet lines, 入鋏) -> adding -> added. Nothing is sent
 // before 入鋏. Matching is js/bulk.js. Each picture goes in through the same
 // path as one added from a stop's Edit sheet (js/views/ticketpart.js
-// upload): kept in the keep first (not waited for), store.addTicket, then
-// store.ticketOutcome; a PDF is made into pictures of its pages here, as
-// there. The stop's ticket facts (only the empty ones) go through
-// store.updateStop, as the Edit sheet's Save does. With no signal the
-// pictures wait on the phone as a single add does.
+// upload): put in the keep, store.addTicket, then store.ticketOutcome; a PDF
+// is made into pictures of its pages here, as there. Fix round 1: every
+// picture is made and kept before any is handed over, then all are handed
+// over at once (so each is in mat.queue before the first leaves), and the
+// stop's ticket facts (only the empty ones, worked out as each is sent)
+// follow through store.updateStop, as the Edit sheet's Save does; they never
+// hold the pictures up. With no signal the pictures wait on the phone as a
+// single add does, after a reload too.
 //
 // The list and the files never leave the phone except as those pictures and
 // facts; nothing from them is logged. Text from them goes in with
