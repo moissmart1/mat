@@ -172,7 +172,7 @@ module.exports = [
       await ringUp(page, "Onigiri", "4 5 0");
       await page.click("#regDone");
       await waitClosed(page);
-      await expectText(page, "#net", "Couldn’t save unsent changes on this device. Keep the app open to avoid losing them. 1 to send.");
+      await expectText(page, "#net", "No signal. Couldn’t save unsent changes on this device. Keep the app open to avoid losing them. 1 to send.");
 
       backend.failWith = null;
       await signalBack(page);

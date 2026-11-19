@@ -315,7 +315,10 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
   // The request may have reached the backend.
   const mayHaveLanded = (op) => op.inFlight || op.lost || op.logId !== null;
 
+  let memoryQueue = null; // Last queue snapshot when the device could not keep it durably.
+
   function saveQueue() {
+    if (wiped) return;
     const live = ops.filter(isLiveAdd).map((op) =>
       op.kind === "payment"
         ? { payment: op.args.payment, stampedAt: op.after.stampedAt, stampedBy: op.after.stampedBy, sent: op.inFlight || op.lost }
@@ -335,7 +338,8 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
     const undos = resolving.map((op) => ({ undo: true, kind: op.kind, args: op.kind === "ticket" ? { ticket: ticketMeta(op.args.ticket) } : op.args, logId: op.logId, actor: op.actor || null }));
     const queue = live.concat(undos);
     const saved = setItem("mat.queue", JSON.stringify(queue));
-    state.queueStorageFailed = !wiped && queue.length > 0 && (!saved || !durableStorage);
+    memoryQueue = queue.length && (!saved || !durableStorage) ? queue : null;
+    state.queueStorageFailed = memoryQueue !== null;
   }
 
   // ---- talking to the backend ----
@@ -396,7 +400,7 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
   // for when they open their new link. The no-key screen then shows.
   function takeTripOff({ keep = true } = {}) {
     if (wiped && keep) return;
-    const queue = keep ? getJson("mat.queue") : null;
+    const queue = keep ? memoryQueue || getJson("mat.queue") : null;
     // With nobody known (an earlier refusal already took mat.me off), the
     // queue is already only this person's: kept as it is (fix round 1, C2).
     // Never a ticket picture: every one comes off the phone, unsent ones too.
@@ -407,11 +411,13 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
     const had = base !== null || getItem("mat.cache") !== null || (Array.isArray(queue) && queue.length > 0);
     wiped = true;
     wipes++;
+    const kept = mine.length ? JSON.stringify(mine) : null;
     try {
-      clear(mine.length ? JSON.stringify(mine) : null);
+      clear(kept);
     } catch {
       // storage that cannot be cleared: memory is cleared all the same
     }
+    memoryQueue = kept && (!durableStorage || getItem("mat.queue") !== kept) ? mine : null;
     base = null;
     ops = [];
     resolving = [];
@@ -426,7 +432,7 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
       loadedAt: null, lastChange: null, notice: null, setAside: [],
       history: { entries: [], more: false, loading: false, error: null },
       cleared: had ? { kept: mine.length } : null,
-      queueStorageFailed: false,
+      queueStorageFailed: memoryQueue !== null,
     });
     historyLoaded = false;
     emit();
@@ -558,7 +564,7 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
 
   async function checkRev() {
     // Storage can recover even while the backend is still unreachable.
-    if (state.queueStorageFailed && durableStorage) saveQueue();
+    if (state.queueStorageFailed && durableStorage && state.status === "ready") saveQueue();
     let r;
     try {
       r = await call("rev", {});
@@ -584,7 +590,7 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
   }
 
   function restoreQueue() {
-    const queue = getJson("mat.queue");
+    const queue = memoryQueue || getJson("mat.queue");
     if (!Array.isArray(queue)) return;
     for (const q of queue) {
       if (!q || typeof q !== "object") continue;

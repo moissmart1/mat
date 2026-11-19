@@ -12,7 +12,7 @@
 
 const SHOWING_LAST = "No signal. Showing what this phone last saw.";
 const NOTHING_YET = "No signal.";
-const KEEP_OPEN = "Couldn’t save unsent changes on this device. Keep the app open to avoid losing them.";
+export const KEEP_OPEN = "Couldn’t save unsent changes on this device. Keep the app open to avoid losing them.";
 
 export function mountNet(root, store) {
   const strip = document.createElement("div");
@@ -34,7 +34,8 @@ export function mountNet(root, store) {
 
   function render(s) {
     const { unsent, waiting } = store.outbox();
-    const message = s.queueStorageFailed ? KEEP_OPEN : s.online ? "" : s.loadedAt === null ? NOTHING_YET : SHOWING_LAST;
+    let message = s.online ? "" : s.loadedAt === null ? NOTHING_YET : SHOWING_LAST;
+    if (s.queueStorageFailed) message = s.online ? KEEP_OPEN : NOTHING_YET + " " + KEEP_OPEN;
     const show = !!message || waiting > 0;
     words.textContent = message;
     count.textContent = unsent > 0 ? (message ? " " : "") + unsent + " to send." : "";

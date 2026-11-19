@@ -11,6 +11,7 @@
 // kept, and Safari itself clears a site's storage after a week without a
 // visit. The pasted key is never drawn anywhere else and never logged.
 
+import { KEEP_OPEN } from "./net.js";
 import { fillSeal } from "../picture.js";
 
 export const HOW_LINES = ["Ring up what you paid.", "The slip says who pays whom.", "Stamp it the moment you send."];
@@ -214,7 +215,7 @@ export function mountFirst(root, store, { connected = true, storage = defaultSto
     const refused = s.keyRefused ? KEY_REFUSED + (s.cleared ? " " + clearedText(s.cleared.kept) : "") : NO_KEY;
     const blocked = !connected ? NOT_CONNECTED : keyless ? refused : null;
     gate.hidden = !blocked;
-    if (blocked) gateText.textContent = blocked;
+    if (blocked) gateText.textContent = keyless && s.queueStorageFailed ? blocked + " " + KEEP_OPEN : blocked;
     paste.hidden = !keyless;
     const needMe = !blocked && s.status === "ready" && !s.me && s.people.length > 0;
     if (needMe) drawPeople(s.people);

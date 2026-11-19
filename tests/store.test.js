@@ -3578,3 +3578,37 @@ test("round 2: an address key that is taken becomes the saved trip at once, so a
   assert.equal(storage.getItem("mat.key"), mine);
   assert.equal(again.store.state.me, "Trenton");
 });
+
+for (const failure of ["memory-only", "queue write", "wipe write"]) {
+  test("refused link protects unsent changes after a " + failure + " failure", async () => {
+    const fake = createFakeBackend(SEED);
+    const storage = memStorage({ "mat.key": fake.personKey("Ajen") });
+    const p = phone({ fake, storage, durableStorage: failure !== "memory-only" });
+    await p.store.boot();
+    const save = storage.setItem;
+    let rejectQueue = failure === "queue write";
+    storage.setItem = (key, value) => {
+      if (rejectQueue && key === "mat.queue") throw new Error("storage unavailable");
+      save(key, value);
+    };
+    p.net.offline = true;
+    await p.store.checkRev();
+    p.store.addExpense(draft({ title: "Kept until reconnected", paidBy: "Ajen" }));
+    const id = idOf(p.store);
+    await p.store.idle();
+    rejectQueue ||= failure === "wipe write";
+    fake.world.newLinkForPerson2();
+    p.net.offline = false;
+    await p.store.checkRev();
+    await p.store.idle();
+    await p.store.checkRev();
+    assert.equal(p.store.state.queueStorageFailed, true);
+    assert.deepEqual(p.store.state.cleared, { kept: 1 });
+    assert.equal(p.store.state.expenses.length, 0);
+    storage.setItem("mat.key", fake.personKey("Ajen"));
+    await p.store.boot();
+    await p.store.idle();
+    assert.equal(p.store.state.queueStorageFailed, false);
+    assert.equal((await backend(fake)).expenses.filter(e => e.id === id).length, 1);
+  });
+}
