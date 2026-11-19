@@ -308,6 +308,7 @@ module.exports = [
       await waitHist(page);
       await expectText(page, "#tape .tp-msg", "Showing the last loaded history. History needs a connection.");
       assert.equal(await page.locator("#tape .tp-row").count(), 10);
+      assert.equal(await page.locator("#tape .tp-undo").count(), 0);
       await page.click("#histDone");
       await waitHistClosed(page);
 

@@ -52,7 +52,7 @@ export function mountHistory(root, store) {
   let openNo = 0;
   const busy = new Set(); // entries whose Undo is on its way: no second tap
 
-  function drawRow(en) {
+  function drawRow(en, stale) {
     const row = el("div", "tp-row" + (en.undoneBy ? " is-undone" : ""));
     row.dataset.id = en.id;
     const ms = Date.parse(en.at);
@@ -64,7 +64,7 @@ export function mountHistory(root, store) {
     // A picture is only ever changed by its owner, Undo included (Task 16).
     // A stamp likewise: its line names whose it is after the last bar (def|who).
     const notMine = (en.kind === "picture" && en.ref !== store.state.me) || (en.kind === "stamp" && en.ref.slice(en.ref.lastIndexOf("|") + 1) !== store.state.me);
-    if (en.canUndo && !en.undoneBy && !notMine) {
+    if (!stale && en.canUndo && !en.undoneBy && !notMine) {
       const undo = el("button", "tp-undo", "Undo");
       undo.type = "button";
       undo.setAttribute("aria-label", "Undo: " + said.textContent);
@@ -88,7 +88,8 @@ export function mountHistory(root, store) {
       return;
     }
     const nodes = [];
-    if (error && phase === "failed") {
+    const stale = !!error && phase === "failed";
+    if (stale) {
       const notice = el("p", "tp-msg", LAST_LOADED + " " + error);
       notice.setAttribute("role", "status");
       nodes.push(notice);
@@ -105,7 +106,7 @@ export function mountHistory(root, store) {
           nodes.push(d);
         }
       }
-      nodes.push(drawRow(en));
+      nodes.push(drawRow(en, stale));
     }
     if (h.more) {
       const more = el("button", "tp-more", "Show older");
