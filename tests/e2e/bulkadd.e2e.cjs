@@ -9,7 +9,7 @@
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
-const { SEED, PLAN, makeBackend, open, until, text, expectText } = require("./helpers.cjs");
+const { SEED, PLAN, makeBackend, open, until, text, expectText, visible } = require("./helpers.cjs");
 const { pngBytes, pdfBytes } = require("./pictures.cjs");
 
 const SHOTS = process.env.MAT_TAB_SHOTS || "";
@@ -237,7 +237,11 @@ cases.push({
     await added(page);
     await expectText(page, "#bulk .ba-done-h", "1 ticket added to 1 stop.");
     await expectText(page, "#bulk .ba-done-s", /They wait on this phone and go up when there is signal\.$/);
-    await expectText(page, "#bulk .ba-next", "T001 · Shibuya Skyalready there");
+    // Fix round 1 (I2): which ones wait, by name.
+    await expectText(page, "#bulk .ba-wait", "T005 · Meiji Shrineon this phone, goes up when there is signal");
+    assert.ok((await page.evaluate(() => [...document.querySelectorAll("#bulk .ba-h")].map((h) => h.textContent))).includes("Waiting for signal · 1"));
+    // The stop's details cannot go with no signal (not queued, as a stop's Edit sheet): said, by stop.
+    await expectText(page, "#bulk .ba-next:not(.ba-wait)", "T001 · Shibuya Skyalready thereMeiji Shrinedetails not filled: no signal");
     assert.equal(backend.fake.tables.Tickets.length, 1, "nothing reached the trip");
     assert.equal(calls(backend, "addTicket").length - sent, 0, "with failWith network nothing is received");
     // Its data is kept on the phone, only its fields in mat.queue.
@@ -339,6 +343,247 @@ cases.push({
     // Escape closes it; focus back on You.
     await page.keyboard.press("Escape");
     await until(() => page.evaluate(() => !document.getElementById("bulk").classList.contains("is-open") && document.activeElement.id === "youBtn"), "closed, focus on You");
+  },
+});
+
+// ---------- fix round 1 ----------
+
+const listFile = () => file("Tickets.csv", "text/csv", Buffer.from(LIST, "utf8"));
+const keptIds = (page) => page.evaluate(() => new Promise((resolve) => {
+  const r = indexedDB.open("mat-tickets", 1);
+  r.onsuccess = () => {
+    const db = r.result;
+    if (!db.objectStoreNames.contains("pics")) return resolve([]);
+    const q = db.transaction("pics", "readonly").objectStore("pics").getAllKeys();
+    q.onsuccess = () => {
+      db.close();
+      resolve(q.result.map(String));
+    };
+    q.onerror = () => resolve([]);
+  };
+  r.onerror = () => resolve([]);
+}));
+const queued = (page) => page.evaluate(() => JSON.parse(localStorage.getItem("mat.queue") || "[]").filter((o) => o.ticket).map((o) => ({ id: o.ticket.id, data: "data" in o.ticket })));
+const drawn = (page) => until(() => page.evaluate(() => document.querySelectorAll("#rc .rc-row").length > 0 || document.querySelectorAll("#rail .pg").length > 0), "the app draws");
+
+cases.push({
+  name: "fix round 1, I2: no signal halfway through, MAT closed and opened again, then signal: every confirmed ticket arrives exactly once",
+  async run({ page }) {
+    const backend = makeBackend(TRIP, { now: NOON12 });
+    await ready(page, { backend });
+    await openBulk(page);
+    await page.setInputFiles("#bulkList", listFile());
+    // Five sure ones, six pictures (the temple PDF has two pages).
+    await page.setInputFiles("#bulkFiles", FILES().slice(0, 5));
+    await sorted(page, 5);
+    await expectText(page, "#bulkPunch", /^入鋏Add 5 now/);
+    // Two pictures land; the other four leave and no reply ever comes (a tunnel).
+    const handle = backend.handle;
+    let landed = 0;
+    const held = [];
+    backend.handle = async (body) => {
+      if (body.action === "addTicket") {
+        if (landed >= 2) {
+          held.push(body);
+          return new Promise(() => {});
+        }
+        landed += 1;
+      }
+      return handle(body);
+    };
+    await page.click("#bulkPunch");
+    await until(() => held.length === 4, "two land, four are on their way", 20000);
+    await until(async () => (await queued(page)).length === 4, "the four not landed are in mat.queue");
+    // Every one confirmed is on the phone before any reply: in mat.queue without its data, its picture in the keep.
+    const q = await queued(page);
+    assert.equal(q.some((x) => x.data), false, "no picture data in mat.queue");
+    const kept = await keptIds(page);
+    for (const x of q) assert.ok(kept.includes(x.id), "kept: " + x.id);
+    assert.equal(await page.evaluate(() => !!document.querySelector("#bulk .ba-done-h")), false, "still adding");
+    assert.equal(backend.fake.tables.Tickets.length, 2);
+    // No signal now; MAT is closed and opened again.
+    backend.handle = handle;
+    backend.failWith = "network";
+    await page.reload();
+    await page.clock.resume();
+    await drawn(page);
+    assert.deepEqual((await queued(page)).map((x) => x.id).sort(), q.map((x) => x.id).sort(), "still waiting after the reload");
+    // One request that left before the close lands late on the backend.
+    assert.equal((await backend.fake(held[0])).ok, true);
+    // Signal back.
+    backend.failWith = null;
+    await page.evaluate(() => globalThis.__matTest.store.checkRev());
+    await until(async () => backend.fake.tables.Tickets.length === 6 && (await queued(page)).length === 0, "every confirmed ticket arrives", 20000);
+    await page.evaluate(() => globalThis.__matTest.store.checkRev());
+    await page.evaluate(() => globalThis.__matTest.store.idle());
+    const rows = backend.fake.tables.Tickets;
+    assert.equal(rows.length, 6, "exactly once");
+    assert.equal(new Set(rows.map((r) => r.id)).size, 6);
+    assert.deepEqual(rows.map((r) => [r.stop, r.who, r.seat, String(r.page)]).sort(), [
+      [MEIJI, "Ajen", "1B", "1"], [MEIJI, "Mo", "1A", "1"], [MEIJI, "Trenton", "1C", "1"],
+      [SKY, "", "", "1"], [SENSO, "", "", "1"], [SENSO, "", "", "2"],
+    ].sort());
+    // Each with its picture's data.
+    for (const r of rows) assert.ok(backend.fake.tables.TicketData.some((d) => d.ticket === r.id), "data for " + r.id);
+  },
+});
+
+cases.push({
+  name: "fix round 1, I1: a stop's details filled on another phone while the pictures go up are not overwritten; it is listed",
+  async run({ page }) {
+    const backend = makeBackend(TRIP, { now: NOON12 });
+    await ready(page, { backend });
+    await openBulk(page);
+    await page.setInputFiles("#bulkList", listFile());
+    await page.setInputFiles("#bulkFiles", FILES().slice(0, 4));
+    await sorted(page, 4);
+    // The pictures are held on their way until another phone has filled Shibuya Sky's reference.
+    const handle = backend.handle;
+    let release;
+    const gate = new Promise((r) => (release = r));
+    let seen = 0;
+    backend.handle = async (body) => {
+      if (body.action === "addTicket") {
+        seen += 1;
+        await gate;
+      }
+      return handle(body);
+    };
+    await page.click("#bulkPunch");
+    await until(() => seen >= 1, "the pictures leave", 20000);
+    const other = await handle({ key: "test-key", actor: "Ajen", action: "updateStop", args: { id: SKY, patch: { tkRef: "OTHER-1" } } });
+    assert.equal(other.ok, true, other.message);
+    await page.evaluate(() => globalThis.__matTest.store.checkRev());
+    await until(() => page.evaluate((id) => globalThis.__matTest.store.state.stops.find((s) => s.id === id).tkRef === "OTHER-1", SKY), "this phone has the other phone's reference");
+    const edits = calls(backend, "updateStop").length;
+    release();
+    await added(page);
+    backend.handle = handle;
+    const st = (id) => backend.fake.tables.Stops.find((s) => s.id === id);
+    assert.equal(st(SKY).tk_ref, "OTHER-1", "never overwritten");
+    assert.equal(st(SKY).tk_name, "", "a stop changed since the sort gets none of the list's details");
+    assert.equal(st(MEIJI).tk_ref, "GD-7700", "an unchanged stop's empty field is filled");
+    assert.equal(calls(backend, "updateStop").length - edits, 1);
+    assert.ok((await page.evaluate(() => [...document.querySelectorAll("#bulk .ba-next > div")].map((d) => d.textContent))).includes("Shibuya Skydetails not filled: changed on another phone"));
+    await expectText(page, "#bulk .ba-aside.is-warn", "控Details not filled can be added from the stop’s Edit sheet.");
+    assert.equal(backend.fake.tables.Tickets.length, 4);
+  },
+});
+
+const SECRET_WORDS = ["T001", "T019", "Shibuya Sky deck", "Lantern", "Sky order", "hoshizora", "QZ48810", "AJEN", "cal.ics", "Tickets.csv"];
+for (const how of ["Forget this phone", "a refused key"]) {
+  cases.push({
+    name: "fix round 1, I3: " + how + " with a sort held and the sheet closed: nothing of it stays, its pictures' addresses revoked",
+    async run({ page }) {
+      const backend = makeBackend(TRIP, { now: NOON12 });
+      await ready(page, { backend });
+      await openBulk(page);
+      await page.setInputFiles("#bulkList", listFile());
+      await page.setInputFiles("#bulkFiles", FILES());
+      await sorted(page, 9);
+      await until(() => page.evaluate(() => { const i = document.querySelector("#bulk .ba-card .ba-pv img"); return !!i && i.naturalWidth > 0; }), "the card's picture shows");
+      const srcs = await page.evaluate(() => [...document.querySelectorAll("#bulk img")].map((i) => i.src).filter((u) => u.startsWith("blob:")));
+      assert.ok(srcs.length > 0);
+      // Closed: what it sorted is kept behind the close.
+      await page.keyboard.press("Escape");
+      await until(() => page.evaluate(() => !document.getElementById("bulk").classList.contains("is-open")), "closed");
+      assert.ok((await page.evaluate(() => document.getElementById("bulk").textContent)).includes("T019"));
+      await page.evaluate(() => {
+        window.__revoked = [];
+        const real = URL.revokeObjectURL;
+        URL.revokeObjectURL = (u) => {
+          window.__revoked.push(u);
+          return real.call(URL, u);
+        };
+      });
+      if (how === "a refused key") {
+        backend.failWith = "bad_key";
+        await page.evaluate(() => globalThis.__matTest.store.checkRev());
+      } else {
+        await page.dispatchEvent("#youBtn", "click");
+        await until(() => page.evaluate(() => document.getElementById("you").classList.contains("is-open")), "settings open");
+        await page.dispatchEvent("#setForget", "click");
+        await page.dispatchEvent("#setForget", "click");
+      }
+      await until(() => visible(page, "#gate"), "the no-key screen shows", 10000);
+      await until(() => page.evaluate(() => document.querySelector("#bulk .ba-body").childNodes.length === 0), "the sheet's body is emptied");
+      const t = await page.evaluate(() => document.getElementById("bulk").textContent);
+      for (const w of SECRET_WORDS) assert.equal(t.includes(w), false, w + " is still in the sheet");
+      assert.equal(await page.evaluate(() => document.querySelectorAll("#bulk img").length), 0);
+      assert.equal(await page.evaluate(() => document.getElementById("bulkFiles").files.length + document.getElementById("bulkList").files.length), 0);
+      assert.equal(await page.evaluate(() => document.getElementById("bulk").classList.contains("is-open")), false);
+      const revoked = await page.evaluate(() => window.__revoked);
+      for (const u of srcs) assert.ok(revoked.includes(u), "revoked: " + u);
+    },
+  });
+}
+
+// What the worker sends each open page when a new version takes over (as tests/e2e/update.e2e.cjs).
+const announce = (page) => page.evaluate(() => new Promise((resolve) => {
+  const ch = new MessageChannel();
+  ch.port1.onmessage = () => resolve(true);
+  navigator.serviceWorker.dispatchEvent(new MessageEvent("message", { data: { type: "mat-new-version" }, ports: [ch.port2] }));
+  setTimeout(() => resolve(false), 500);
+}));
+const markPage = (page) => page.evaluate(() => { window.__notReloaded = true; });
+const reloaded = (page) => page.evaluate(() => window.__notReloaded !== true).catch(() => true);
+// Pictures are held where the phone makes them (canvas.toBlob) until let go.
+const holdPictures = (page) => page.evaluate(() => {
+  const real = HTMLCanvasElement.prototype.toBlob;
+  window.__held = [];
+  HTMLCanvasElement.prototype.toBlob = function (...a) {
+    window.__held.push(() => real.apply(this, a));
+  };
+  window.__letGo = () => {
+    HTMLCanvasElement.prototype.toBlob = real;
+    for (const f of window.__held.splice(0)) f();
+  };
+});
+
+cases.push({
+  name: "fix round 1, I4: with the sheet closed, a new release waits while files are read; it reloads once they are",
+  async run({ page }) {
+    const backend = makeBackend(TRIP, { now: NOON12 });
+    await ready(page, { backend });
+    await openBulk(page);
+    await holdPictures(page);
+    await page.setInputFiles("#bulkFiles", [file("T008 Temple e-ticket.pdf", "application/pdf", pdfBytes(2))]);
+    await until(() => page.evaluate(() => window.__held.length > 0), "reading is under way", 20000);
+    await page.keyboard.press("Escape");
+    await until(() => page.evaluate(() => !document.getElementById("phone").classList.contains("bulk-open")), "closed");
+    await markPage(page);
+    assert.equal(await announce(page), true, "the page answers");
+    await page.clock.fastForward(7000);
+    assert.equal(await reloaded(page), false, "not while files are read");
+    await page.evaluate(() => window.__letGo());
+    await until(() => reloaded(page), "then it reloads", 15000);
+    await drawn(page);
+  },
+});
+
+cases.push({
+  name: "fix round 1, I4: with the sheet closed, a new release waits while adding; it reloads once the add is done, every picture in",
+  async run({ page }) {
+    const backend = makeBackend(TRIP, { now: NOON12 });
+    await ready(page, { backend });
+    await openBulk(page);
+    await page.setInputFiles("#bulkList", listFile());
+    await page.setInputFiles("#bulkFiles", [file("T008 Temple e-ticket.pdf", "application/pdf", pdfBytes(2))]);
+    await sorted(page, 1);
+    await holdPictures(page);
+    await page.click("#bulkPunch");
+    await until(() => page.evaluate(() => window.__held.length > 0), "the pages are being made into pictures", 20000);
+    await page.keyboard.press("Escape");
+    await until(() => page.evaluate(() => !document.getElementById("phone").classList.contains("bulk-open")), "closed");
+    assert.equal(await page.evaluate(() => globalThis.__matTest.store.busy()), false, "nothing is sending yet");
+    await markPage(page);
+    assert.equal(await announce(page), true, "the page answers");
+    await page.clock.fastForward(7000);
+    assert.equal(await reloaded(page), false, "not while adding");
+    await page.evaluate(() => window.__letGo());
+    await until(() => reloaded(page), "then it reloads", 20000);
+    await drawn(page);
+    await until(() => backend.fake.tables.Tickets.length === 2, "both pages went in", 15000);
   },
 });
 

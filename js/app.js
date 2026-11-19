@@ -732,8 +732,9 @@ function start() {
     if (store.state.status === "ready") store.loadHistory();
   });
   // A new release reloads the page only when nothing would be lost (js/update.js).
-  // Nothing unsent or still sending, and no notice waiting to be read (it would be wiped).
-  nothingUnsent = () => store.outbox().unsent === 0 && !store.busy() && !store.state.notice;
+  // Nothing unsent or still sending, no notice waiting to be read (it would be
+  // wiped), and Add tickets not reading or adding, open or closed (fix round 1, I4).
+  nothingUnsent = () => store.outbox().unsent === 0 && !store.busy() && !store.state.notice && !bulk.isBusy();
   if (document.visibilityState !== "hidden") startChecking();
 }
 
