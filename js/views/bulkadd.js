@@ -1428,6 +1428,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     reset();
     // What the list brought (its lines, the files' names and handles): gone, and the notice with it.
     listGen += 1;
+    skip = new Set(); // the left-out ties in memory too: storage was cleared by Forget, and the next "leave out" must not write the old ones back
     listData = null;
     listErr = "";
     plan = null;

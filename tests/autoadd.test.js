@@ -31,7 +31,7 @@ const FILES = [
   F(5, "T005 before.png", "eeeeeeeeeee5"),
   F(6, "receipt.png", "fffffffffff6"),
 ];
-const tk = (id, stop, from, o = {}) => ({ id, stop, who: "", page: 1, mime: "image/png", w: 10, h: 10, size: 1, from, ...o });
+const tk = (id, stop, from, o = {}) => ({ id, stop, who: "", by: "A", page: 1, mime: "image/png", w: 10, h: 10, size: 1, from, ...o });
 const state = (tickets = []) => ({ days: DAYS, stops: STOPS, people: [{ name: "A" }, { name: "B" }, { name: "C" }], tickets });
 
 test("tieOf: the id's letters and digits, a colon, the print", () => {
@@ -133,4 +133,18 @@ test("a file from the desk that takes too long: the phone's request gives up at 
   assert.equal(seen.length, 1);
   assert.equal(seen[0].url.includes("key-invented"), false, "never in the address");
   assert.equal(JSON.parse(seen[0].body).key, "key-invented-0123456789");
+});
+
+test("a tie on a picture the owner did not add is not trusted (fix round 1, I1): the line is still new, nothing is moved onto that stop", () => {
+  const forged = tk("f1", "s-tr", "T001:000000000000", { by: "B", who: "B" });
+  const p = listPlan({ rows: ROWS, files: FILES, state: state([forged]) });
+  assert.deepEqual(p.changed, []);
+  assert.deepEqual(p.cancelled, []);
+  assert.equal(p.fresh.some((f) => f.tid === "T001"), true, "T001 is new, as if the tie were not there");
+  // The same picture by the owner (the first person, A) is a real tie.
+  const real = listPlan({ rows: ROWS, files: FILES, state: state([{ ...forged, by: "A" }]) });
+  assert.equal(real.changed.length, 1);
+  assert.equal(real.changed[0].stop, "s-tr");
+  // A tie for a line that is not on the list, from someone else: no "gone" card either.
+  assert.deepEqual(listPlan({ rows: ROWS, files: FILES, state: state([tk("g1", "s-mu", "T099:111111111111", { by: "C" })]) }).cancelled, []);
 });

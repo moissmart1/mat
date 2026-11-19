@@ -69,6 +69,7 @@ var MSG_ = {
   // Tickets from the planner's list (auto-add).
   listOwnerOnly: "Only {owner} can bring in tickets from the list.",
   noDesk: "The list’s ticket files aren’t set up yet. Ask Mo to set up the ticket shelf.",
+  listTooSoon: "The list was looked at a moment ago. Try again in half a minute.",
   deskUnreachable: "The list’s ticket files can’t be reached right now. Try again later.",
   noListTab: "The planner has no Tickets tab.",
   listFileTooBig: "That file is too big to fetch: add it by hand.",
@@ -253,6 +254,8 @@ function dispatch_(body, holder) {
   // Only the connector's own path is "through Claude" (fix round 1).
   var via = holder.kind === "claude" ? "claude" : "app";
   var ctx = { actor: actor, via: via, names: names, holder: holder.kind };
+  // The trip's first person on their own key: only they may tie a picture to the planner's list (addTicket).
+  if (action === "addTicket") ctx.owner = ownerOnly_(holder);
   // Reads the planner first, then takes the lock itself.
   if (action === "syncPayments") return syncPayments_(args, ctx);
   if (action === "syncTodos") return syncTodos_(args, ctx);
@@ -2046,6 +2049,8 @@ function addTicket_(args, ctx) {
   var v = validateTicket(given, ctx.names);
   if (!v.ok) return err_("bad_input", v.message);
   var t = v.value;
+  // The tie (from) is the owner's phone's own mark: another traveller's is refused, nothing stored.
+  if (t.from !== "" && !ctx.owner) return err_("bad_input", MSG_.listOwnerOnly.replace("{owner}", peopleNames_()[0] || "the trip’s organiser"));
   var stopRow = findPlanRow_(planKind_("stop"), t.stop);
   if (!stopRow || cellSet_(stopRow.deleted_at)) return err_("not_found", MSG_.noStop);
   var live = countedTickets_(all, removedStops_());
@@ -2123,6 +2128,8 @@ function listTickets_(args) {
   if (since >= 0 && (since < LIST_FORCE_GAP_MS_ || (args.force !== true && since < LIST_GAP_MS_))) files = cachedDeskFiles_();
   var stored = files !== null;
   var at = last;
+  // Never twice in 30 seconds, even with no list in the cache (too big, or dropped): the phone is told to wait.
+  if (files === null && since >= 0 && since < LIST_FORCE_GAP_MS_) return err_("bad_input", MSG_.listTooSoon);
   if (files === null) {
     var answer = deskPost_({ action: "tickets" });
     if (answer && answer.ok === false && answer.why === "no folder") return err_("no_desk", MSG_.noDesk);

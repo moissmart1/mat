@@ -40,7 +40,10 @@ export function firstId(name, rows) {
 
 export function listPlan({ rows = [], files = [], state = {}, skip = new Set() } = {}) {
   const days = new Set((state.days || []).map((d) => d && d.date).filter(Boolean));
-  const live = (state.tickets || []).filter((t) => t && !t.gone && typeof t.from === "string" && t.from);
+  // A tie counts only on a picture the owner (the trip's first person) added: the backend refuses
+  // anyone else's, and a stored one from before that is not trusted. The load gives each picture's `by`.
+  const owner = state.people && state.people[0] && state.people[0].name;
+  const live = (state.tickets || []).filter((t) => t && !t.gone && typeof t.from === "string" && t.from && (!owner || t.by === owner));
   const byTid = new Map();
   for (const t of live) {
     const k = tidOfTie(t.from);

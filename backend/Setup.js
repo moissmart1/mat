@@ -371,7 +371,7 @@ function checkPlannerTodos_() {
 // ---- the ticket shelf (auto-add): the key the newsletter desk answers to ----
 // The desk (another script of the owner's, which can read Drive) hands the
 // ticket files to this backend only with this key. Run once from the script
-// editor: it makes a random key (64 hex characters, 32 bytes), keeps it only
+// editor: it makes a random key (64 hex characters: two random UUIDs joined, about 244 random bits), keeps it only
 // in this script's Script Properties (TICKET_DESK_KEY) and logs only its
 // SHA-256, to paste into the desk's Script Property MAT_KEY_HASH. Running it
 // again logs the same hash and changes nothing. To replace the key, delete

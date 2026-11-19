@@ -257,3 +257,40 @@ test("pure: listDay and listTime read the planner's dates and times", () => {
     assert.equal(P.listTime(v), want, String(v));
   }
 });
+
+test("addTicket: a tie (from) is the owner's own; a traveller who is not the owner, or the shared key, sending one is refused and nothing is stored (fix round 1, I1)", async () => {
+  const { fake, as } = trip();
+  for (const who of ["Ajen", "shared"]) {
+    const r = await as(who, "addTicket", { ticket: pic({ from: "T001:0123456789ab", who: "Ajen" }) });
+    assert.equal(r.ok, false, who);
+    assert.equal(r.error, "bad_input", who);
+    assert.equal(r.message, "Only Mo can bring in tickets from the list.", who);
+  }
+  assert.equal(fake.tables.Tickets.length, 0, "no picture row");
+  assert.equal(fake.tables.TicketData.length, 0, "no data rows");
+  assert.equal((await as("Ajen", "load")).data.tickets.length, 0);
+  // Their own pictures, with no tie, work as before; the owner's tie is kept.
+  assert.equal((await as("Ajen", "addTicket", { ticket: pic({ who: "Ajen" }) })).ok, true);
+  const mine = await as("Mo", "addTicket", { ticket: pic({ from: "T001:0123456789ab" }) });
+  assert.equal(mine.ok, true, mine.message);
+  assert.equal(mine.data.ticket.from, "T001:0123456789ab");
+  assert.equal(mine.data.ticket.by, "Mo");
+});
+
+test("listTickets: with no list in the cache, a look within 30 seconds of the last is still told to wait, and the desk is not asked (fix round 1, M3)", async () => {
+  const { fake, as } = trip();
+  nowMs = Date.parse("2026-12-01T00:00:00.000Z");
+  assert.equal((await as("Mo", "listTickets")).ok, true);
+  assert.equal(fake.desk.calls.length, 1);
+  for (const k of Object.keys(fake.cache)) delete fake.cache[k];
+  nowMs += 10 * 1000;
+  for (const args of [{}, { force: true }]) {
+    const r = await as("Mo", "listTickets", args);
+    assert.equal(r.ok, false);
+    assert.equal(r.message, "The list was looked at a moment ago. Try again in half a minute.");
+  }
+  assert.equal(fake.desk.calls.length, 1, "the desk was not asked again");
+  nowMs += 30 * 1000;
+  assert.equal((await as("Mo", "listTickets")).ok, true);
+  assert.equal(fake.desk.calls.length, 2);
+});
