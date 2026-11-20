@@ -37,6 +37,15 @@ export function dayHead(day, days) {
   return { jp: m + "月" + d + "日(" + WK[w] + ")", en: WD[w] + " " + MON[m - 1] + " " + d, city: (row && row.city) || "" };
 }
 
+const WD_LONG = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+// A date's weekday: { jp: "水", en: "Wed", long: "Wednesday" }.
+export function weekdayOf(day) {
+  const [y, m, d] = parts(day);
+  const w = weekday(y, m, d);
+  return { jp: WK[w], en: WD[w], long: WD_LONG[w] };
+}
+
 // The register's day: "Sat 12", or "Before" for before the trip.
 export function dayShort(day) {
   if (day === "pre") return "Before";
@@ -110,6 +119,16 @@ export function changeText(c) {
       case "edit": return "Changed " + item.title + ".";
       case "delete": return "Removed " + item.title + ".";
       case "restore": return "Put back " + item.title + ".";
+      default: return "Undone.";
+    }
+  }
+  // A stay: its booking edited (Edit stay), or one added by bulk add.
+  if (c.kind === "stay") {
+    switch (c.action) {
+      case "add": return "Added " + item.name + ".";
+      case "edit": return "Changed " + item.name + ".";
+      case "delete": return "Removed " + item.name + ".";
+      case "restore": return "Put back " + item.name + ".";
       default: return "Undone.";
     }
   }

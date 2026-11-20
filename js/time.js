@@ -8,15 +8,16 @@ export function dateIn(tz, nowMs) {
   return get("year") + "-" + get("month") + "-" + get("day");
 }
 
-export function tripDay(trip, nowMs) {
-  const today = dateIn(trip.tz, nowMs);
+// `today`: the Days clock's date (plan.js tripNow), when the caller has it;
+// else the trip zone's date at nowMs.
+export function tripDay(trip, nowMs, today = dateIn(trip.tz, nowMs)) {
   if (today < trip.start) return "pre";
   if (today > trip.end) return "post";
   return today;
 }
 
-export function defaultRingDay(trip, nowMs) {
-  const day = tripDay(trip, nowMs);
+export function defaultRingDay(trip, nowMs, today) {
+  const day = tripDay(trip, nowMs, today);
   return day === "post" ? trip.end : day;
 }
 

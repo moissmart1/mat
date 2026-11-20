@@ -11,6 +11,9 @@
 // plannerId: PLANNER_ID in Script Properties; paymentProblems: { at, list, more }, kept as PAYMENT_PROBLEMS; todoProblems: the same, kept as TODO_PROBLEMS; missingColumns: ["Tab.column", ...]
 // an older Sheet lacks until migrate (ensureColumns_) adds them; missingTabs:
 // ["Tab", ...] an older Sheet lacks altogether until migrate adds them;
+// trip: { key: value } patches to the Trip tab (start: "2026-12-09"); daysBefore:
+// Days rows in the Sheet's column names put above the seeded days, in order
+// (the 12-day trip of tests/fixtures/dec9.json);
 // plannerTabs: { "Book Now": rows, "Change Log": rows } the planner's other
 // tabs, as Sheets hands them back from A1 (a tab left out is not there).
 // stops and stays are arrays in API shape (deleted: true marks
@@ -42,6 +45,10 @@
 // formulas and spilled ({ tab: { cell: ... } }: cells the planner computes,
 // by a formula in the cell or one spilled into it) and formulaFails (the
 // computed check's read fails)),
+// fake.desk ({ answer(payload) -> object | null | throws, calls }: the ticket
+// shelf, the newsletter desk as deskPost_ reaches it; calls lists each payload
+// it was sent, key included; set: TICKET_DESK_URL and TICKET_DESK_KEY present,
+// from seed.desk === true), fake.cache (the script cache: { key: value }),
 // fake.tableReads
 // (readTable_ calls per tab), fake.geocoder ({ answer(query, region) }: the
 // stand-in for Apps Script's geocoder; default finds nothing).
@@ -134,6 +141,13 @@ function createFakeBackend(seed, { clock, lockFails, keepsApostrophe = false } =
   let lockWaited = 0; // ms the in-memory lock has made callers wait
   // The stand-in geocoder (Env.js geocode_): answer(query, region) -> { lat, lng } | null, or throws.
   const geocoder = { answer: () => null };
+  // The ticket shelf (Env.js deskPost_): answer(payload) stands in for the desk's web app.
+  const desk = { answer: () => null, calls: [] };
+  if (seed && seed.desk) {
+    props.TICKET_DESK_URL = "https://script.google.com/macros/s/desk-invented/exec";
+    props.TICKET_DESK_KEY = "desk-key-invented-" + "5".repeat(46);
+  }
+  const scriptCache = {};
   // The owner's run log (Logger.log) and the executions log (console.error).
   const logged = [];
   const consoleLines = [];
@@ -277,6 +291,23 @@ function createFakeBackend(seed, { clock, lockFails, keepsApostrophe = false } =
       }
     },
     geocode_: (q, region) => geocoder.answer(q, region),
+    // Same as Env.js: null when the desk is not set up or its answer is not an object; never throws.
+    deskPost_(payload) {
+      if (!props.TICKET_DESK_URL || !props.TICKET_DESK_KEY) return null;
+      const body = { ...copy(payload), k: props.TICKET_DESK_KEY };
+      desk.calls.push(copy(body));
+      try {
+        const got = desk.answer(copy(body));
+        return got && typeof got === "object" ? copy(got) : null;
+      } catch {
+        return null;
+      }
+    },
+    deskReady_: () => !!props.TICKET_DESK_URL && !!props.TICKET_DESK_KEY,
+    cacheGet_: (key) => (Object.prototype.hasOwnProperty.call(scriptCache, key) ? scriptCache[key] : null),
+    cachePut_(key, value) {
+      scriptCache[key] = String(value);
+    },
     clockMs_: () => Date.now() + lockWaited,
     getRate_: () => rate.rate,
     getRateInfo_: () => ({ rate: rate.rate, source: rate.source }),
@@ -465,6 +496,8 @@ function createFakeBackend(seed, { clock, lockFails, keepsApostrophe = false } =
   };
   fake.CHECK_KEY = CHECK_KEY;
   fake.planner = planner;
+  fake.desk = desk;
+  fake.cache = scriptCache;
   fake.tableReads = tableReads;
   fake.sheetCalls = sheetCalls;
   fake.propReads = propReads;
@@ -480,7 +513,10 @@ function createFakeBackend(seed, { clock, lockFails, keepsApostrophe = false } =
 // but every row goes through the same converters and sheet helpers.
 function seedWorld(P, prim, tables, props, seed, now) {
   const rows = P.setupSeedRows();
+  // daysBefore: Days rows (the Sheet's column names) above the seeded Dec 10 row, in order.
+  for (const o of seed.daysBefore || []) prim.appendObj_("Days", o);
   for (const tab of ["Trip", "People", "Days"]) for (const o of rows[tab]) prim.appendObj_(tab, o);
+  for (const [key, value] of Object.entries(seed.trip || {})) prim.updateWhere_("Trip", "key", key, { value });
   for (const [name, patch] of Object.entries(seed.people || {})) prim.updateWhere_("People", "name", name, patch);
   for (const [date, patch] of Object.entries(seed.days || {})) prim.updateWhere_("Days", "date", date, patch);
 
