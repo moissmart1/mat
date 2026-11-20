@@ -170,7 +170,19 @@ const ADDRESS_KEY_REFUSED = "That link didn’t work. This phone stays on the li
 // phone's keep, to send one that was queued (its data is never in mat.queue).
 // afterLoad(): called after every load that answered (js/tickets.js
 // fetchMissing hangs here).
-export function createStore({ api, storage, now = () => Date.now(), wait = defaultWait, clear = (queue) => clearTrip(storage, { queue }), ticketData = async () => null, afterLoad = null }) {
+export function createStore({ api, storage, durableStorage = true, now = () => Date.now(), wait = defaultWait, clear = (queue) => clearTrip(storage, { queue }), ticketData = async () => null, afterLoad = null, isHidden = () => false }) {
+  // How many times the page went to the background. A request that failed
+  // while the page was hidden, or that was running when it went hidden, was
+  // most likely cut off by the phone, not by a lost signal: it is not news
+  // (issue 14). The app asks again at once when the page is back on screen.
+  let hiddenCount = 0;
+  const pageHidden = () => { hiddenCount++; };
+  // The first check after the page is back on screen is tried twice before a
+  // network failure counts: Safari often fails the first request on a
+  // connection that went stale in the background (issue 14).
+  let retryFirst = false;
+  const pageShown = () => { retryFirst = true; };
+  const RETURN_RETRY_MS = 1500;
   // Set once the trip was taken off this phone: nothing more is written to
   // storage or sent with the refused key until boot() starts again.
   let wiped = false;
@@ -187,11 +199,12 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
     }
   };
   const setItem = (k, v) => {
-    if (wiped) return;
+    if (wiped) return false;
     try {
       storage.setItem(k, v);
+      return true;
     } catch {
-      // private mode or full: the app keeps working without it
+      return false;
     }
   };
   const getJson = (k) => {
@@ -210,8 +223,8 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
     loadedAt: null, seenAt: null, lastChange: null, notice: null, setAside: [], keyRefused: false,
     // personal: this phone opened its own person's link (load said so); me is then theirs.
     // cleared: the trip was taken off this phone after its key was refused ({ kept: own unsent lines kept }).
-    personal: false, cleared: null,
-    history: { entries: [], more: false, loading: false, error: null },
+    personal: false, cleared: null, queueStorageFailed: false,
+    history: { entries: [], more: false, loading: false, error: null, firstPageError: null },
   };
 
   const subs = new Set();
@@ -270,7 +283,19 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
       });
     }
     state.setAside = aside;
+    // Undo keeps a separate operation while it reconciles a possibly landed add.
+    state.settlementProvisional = resolving.some((op) =>
+      (op.kind === "expense" || op.kind === "payment") && (op.lost || op.delayed)
+    );
     for (const op of ops) {
+      if (op.kind === "expense" || op.kind === "payment") {
+        // Once delayed, a retry remains provisional until the write is acknowledged.
+        // op.delayed is deliberately sticky (derive sets it and never clears it; the
+        // op is dropped once acknowledged) and is not saved to mat.queue: ops restored
+        // from it come back queued, which sets it again (#21 review M3).
+        if (op.status === "queued" || op.status === "failed" || op.lost || !state.online) op.delayed = true;
+        if (op.delayed) state.settlementProvisional = true;
+      }
       const list = lists[op.kind];
       const i = list.findIndex((x) => keyOf(op.kind, x) === op.id);
       const next = op.view(i >= 0 ? bare(list[i]) : null);
@@ -321,7 +346,10 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
   // The request may have reached the backend.
   const mayHaveLanded = (op) => op.inFlight || op.lost || op.logId !== null;
 
+  let memoryQueue = null; // Last queue snapshot when the device could not keep it durably.
+
   function saveQueue() {
+    if (wiped) return;
     const live = ops.filter(isLiveAdd).map((op) =>
       op.kind === "payment"
         ? { payment: op.args.payment, stampedAt: op.after.stampedAt, stampedBy: op.after.stampedBy, sent: op.inFlight || op.lost }
@@ -339,14 +367,18 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
           },
     );
     const undos = resolving.map((op) => ({ undo: true, kind: op.kind, args: op.kind === "ticket" ? { ticket: ticketMeta(op.args.ticket) } : op.args, logId: op.logId, actor: op.actor || null }));
-    setItem("mat.queue", JSON.stringify(live.concat(undos)));
+    const queue = live.concat(undos);
+    const saved = setItem("mat.queue", JSON.stringify(queue));
+    memoryQueue = queue.length && (!saved || !durableStorage) ? queue : null;
+    state.queueStorageFailed = memoryQueue !== null;
   }
 
   // ---- talking to the backend ----
 
-  async function call(action, args, opts) {
+  async function call(action, args, opts, { quiet = false } = {}) {
     if (wiped) throw refusedError();
     const wipesAt = wipes;
+    const hiddenAt = hiddenCount;
     for (let attempt = 0; ; attempt++) {
       try {
         const r = opts ? await api(action, args, opts) : await api(action, args);
@@ -364,7 +396,7 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
           await wait(BUSY_DELAY_MS);
           continue;
         }
-        if (code === "network") state.online = false;
+        if (code === "network" && !quiet && !isHidden() && hiddenCount === hiddenAt) state.online = false;
         if (code === "bad_key") {
           state.status = "nokey";
           state.keyRefused = true; // a key was tried and the trip said no
@@ -400,7 +432,7 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
   // for when they open their new link. The no-key screen then shows.
   function takeTripOff({ keep = true } = {}) {
     if (wiped && keep) return;
-    const queue = keep ? getJson("mat.queue") : null;
+    const queue = keep ? memoryQueue || getJson("mat.queue") : null;
     // With nobody known (an earlier refusal already took mat.me off), the
     // queue is already only this person's: kept as it is (fix round 1, C2).
     // Never a ticket picture: every one comes off the phone, unsent ones too.
@@ -411,11 +443,13 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
     const had = base !== null || getItem("mat.cache") !== null || (Array.isArray(queue) && queue.length > 0);
     wiped = true;
     wipes++;
+    const kept = mine.length ? JSON.stringify(mine) : null;
     try {
-      clear(mine.length ? JSON.stringify(mine) : null);
+      clear(kept);
     } catch {
       // storage that cannot be cleared: memory is cleared all the same
     }
+    memoryQueue = kept && (!durableStorage || getItem("mat.queue") !== kept) ? mine : null;
     base = null;
     ops = [];
     resolving = [];
@@ -429,8 +463,10 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
       rev: null, me: null, personal: false, sheetUrl: "", plannerLinked: false, todosPulledAt: "", paymentsPulledAt: "",
       paymentProblems: { at: "", list: [], more: 0 }, todoProblems: { at: "", list: [], more: 0 },
       loadedAt: null, lastChange: null, notice: null, setAside: [],
-      history: { entries: [], more: false, loading: false, error: null },
+      history: { entries: [], more: false, loading: false, error: null, firstPageError: null },
       cleared: had ? { kept: mine.length } : null,
+      queueStorageFailed: memoryQueue !== null,
+      settlementProvisional: false,
     });
     historyLoaded = false;
     emit();
@@ -561,9 +597,23 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
   }
 
   async function checkRev() {
+    // Storage can recover even while the backend is still unreachable.
+    if (state.queueStorageFailed && durableStorage && state.status === "ready") saveQueue();
     let r;
+    const retry = retryFirst;
+    retryFirst = false;
     try {
-      r = await call("rev", {});
+      if (retry) {
+        try {
+          r = await call("rev", {}, undefined, { quiet: true });
+        } catch (err) {
+          if (!(err && err.code === "network")) throw err;
+          await wait(RETURN_RETRY_MS);
+          r = await call("rev", {});
+        }
+      } else {
+        r = await call("rev", {});
+      }
     } catch {
       changed();
       return;
@@ -586,7 +636,7 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
   }
 
   function restoreQueue() {
-    const queue = getJson("mat.queue");
+    const queue = memoryQueue || getJson("mat.queue");
     if (!Array.isArray(queue)) return;
     for (const q of queue) {
       if (!q || typeof q !== "object") continue;
@@ -1201,7 +1251,10 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
       try {
         r = await call("undo", { logId: op.logId });
       } catch (err) {
-        if (transient(err)) return "offline";
+        if (transient(err)) {
+          op.uop.delayed = true;
+          return "offline";
+        }
         stopResolving(op);
         if (refusedAsStale(err)) {
           // Already undone (an earlier undo whose reply was lost) is fine;
@@ -1623,7 +1676,10 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
         changed();
         return got;
       }
-      state.history = { entries: older ? h.entries.concat(r.data.entries) : r.data.entries, more: !!r.data.more, loading: false, error: null };
+      state.history = {
+        entries: older ? h.entries.concat(r.data.entries) : r.data.entries, more: !!r.data.more,
+        loading: false, error: null, firstPageError: older ? h.firstPageError : null,
+      };
       historyLoaded = true;
     } catch (err) {
       got = { entries: [], more: false, error: codeOf(err) };
@@ -1631,7 +1687,7 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
         changed();
         return got;
       }
-      state.history = { ...state.history, loading: false, error: codeOf(err) };
+      state.history = { ...state.history, loading: false, error: got.error, firstPageError: older ? h.firstPageError : got.error };
     }
     changed();
     return got;
@@ -1750,7 +1806,7 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
       return () => subs.delete(fn);
     },
     boot, refresh, checkRev, flush, idle,
-    setMe, setPerson, markSeen, forgot, unsentCount, notify, clearNotice, claudeToken, syncPayments, autoPayments,
+    setMe, setPerson, markSeen, pageHidden, pageShown, forgot, unsentCount, notify, clearNotice, claudeToken, syncPayments, autoPayments,
     syncTodos, tickTodo, claimTodo,
     pressStamp,
     addTicket, ticketOutcome, fetchTicket, listTickets, listTicketFile,

@@ -307,6 +307,7 @@ cases.push(
       assert.deepEqual((await layout(page)).keys, ["before", "ring", "youBtn"], "Before, Ring up and You");
       await page.click("#beforeBtn");
       await until(() => visible(page, "#todos"), "the list shows");
+      await until(async () => (await layout(page)).moneyShown, "Money has finished fading in beside Before");
       const l = await layout(page);
       const before = await rect(page, "#vBefore");
       assert.ok(Math.abs(before.left - l.days.left) < 1 && Math.abs(before.width - l.days.width) < 1, "Before stands where the Days pane stands");

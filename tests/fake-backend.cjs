@@ -170,12 +170,13 @@ function createFakeBackend(seed, { clock, lockFails, keepsApostrophe = false } =
       tableReads[tab] = (tableReads[tab] || 0) + 1;
       return tables[tab].map((r) => readRow(tab, r));
     },
-    appendObj_(tab, obj) {
+    appendObj_(tab, obj, readBack) {
       const h = headers(tab);
       const cells = P.objToRow(h, obj);
       const stored = {};
       h.forEach((col, i) => { stored[col] = cells[i]; });
       tables[tab].push(stored);
+      if (readBack) return readRow(tab, stored);
     },
     updateWhere_(tab, column, value, patch) {
       if (value === "" || value === null || value === undefined) return null;

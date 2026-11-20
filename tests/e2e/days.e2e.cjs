@@ -119,14 +119,56 @@ module.exports = [
     },
   },
   {
+    name: "a mouse click on either exposed ticket centres it, including the first and last days",
+    viewport: { width: 1440, height: 900 },
+    mobile: false,
+    async run({ page }) {
+      await ready(page);
+      const centred = (date) => until(async () => (await inView(page)) === date, date + " is centred");
+      const clickEdge = async (date, side, day) => {
+        const point = await page.evaluate(({ selector, side }) => {
+          const paper = document.querySelector(selector + " .tk");
+          const rail = document.getElementById("rail").getBoundingClientRect();
+          const pane = document.getElementById("vDays").getBoundingClientRect();
+          const x = side === "left" ? rail.left + 4 : rail.right - 4;
+          // Click inside the exposed paper, clear of its moving, tilted tip.
+          const strip = [];
+          for (let y = Math.max(rail.top, pane.top) + 8; y < Math.min(rail.bottom, pane.bottom); y += 4) {
+            if (paper.contains(document.elementFromPoint(x, y))) strip.push(y);
+          }
+          if (strip.length) return { x, y: strip[Math.floor(strip.length / 2)] };
+        }, { selector: tk(date), side });
+        assert.ok(point, "a strip of " + date + " is visible on the " + side);
+        await page.mouse.click(point.x, point.y);
+        await centred(date);
+        await expectText(page, "#dayCount span", "Day " + day + " of 11");
+        assert.equal(await page.getAttribute("#pager [aria-current=date]", "data-i"), String(day - 1));
+      };
+      await centred("2026-12-12");
+      await clickEdge("2026-12-11", "left", 2);
+      await clickEdge("2026-12-10", "left", 1);
+      await clickEdge("2026-12-11", "right", 2);
+      await page.click("#pager .sq:nth-child(10)");
+      await centred("2026-12-19");
+      await clickEdge("2026-12-20", "right", 11);
+      await clickEdge("2026-12-19", "left", 10);
+      await page.click(tk("2026-12-19") + " .tk-add");
+      await until(() => page.locator("#stop").evaluate((s) => s.classList.contains("is-open")), "the selected ticket opens its stop editor");
+    },
+  },
+  {
     name: "swiping moves one day",
     async run({ page }) {
       await ready(page);
       await until(async () => (await inView(page)) === "2026-12-12", "today is in view");
-      await page.evaluate(() => {
-        const rail = document.getElementById("rail");
-        rail.scrollBy({ left: rail.querySelector(".pg").offsetWidth, behavior: "instant" });
-      });
+      const rail = await page.locator("#rail").boundingBox();
+      const y = Math.max(rail.y, 0) + 40;
+      const touch = await page.context().newCDPSession(page);
+      for (let n = 8; n >= 2; n--) {
+        const x = rail.x + rail.width * n / 10;
+        await touch.send("Input.dispatchTouchEvent", { type: n === 8 ? "touchStart" : "touchMove", touchPoints: [{ x, y }] });
+      }
+      await touch.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
       await expectText(page, "#dayCount", /^Day 4 of 11/);
       await until(async () => (await inView(page)) === "2026-12-13", "the Dec 13 ticket is in view");
     },
