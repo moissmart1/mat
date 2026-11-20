@@ -174,6 +174,7 @@ function fakeStore({ online = true, tickets = [], stops = [], log = [], cut = ()
   return store;
 }
 const AT = "2026-12-12T00:13:00.000Z";
+const noWait = async () => {};
 // A batch's trip: its three new pictures (one on the new stop), its two old ones off, and older History.
 const world = (o = {}) => fakeStore({
   tickets: [{ id: id(1), stop: STOP.id }, { id: id(2), stop: "otherstop001" }, { id: id(3), stop: "otherstop001" }, { id: id(8), stop: "otherstop001", gone: true }, { id: id(9), stop: "otherstop001", gone: true }],
@@ -190,7 +191,7 @@ test("the runner: the old pictures looked up first, then one step at a time, in 
   const store = world();
   const storage = memory();
   let t = Date.parse("2026-12-12T00:20:00.000Z");
-  const tb = createTakeBack(store, { storage, now: () => t });
+  const tb = createTakeBack(store, { storage, now: () => t, wait: noWait });
   assert.equal(tb.record(fields({ stays: [] })).at, AT);
   assert.equal(tb.record({ at: "2026-12-12T00:14:00.000Z", n: 0, off: 0 }), null, "nothing added or taken off: no row");
   assert.equal(loadBatches(storage).length, 1);
@@ -209,7 +210,7 @@ test("the runner: the old pictures looked up first, then one step at a time, in 
 
 test("the runner counts tickets, not pages: a 3-page PDF is one ticket", async () => {
   const store = world({ tickets: [{ id: id(1), stop: "s" }, { id: id(2), stop: "s" }, { id: id(3), stop: "s" }, { id: id(4), stop: "s" }], log: [] });
-  const tb = createTakeBack(store, { storage: memory() });
+  const tb = createTakeBack(store, { storage: memory(), wait: noWait });
   tb.record(fields({ n: 2, items: [[id(1), id(2), id(3)], [id(4)]], removed: [], stops: [], stays: [] }));
   assert.equal(await tb.run(AT), "Taken back: 2 tickets.");
 });
@@ -217,7 +218,7 @@ test("the runner counts tickets, not pages: a 3-page PDF is one ticket", async (
 test("the runner: signal drops part way; the row keeps its button, and the second run does only what is left", async () => {
   let cutOff = true;
   const store = world({ cut: (c) => cutOff && (c === "removeTicket:" + id(3) || c.startsWith("undoEntry")) });
-  const tb = createTakeBack(store, { storage: memory() });
+  const tb = createTakeBack(store, { storage: memory(), wait: noWait });
   tb.record(fields({ stays: [] }));
   const first = await tb.run(AT);
   assert.equal(first, "Taken back 2 of 3. Try again for the rest.");
@@ -234,7 +235,7 @@ test("the runner: signal drops part way; the row keeps its button, and the secon
 
 test("the runner: the first remove fails while the phone still thinks it is online; nothing is marked, the stop stays", async () => {
   const store = world({ cut: (c) => c === "removeTicket:" + id(1) });
-  const tb = createTakeBack(store, { storage: memory() });
+  const tb = createTakeBack(store, { storage: memory(), wait: noWait });
   tb.record(fields({ stays: [] }));
   assert.equal(await tb.run(AT), "Taken back 2 of 3. 2 old pictures put back. Try again for the rest.");
   assert.equal(tb.list()[0].back, "");
@@ -246,14 +247,14 @@ test("the runner: a batch older than 200 History lines still finds its old pictu
   const newer = Array.from({ length: 250 }, (_, i) => ({ id: 1000 - i, kind: "stop", ref: "otherstop001", action: "edit", canUndo: false }));
   const store = world({ log: newer.concat(old) });
   assert.equal(store.state.history.entries.some((e) => e.kind === "ticket"), false, "not on History's first page");
-  const tb = createTakeBack(store, { storage: memory() });
+  const tb = createTakeBack(store, { storage: memory(), wait: noWait });
   tb.record(fields({ stays: [] }));
   assert.equal(await tb.run(AT), "Taken back: 3 tickets. 2 old pictures put back.");
 });
 
 test("the runner: an old picture's lookup fails: nothing is taken back, and it is said", async () => {
   const store = world({ cut: (c) => c === "historyFor:" + id(9) });
-  const tb = createTakeBack(store, { storage: memory() });
+  const tb = createTakeBack(store, { storage: memory(), wait: noWait });
   tb.record(fields({ stays: [] }));
   assert.equal(await tb.run(AT), NOT_LOOKED_UP);
   assert.equal(store.calls.some((c) => /^(removeTicket|undoEntry|deleteStop)/.test(c)), false);
@@ -264,7 +265,7 @@ test("the runner: an old picture's lookup fails: nothing is taken back, and it i
 
 test("the runner: no signal and something sent: nothing is tried; a wipe empties the memory", async () => {
   const store = fakeStore({ online: false, tickets: [{ id: id(1), stop: "s" }] });
-  const tb = createTakeBack(store, { storage: memory() });
+  const tb = createTakeBack(store, { storage: memory(), wait: noWait });
   tb.record(fields({ removed: [], stops: [], stays: [] }));
   assert.equal(await tb.run(AT), NO_SIGNAL);
   assert.deepEqual(store.calls, ["notify:" + NO_SIGNAL]);
@@ -276,7 +277,7 @@ test("the runner: no signal and something sent: nothing is tried; a wipe empties
 
 test("the runner: an old picture History can no longer put back is said, and the batch is done", async () => {
   const store = fakeStore({ tickets: [{ id: id(1), stop: "s" }, { id: id(8), stop: "s", gone: true }], log: [{ id: 3, kind: "ticket", ref: id(8), action: "remove", canUndo: false }] });
-  const tb = createTakeBack(store, { storage: memory() });
+  const tb = createTakeBack(store, { storage: memory(), wait: noWait });
   tb.record(fields({ n: 1, items: [[id(1)]], removed: [id(8)], stops: [], stays: [] }));
   assert.equal(await tb.run(AT), "Taken back: 1 ticket. The rest have their own line in History.");
   assert.notEqual(tb.list()[0].back, "");
@@ -284,7 +285,7 @@ test("the runner: an old picture History can no longer put back is said, and the
 
 test("fix round 2, R3: a picture the backend refuses to take off for good is said, and the batch is done", async () => {
   const store = world({ cut: (c) => c === "refuse:" + id(2) });
-  const tb = createTakeBack(store, { storage: memory() });
+  const tb = createTakeBack(store, { storage: memory(), wait: noWait });
   tb.record(fields({ stays: [] }));
   assert.equal(await tb.run(AT), "Taken back 2 of 3. 2 old pictures put back. 1 picture couldn’t be taken off.");
   assert.notEqual(tb.list()[0].back, "", "the button does not stay for ever");
@@ -294,7 +295,7 @@ test("fix round 2, R3: a picture the backend refuses to take off for good is sai
 test("fix round 2, R4: an Add that only added a stop keeps a row; Take all back removes the stop if unchanged, else says it is left on", async () => {
   const st = { ...STOP };
   const store = fakeStore({ tickets: [], stops: [st] });
-  const tb = createTakeBack(store, { storage: memory() });
+  const tb = createTakeBack(store, { storage: memory(), wait: noWait });
   assert.equal(tb.record({ at: AT, n: 0, off: 0, stops: [], items: [] }), null, "nothing at all: no row");
   const b = tb.record({ at: AT, n: 0, off: 0, items: [], removed: [], stops: [STOP.id], stays: [], prints: { [STOP.id]: printOf(STOP) } });
   assert.equal(rowText(b).title, "1 stop added from the list");
@@ -302,10 +303,36 @@ test("fix round 2, R4: an Add that only added a stop keeps a row; Take all back 
   assert.deepEqual(store.calls.filter((c) => c.startsWith("deleteStop")), ["deleteStop:" + STOP.id]);
   // Changed since: left on, said, and the batch is done.
   const store2 = fakeStore({ tickets: [], stops: [{ ...STOP, note: "bring cash" }] });
-  const tb2 = createTakeBack(store2, { storage: memory() });
+  const tb2 = createTakeBack(store2, { storage: memory(), wait: noWait });
   tb2.record({ at: AT, n: 0, off: 0, items: [], stops: [STOP.id], prints: { [STOP.id]: printOf(STOP) } });
   assert.equal(await tb2.run(AT), "Taken back. The stop it added is left on: it changed since.");
   assert.notEqual(tb2.list()[0].back, "");
   assert.equal(store2.calls.some((c) => c.startsWith("deleteStop")), false);
   assert.equal(resultText({ total: 2, back: 2, stopsKept: 2 }), "Taken back: 2 tickets. The stops it added are left on: they changed since.");
+});
+
+test("S1: a refused take-off is tried once more after a moment; a passing refusal (busy) then goes through", async () => {
+  let refusals = 0;
+  const waits = [];
+  const store = world({ cut: (c) => c === "refuse:" + id(2) && ++refusals === 1 });
+  const tb = createTakeBack(store, { storage: memory(), wait: async (ms) => { waits.push(ms); } });
+  tb.record(fields({ stays: [] }));
+  assert.equal(await tb.run(AT), "Taken back: 3 tickets. 2 old pictures put back.");
+  assert.deepEqual(waits, [2000]);
+  assert.equal(store.calls.filter((c) => c === "removeTicket:" + id(2)).length, 2);
+  // Refused both times: stuck, said, the batch done.
+  const store2 = world({ cut: (c) => c === "refuse:" + id(2) });
+  const tb2 = createTakeBack(store2, { storage: memory(), wait: noWait });
+  tb2.record(fields({ stays: [] }));
+  assert.equal(await tb2.run(AT), "Taken back 2 of 3. 2 old pictures put back. 1 picture couldn’t be taken off.");
+  assert.equal(store2.calls.filter((c) => c === "removeTicket:" + id(2)).length, 2, "tried twice, not more");
+});
+
+test("S2: a new stop left on because its own picture couldn't be taken off says so, not that it changed", async () => {
+  const store = world({ cut: (c) => c === "refuse:" + id(1) });
+  const tb = createTakeBack(store, { storage: memory(), wait: noWait });
+  tb.record(fields({ stays: [] }));
+  assert.equal(await tb.run(AT), "Taken back 2 of 3. 2 old pictures put back. 1 picture couldn’t be taken off. The stop it added is left on: its picture couldn’t be taken off.");
+  assert.equal(store.calls.some((c) => c.startsWith("deleteStop")), false);
+  assert.notEqual(tb.list()[0].back, "");
 });

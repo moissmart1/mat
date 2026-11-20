@@ -22,7 +22,8 @@
 
 import { batchOf, addBatch, loadBatches, saveBatches, planOf, stopFree, resultText, ticketsBack, picturesOf, NO_SIGNAL, NOT_LOOKED_UP } from "./bulkbatch.js";
 
-export function createTakeBack(store, { storage = null, now = () => Date.now() } = {}) {
+// wait(ms): the pause before a refused take-off is tried once more (a passing "busy" looks the same).
+export function createTakeBack(store, { storage = null, now = () => Date.now(), wait = (ms) => new Promise((done) => setTimeout(done, ms)) } = {}) {
   const st = () => {
     try {
       return storage || globalThis.localStorage || null;
@@ -109,7 +110,13 @@ export function createTakeBack(store, { storage = null, now = () => Date.now() }
       const stuck = new Set(); // refused for good by the backend (not a lost signal): final, said (fix round 2, R3)
       for (const id of plan.remove) {
         if (store.state.status === "nokey") return "";
-        const out = await settle((onUnsure) => store.removeTicket(id, { quiet: true, onUnsure }));
+        let out = await settle((onUnsure) => store.removeTicket(id, { quiet: true, onUnsure }));
+        // Refused: tried once more after a moment before it counts as stuck (S1).
+        if (out && !out.saved && out.reason === "refused" && ticketOn(id)) {
+          await wait(2000);
+          if (store.state.status === "nokey") return "";
+          out = await settle((onUnsure) => store.removeTicket(id, { quiet: true, onUnsure }));
+        }
         if (out && !out.saved && out.reason === "refused" && ticketOn(id)) stuck.add(id);
         else if (!(out && out.saved) && (ticketOn(id) || (out && out.reason === "unsure"))) unsure.add(id);
       }
@@ -137,11 +144,14 @@ export function createTakeBack(store, { storage = null, now = () => Date.now() }
       //    never one whose picture did not surely come off (fix round 1, M4).
       let stopsLeft = 0;
       let stopsKept = 0; // changed since, or holding another picture: left on for good, and said (R4)
+      let stopsStuck = 0; // its own picture couldn't be taken off: left on, and said so (S2)
       for (const id of b.stops) {
         if (store.state.status === "nokey") return "";
         if (!stopFree(id, b, store.state)) {
           const there = (store.state.stops || []).find((x) => x && x.id === id && !x.deleted);
-          if (there) stopsKept += 1;
+          const mineOn = (store.state.tickets || []).filter((t) => t && !t.gone && t.stop === id);
+          if (there && mineOn.length && mineOn.every((t) => stuck.has(t.id))) stopsStuck += 1;
+          else if (there) stopsKept += 1;
           continue;
         }
         const mine = (store.state.tickets || []).filter((t) => t && t.stop === id).map((t) => t.id);
@@ -160,7 +170,7 @@ export function createTakeBack(store, { storage = null, now = () => Date.now() }
       const settled = b.items.every((one) => one.every((id) => stuck.has(id) || !isOn(id)));
       const done = settled && oldBack + lost >= b.removed.length && stopsLeft === 0;
       const stays = b.stays.filter((id) => (store.state.stays || []).some((x) => x && x.id === id && !x.deleted)).length;
-      const text = resultText({ total, back, put: Math.min(put, oldBack), lost, stays, done, stuck: stuck.size, stopsKept });
+      const text = resultText({ total, back, put: Math.min(put, oldBack), lost, stays, done, stuck: stuck.size, stopsKept, stopsStuck });
       if (done) {
         const iso = new Date(now()).toISOString();
         batches = batches.map((x) => (x.at === at ? { ...x, back: iso } : x));
