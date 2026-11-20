@@ -44,9 +44,12 @@ const CONTEXT = {
 };
 
 async function hermetic(context) {
-  await context.route("**/*", (route) => {
+  // Let the driver pass same-origin assets through without a callback into
+  // this runner for every script, image and stylesheet. All other URLs
+  // still receive local fixtures, including service-worker requests.
+  const external = new RegExp("^(?!http://localhost:" + process.env.MAT_PORT + "/)");
+  await context.route(external, (route) => {
     const url = new URL(route.request().url());
-    if (url.hostname === "localhost") return route.continue();
     if (url.hostname === "fonts.googleapis.com" || url.hostname === "fonts.gstatic.com") return serveFont(route, url);
     return route.fulfill({ status: 200, body: "" });
   });
