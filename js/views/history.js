@@ -15,6 +15,7 @@ import { clock, dayHead, localDay, viaText } from "../format.js";
 const LOADING = "…";
 const NO_HISTORY = "History needs a connection.";
 const HISTORY_FAILED = "Couldn’t load the history.";
+const LAST_LOADED = "Showing the last loaded history.";
 const NOTHING_YET = "Nothing has changed yet.";
 const INTRO = "Every change, newest first. Undo is on the latest change to each item.";
 
@@ -28,6 +29,10 @@ function el(tag, cls, text) {
   if (cls) n.className = cls;
   if (text !== undefined) n.textContent = text;
   return n;
+}
+
+function errorText(code) {
+  return code === "network" ? NO_HISTORY : HISTORY_FAILED;
 }
 
 export function mountHistory(root, store) {
@@ -47,11 +52,11 @@ export function mountHistory(root, store) {
   const done = sheet.querySelector("#histDone");
 
   let opened = false;
-  let phase = "loading"; // "loading" until this opening's fetch has answered, then "done" or "failed"
+  let opening = false; // This opening is waiting for the first page.
   let openNo = 0;
   const busy = new Set(); // entries whose Undo is on its way: no second tap
 
-  function drawRow(en) {
+  function drawRow(en, stale) {
     const row = el("div", "tp-row" + (en.undoneBy ? " is-undone" : ""));
     row.dataset.id = en.id;
     const ms = Date.parse(en.at);
@@ -63,7 +68,7 @@ export function mountHistory(root, store) {
     // A picture is only ever changed by its owner, Undo included (Task 16).
     // A stamp likewise: its line names whose it is after the last bar (def|who).
     const notMine = (en.kind === "picture" && en.ref !== store.state.me) || (en.kind === "stamp" && en.ref.slice(en.ref.lastIndexOf("|") + 1) !== store.state.me);
-    if (en.canUndo && !en.undoneBy && !notMine) {
+    if (!stale && en.canUndo && !en.undoneBy && !notMine) {
       const undo = el("button", "tp-undo", "Undo");
       undo.type = "button";
       undo.setAttribute("aria-label", "Undo: " + said.textContent);
@@ -77,20 +82,21 @@ export function mountHistory(root, store) {
     const h = s.history;
     // Nothing held yet: wait for the fetch. What is already held shows at once
     // and is replaced when the fetch lands.
-    if (phase === "loading" && !h.entries.length) {
+    if (opening && !h.entries.length) {
       tape.replaceChildren(el("p", "tp-msg", LOADING));
       return;
     }
-    // The fetch for this opening failed: whatever is left from an earlier opening is not shown.
-    if (phase === "failed") {
-      tape.replaceChildren(el("p", "tp-msg", h.error === "network" ? NO_HISTORY : HISTORY_FAILED));
-      return;
-    }
     if (!h.entries.length) {
-      tape.replaceChildren(el("p", "tp-msg", NOTHING_YET));
+      tape.replaceChildren(el("p", "tp-msg", h.error ? errorText(h.error) : NOTHING_YET));
       return;
     }
     const nodes = [];
+    const stale = !!h.firstPageError;
+    if (stale) {
+      const notice = el("p", "tp-msg", LAST_LOADED + " " + errorText(h.firstPageError));
+      notice.setAttribute("role", "status");
+      nodes.push(notice);
+    }
     let last = null;
     for (const en of h.entries) {
       const day = localDay(Date.parse(en.at));
@@ -103,7 +109,7 @@ export function mountHistory(root, store) {
           nodes.push(d);
         }
       }
-      nodes.push(drawRow(en));
+      nodes.push(drawRow(en, stale));
     }
     if (h.more) {
       const more = el("button", "tp-more", "Show older");
@@ -113,7 +119,7 @@ export function mountHistory(root, store) {
       more.setAttribute("aria-busy", h.loading ? "true" : "false");
       nodes.push(more);
     }
-    if (h.error) nodes.push(el("p", "tp-msg", h.error === "network" ? NO_HISTORY : HISTORY_FAILED)); // older entries would not load
+    if (h.error && h.error !== h.firstPageError) nodes.push(el("p", "tp-msg", errorText(h.error)));
     tape.replaceChildren(...nodes);
   }
 
@@ -135,7 +141,7 @@ export function mountHistory(root, store) {
     if (opened) return;
     opened = true;
     const mine = ++openNo;
-    phase = "loading";
+    opening = true;
     busy.clear();
     render(store.state);
     sheet.classList.add("is-open");
@@ -147,7 +153,7 @@ export function mountHistory(root, store) {
     done.focus({ preventScroll: true });
     await store.loadHistory();
     if (mine !== openNo || !opened) return;
-    phase = store.state.history.error ? "failed" : "done";
+    opening = false;
     render(store.state);
   }
 

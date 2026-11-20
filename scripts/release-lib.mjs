@@ -221,27 +221,28 @@ export function needsBump(changed, shell) {
   return changed.some((f) => files.has(f));
 }
 
+export function isReleaseRef(ref) {
+  return ref === "refs/heads/main" || ref === "refs/heads/dev";
+}
+
 // Why a push must not go out, or null when it may.
 //   remoteRef, localSha: what git hands a pre-push hook
 //   receipt: the gate's receipt for that commit's tree, or null
 //   commitStamp: BACKEND_STAMP in that commit ("" before the stamp existed)
 //   live: the stamp the live backend answers with
-export function judgePush({ remoteRef, localSha, receipt, commitStamp, live, ci = null }) {
+export function judgePush({ remoteRef, localSha, receipt, commitStamp, live, scan = null }) {
   if (/refs\/original\//.test(remoteRef)) return "refs/original is never pushed: it holds history that was removed on purpose.";
-  // ci/<name>: a branch that only exists to try the checks on GitHub. It can
-  // reach no phone (the site is served from main, which GitHub lets only the
-  // owner change), so it needs no receipt; but the repository is public, so
-  // exactly what is pushed must have passed the private-data scan.
-  if (/^refs\/heads\/ci\/[\w.-]+$/.test(remoteRef)) {
-    if (/^0+$/.test(localSha)) return null;
-    if (!ci || !ci.atHead || !ci.clean) return "A ci/ branch is pushed from its own clean checkout, at the commit being pushed.";
-    if (ci.found) return "The private-data scan found " + ci.found + " thing(s) in this commit. Nothing was pushed.";
+  if (!isReleaseRef(remoteRef)) {
+    if (!remoteRef.startsWith("refs/heads/") || (remoteRef.startsWith("refs/heads/ci/") && !/^refs\/heads\/ci\/[\w.-]+$/.test(remoteRef))) {
+      return "Push a feature branch, a ci/<name> branch, or a release branch.";
+    }
+    if (/^0+$/.test(localSha)) {
+      return remoteRef.startsWith("refs/heads/ci/") ? null : "Feature branch deletion is not allowed by this hook.";
+    }
+    if (!scan || !scan.atHead || !scan.clean) return "Push a feature or CI branch from a clean checkout at the commit being pushed.";
+    if (scan.found !== 0) return "The private-data scan found " + scan.found + " thing(s) in this commit. Nothing was pushed.";
     return null;
   }
-  // main is production (the site is served from it). dev is where reviewed work
-  // waits for a release; from this Mac it is only ever set to a commit that
-  // could be released, so the same checks apply to it.
-  if (remoteRef !== "refs/heads/main" && remoteRef !== "refs/heads/dev") return "Only main and dev are pushed from here (" + remoteRef + " is neither).";
   if (/^0+$/.test(localSha)) return "main and dev are never deleted.";
   if (!receipt) return "This commit has not passed the gate. Run `npm run gate`, then `npm run ship`.";
   if (receipt.unit.fail || receipt.e2e.fail) return "The gate's receipt for this commit records failing tests.";

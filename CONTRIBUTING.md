@@ -19,9 +19,11 @@ read `AGENTS.md` as well.
 
 ## How a change gets to the phones
 
-1. Branch from `dev`. Name the branch for what it does.
-2. Use Node 25, the version the release runs on (on Node 22 one test file's
-   timer cases are cancelled). Make the change with its tests. `npm test` runs the unit tests;
+1. Branch from `dev`. Name the branch for what it does. On the release Mac,
+   push from a clean checkout at the outgoing commit. Feature and CI pushes
+   scan the checkout and the files and messages of every outgoing commit
+   against the full private list.
+2. Use Node 25, the version the release runs on. Make the change with its tests. `npm test` runs the unit tests;
    `node tests/e2e/run.cjs <words>` runs the browser tests whose file names
    match the words (they need Google Chrome).
 3. Open a pull request into `dev`. The `check` run must be green. It runs the

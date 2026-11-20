@@ -71,6 +71,29 @@ async function twoPhones(ctx) {
 
 module.exports = [
   {
+    name: "a delayed clock setup starts at the requested instant and each phone owns its timers",
+    async run({ page, newPhone }) {
+      // Simulate a slow round trip between install and pause without sleeping.
+      const install = page.clock.install.bind(page.clock);
+      page.clock.install = async (options) => {
+        await install(options);
+        await page.clock.fastForward(1500);
+      };
+      const other = await newPhone();
+      await open(page);
+      await open(other, { nowMs: NOON12 + 3600000 });
+      for (const phone of [page, other]) {
+        await phone.evaluate(() => { window.fired = false; setTimeout(() => { window.fired = true; }, 100); });
+      }
+      const state = (phone) => phone.evaluate(() => [Date.now(), window.fired]);
+      await page.clock.fastForward(100);
+      assert.deepEqual(await state(page), [NOON12 + 100, true]);
+      assert.deepEqual(await state(other), [NOON12 + 3600000, false]);
+      await other.clock.fastForward(100);
+      assert.deepEqual(await state(other), [NOON12 + 3600100, true]);
+    },
+  },
+  {
     name: "a line rung up on one phone shows on the other at its next check, marked new",
     async run(ctx) {
       const { a, b } = await twoPhones(ctx);
@@ -152,6 +175,65 @@ module.exports = [
       await until(async () => !(await visible(page, "#net")), "#net goes away");
       await idle(page);
       assert.equal(backend.requests.filter((r) => r.action === "addExpense").length, 1, "sent once");
+    },
+  },
+  {
+    name: "a check cut off while the page is hidden is not no signal; back on screen it asks again and the strip stays away",
+    async run({ page }) {
+      const backend = await ready(page);
+      const hide = (hidden) =>
+        page.evaluate((h) => {
+          Object.defineProperty(document, "visibilityState", { configurable: true, get: () => (h ? "hidden" : "visible") });
+          document.dispatchEvent(new Event("visibilitychange"));
+        }, hidden);
+      await hide(true);
+      backend.failWith = "network";
+      await page.evaluate(() => globalThis.__matTest.store.checkRev());
+      assert.equal(await visible(page, "#net"), false, "a failure while hidden is not no signal");
+      backend.failWith = null;
+      const revs = backend.requests.filter((r) => r.action === "rev").length;
+      await hide(false);
+      await until(() => backend.requests.filter((r) => r.action === "rev").length > revs, "it asks again at once");
+      await idle(page);
+      assert.equal(await visible(page, "#net"), false, "still no strip once the backend answers");
+    },
+  },
+  {
+    name: "a check that fails while the page is on screen still shows No signal, and the next answer clears it",
+    async run({ page }) {
+      const backend = await ready(page);
+      backend.failWith = "network";
+      await page.evaluate(() => globalThis.__matTest.store.checkRev());
+      await expectText(page, "#net", NO_SIGNAL);
+      backend.failWith = null;
+      await comeBack(page);
+      await until(async () => !(await visible(page, "#net")), "#net goes away when the backend answers");
+    },
+  },
+  {
+    name: "a check the app's own timer started that hangs while the page goes hidden: coming back asks again at once",
+    async run({ page }) {
+      const backend = await ready(page);
+      let revs = 0;
+      const handle = backend.handle;
+      backend.handle = (body) => {
+        if (body.action !== "rev") return handle(body);
+        revs++;
+        if (revs === 1) return new Promise(() => {}); // the first never answers
+        return handle(body);
+      };
+      const hide = (hidden) =>
+        page.evaluate((h) => {
+          Object.defineProperty(document, "visibilityState", { configurable: true, get: () => (h ? "hidden" : "visible") });
+          document.dispatchEvent(new Event("visibilitychange"));
+        }, hidden);
+      await advance(page, backend, POLL_MS);
+      await until(() => revs >= 1, "the timer's check goes out and hangs");
+      await hide(true);
+      await hide(false);
+      await until(() => revs >= 2, "asks again at once, not joins the cut-off check");
+      await idle(page);
+      assert.equal(await visible(page, "#net"), false);
     },
   },
   {

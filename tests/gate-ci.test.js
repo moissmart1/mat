@@ -342,7 +342,7 @@ test("check.yml's slices and triggers, the branch name and the repository are re
   assert.equal(startsOnCi(yml.replace('[dev, "ci/**"]', "[dev]")), false, "a ci/ push would start no run");
   assert.equal(startsOnCi(""), false);
   assert.equal(ciBranch(HEAD), "ci/release-a1b2c3d");
-  assert.equal(judgePush({ remoteRef: "refs/heads/" + ciBranch(HEAD), localSha: HEAD, ci: { atHead: true, clean: true, found: 0 } }), null, "the push check lets it out");
+  assert.equal(judgePush({ remoteRef: "refs/heads/" + ciBranch(HEAD), localSha: HEAD, scan: { atHead: true, clean: true, found: 0 } }), null, "the push check lets it out");
   assert.equal(repoOf("https://github.com/moissmart1/mat.git"), "moissmart1/mat");
   assert.equal(repoOf("git" + "@github.com:moissmart1/mat.git"), "moissmart1/mat"); // in two pieces: the scan reads it as a mail address
   assert.equal(repoOf("https://example.com/x/y.git"), "");
@@ -402,6 +402,50 @@ test("the push's history is scanned: a private string only in a middle commit, o
   } finally {
     crafted.cleanup();
   }
+  // Contents are read from Git's objects, not from a diff: a NUL byte, a
+  // `binary` attribute in the commit or a `-diff` one in .git/info/attributes
+  // (all of which make a diff say only "Binary files differ") hide nothing.
+  const binary = repoWith([
+    { file: ".gitattributes", text: "*.dat binary\n", message: "first" },
+    { file: "blob.dat", text: "head\0\0" + WORD + "\n", message: "second" },
+    { file: "nul.txt", text: "a\0b\nkey " + WORD + "\n", message: "third" },
+    { file: "plain.txt", text: "x\n" + WORD + "\n", message: "fourth" },
+  ]);
+  try {
+    writeFileSync(join(binary.dir, ".git", "info", "attributes"), "* -diff\n");
+    const found = scanCommits(binary.shas, binary.dir, opts);
+    assert.deepEqual(found.map((f) => f.file).sort(), ["blob.dat", "nul.txt", "plain.txt"], JSON.stringify(found));
+    assert.ok(found.every((f) => f.rule === "a string from the private list"));
+  } finally {
+    binary.cleanup();
+  }
+  // A private string only in a file's name (the contents are clean).
+  const named = repoWith([
+    { file: "a.txt", text: "one\n", message: "first" },
+    { file: "notes-" + WORD + ".txt", text: "nothing here\n", message: "second" },
+  ]);
+  try {
+    const found = scanCommits(named.shas, named.dir, opts);
+    assert.equal(found.length, 1, JSON.stringify(found));
+    const both = repoWith([{ file: "x-" + WORD + ".txt", text: WORD + "\n", message: "first" }]);
+    try {
+      const f2 = scanCommits(both.shas, both.dir, opts);
+      assert.equal(f2.length, 2);
+      assert.ok(!JSON.stringify(f2).includes(WORD), "nor for its contents");
+    } finally {
+      both.cleanup();
+    }
+    assert.equal(found[0].file, "(a file name)");
+    assert.ok(!JSON.stringify(found).includes(WORD), "the name is not said: it holds what was found");
+    assert.equal(found[0].rule, "a string from the private list");
+  } finally {
+    named.cleanup();
+  }
+  // One scanner for both: the push check (scanOutgoing) and the gate use scanCommits.
+  const scanSrc = readFileSync(join(ROOT, "scripts", "scan.mjs"), "utf8");
+  assert.match(scanSrc, /export function scanOutgoing[\s\S]*return scanCommits\(commits, root,/);
+  assert.equal((scanSrc.match(/cat-file", "blob"/g) || []).length, 1, "file contents are read in one place");
+  assert.match(readFileSync(join(ROOT, "scripts", "prepush.mjs"), "utf8"), /scanOutgoing\(here, localSha, remoteSha\)/);
   const message = repoWith([
     { file: "a.txt", text: "one\n", message: "first" },
     { file: "b.txt", text: "two\n", message: "booking " + WORD },
