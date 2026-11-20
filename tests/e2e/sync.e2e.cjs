@@ -155,6 +155,65 @@ module.exports = [
     },
   },
   {
+    name: "a check cut off while the page is hidden is not no signal; back on screen it asks again and the strip stays away",
+    async run({ page }) {
+      const backend = await ready(page);
+      const hide = (hidden) =>
+        page.evaluate((h) => {
+          Object.defineProperty(document, "visibilityState", { configurable: true, get: () => (h ? "hidden" : "visible") });
+          document.dispatchEvent(new Event("visibilitychange"));
+        }, hidden);
+      await hide(true);
+      backend.failWith = "network";
+      await page.evaluate(() => globalThis.__matTest.store.checkRev());
+      assert.equal(await visible(page, "#net"), false, "a failure while hidden is not no signal");
+      backend.failWith = null;
+      const revs = backend.requests.filter((r) => r.action === "rev").length;
+      await hide(false);
+      await until(() => backend.requests.filter((r) => r.action === "rev").length > revs, "it asks again at once");
+      await idle(page);
+      assert.equal(await visible(page, "#net"), false, "still no strip once the backend answers");
+    },
+  },
+  {
+    name: "a check that fails while the page is on screen still shows No signal, and the next answer clears it",
+    async run({ page }) {
+      const backend = await ready(page);
+      backend.failWith = "network";
+      await page.evaluate(() => globalThis.__matTest.store.checkRev());
+      await expectText(page, "#net", NO_SIGNAL);
+      backend.failWith = null;
+      await comeBack(page);
+      await until(async () => !(await visible(page, "#net")), "#net goes away when the backend answers");
+    },
+  },
+  {
+    name: "a check the app's own timer started that hangs while the page goes hidden: coming back asks again at once",
+    async run({ page }) {
+      const backend = await ready(page);
+      let revs = 0;
+      const handle = backend.handle;
+      backend.handle = (body) => {
+        if (body.action !== "rev") return handle(body);
+        revs++;
+        if (revs === 1) return new Promise(() => {}); // the first never answers
+        return handle(body);
+      };
+      const hide = (hidden) =>
+        page.evaluate((h) => {
+          Object.defineProperty(document, "visibilityState", { configurable: true, get: () => (h ? "hidden" : "visible") });
+          document.dispatchEvent(new Event("visibilitychange"));
+        }, hidden);
+      await advance(page, backend, POLL_MS);
+      await until(() => revs >= 1, "the timer's check goes out and hangs");
+      await hide(true);
+      await hide(false);
+      await until(() => revs >= 2, "asks again at once, not joins the cut-off check");
+      await idle(page);
+      assert.equal(await visible(page, "#net"), false);
+    },
+  },
+  {
     name: "one check at a time: a check that never answers is not joined by more",
     async run({ page }) {
       const backend = await ready(page);
@@ -207,14 +266,19 @@ module.exports = [
       await waitRows(page, 8);
       assert.equal(await page.evaluate(() => !!navigator.serviceWorker.controller), true, "controlled after one reload");
 
-      // The Google Fonts stylesheet is asked for with CORS, so the worker kept it.
+      // Ask for a real face while controlled so the worker caches both its
+      // stylesheet and its bytes before we disconnect.
+      const receiptFont = () => page.evaluate(async () => {
+        const faces = await document.fonts.load('700 16px "Zen Kaku Gothic New"', "Tokyo東京");
+        return faces.length > 0 && faces.every((face) => face.status === "loaded");
+      });
+      assert.ok(await receiptFont(), "the receipt font loaded online");
       const kept = await page.evaluate(async () => {
         const cache = await caches.open("mat-fonts");
         return (await cache.keys()).map((r) => new URL(r.url).hostname);
       });
       assert.ok(kept.includes("fonts.googleapis.com"), "the font stylesheet is kept: " + JSON.stringify(kept));
-      const marker = () => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--fonts-stand-in").trim());
-      assert.equal(await marker(), "1");
+      assert.ok(kept.includes("fonts.gstatic.com"), "the worker kept font bytes");
 
       // Nothing but the fake api (bridged, not on the network) gets through.
       await context.route("**/*", (route) => route.abort());
@@ -222,7 +286,7 @@ module.exports = [
       await waitRows(page, 8);
       assert.ok(await text(page, "#say"), "the sentence draws");
       assert.equal(await visible(page, "#ring"), true);
-      assert.equal(await marker(), "1", "the font stylesheet still applies with no network");
+      assert.ok(await receiptFont(), "the receipt font loads with no network");
     },
   },
   {

@@ -7,6 +7,7 @@
 
 import { standing, jpyOf, cadCents, shares, expenseShares } from "../money.js";
 import { tripDay } from "../time.js";
+import { tripNow } from "../plan.js";
 import { mountSlip, viewerOwed } from "./slip.js";
 import { yen, dollars, typed, dayHead, issuer, pt, freshText, sentence, tripSpan } from "../format.js";
 import { fillSeal } from "../picture.js";
@@ -52,6 +53,30 @@ export function settlementSummary(state, exportedAt) {
   };
 }
 
+export function summaryText(summary) {
+  const lines = [summary.trip + " — Settlement summary", "Amounts in CAD unless labelled otherwise.",
+    "Prepared " + summary.exportedAt, "Last loaded " + (summary.lastLoadedAt || "unknown")];
+  if (summary.provisional) lines.push("Provisional: pending changes or figures awaiting refresh.");
+  if (summary.excludedRows) lines.push("Unreadable rows excluded: " + summary.excludedRows);
+  lines.push("", "Expenses");
+  for (const e of summary.expenses) {
+    lines.push(e.day + " · " + e.description + " · " + e.paidBy + " paid " + e.amount + " " + e.currency +
+      " (" + dollars(e.cadCents) + " CAD, " + e.rate + " JPY/CAD)");
+    lines.push("  " + e.splitMode + " split: " + Object.entries(e.sharesCadCents).map(([who, cents]) => who + " " + dollars(cents)).join(", "));
+  }
+  if (!summary.expenses.length) lines.push("None");
+  lines.push("", "Recorded payments");
+  for (const p of summary.payments) lines.push(p.from + " → " + p.to + "  " + dollars(p.cadCents));
+  if (!summary.payments.length) lines.push("None");
+  lines.push("", "Balances");
+  for (const [who, cents] of Object.entries(summary.balances)) lines.push(who + " " +
+    (cents < 0 ? "owes " : cents > 0 ? "is owed " : "") + dollars(Math.abs(cents)));
+  lines.push("", summary.simplified ? "Remaining transfers (simplified)" : "Remaining transfers");
+  for (const t of summary.transfers) lines.push(t.from + " → " + t.to + "  " + dollars(t.cents));
+  if (!summary.transfers.length) lines.push("All settled");
+  return lines.join("\n");
+}
+
 function el(tag, cls, text) {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
@@ -81,7 +106,7 @@ function isNewStamp(p, me, seenAt) {
 // Each trip day up to today (all of them after the trip) and any later day
 // that already has a line, newest first; then "pre", the oldest, at the bottom.
 function receiptDays(s, live, nowMs) {
-  const today = tripDay(s.trip, nowMs);
+  const today = tripDay(s.trip, nowMs, tripNow(s, nowMs).date);
   const dates = new Set();
   for (const d of s.days) {
     if (d.date && (today === "post" || (today !== "pre" && d.date <= today))) dates.add(d.date);
@@ -201,7 +226,25 @@ export function mountMoney(root, store, { onRing = () => {}, onLine = () => {}, 
   slip.id = "slip";
   const rc = el("div", "rc");
   rc.id = "rc";
-  root.replaceChildren(top, slip, rc);
+  const summary = el("details", "settlement-summary");
+  const content = el("pre");
+  const download = el("button", "", "Download text");
+  download.type = "button";
+  summary.append(el("summary", "", "Settlement summary"), content, download);
+  const refreshSummary = () => {
+    content.textContent = summaryText(settlementSummary(store.state, new Date().toISOString()));
+  };
+  summary.addEventListener("toggle", () => { if (summary.open && !summary.hidden) refreshSummary(); });
+  download.addEventListener("click", () => {
+    refreshSummary();
+    const url = URL.createObjectURL(new Blob([content.textContent + "\n"], { type: "text/plain;charset=utf-8" }));
+    const link = el("a");
+    link.href = url;
+    link.download = "settlement-summary.txt";
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+  root.replaceChildren(top, slip, rc, summary);
   mountSlip(slip, store);
 
   histBtn.addEventListener("click", () => onHistory());
@@ -230,6 +273,8 @@ export function mountMoney(root, store, { onRing = () => {}, onLine = () => {}, 
       asideNote.hidden = true;
       histBtn.hidden = true;
       slip.hidden = true;
+      summary.hidden = true;
+      content.textContent = "";
       rc.replaceChildren();
       return;
     }
@@ -254,6 +299,8 @@ export function mountMoney(root, store, { onRing = () => {}, onLine = () => {}, 
     histN.hidden = fresh === 0;
 
     drawReceipt(rc, s, live, ctx);
+    summary.hidden = false;
+    if (summary.open) refreshSummary();
   }
 
   render(store.state);

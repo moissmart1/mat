@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { settlementSummary } from "../js/views/money.js";
+import { settlementSummary, summaryText } from "../js/views/money.js";
 
 test("summary uses the displayed CAD balances and only exports settlement fields", () => {
   const expense = { title: "Train", day: "pre", paidBy: "A", split: ["A","B"], currency: "JPY", amount: 1000, rate: 100, secret: "private-marker" };
@@ -20,6 +20,9 @@ test("summary uses the displayed CAD balances and only exports settlement fields
   assert.equal(s.payments.length, 1);
   assert.deepEqual(s.balances, { A: 300, B: -300 });
   assert.doesNotMatch(JSON.stringify(s), /private-marker|Removed/);
+  const plain = summaryText(s);
+  for (const label of ["Provisional", "1000 JPY", "A $5.00", "B → A  $2.00", "A is owed $3.00", "B owes $3.00"]) assert.ok(plain.includes(label), label);
+  assert.doesNotMatch(plain, /private-marker|Removed/);
   payment.pending = false;
   state.online = false;
   assert.equal(settlementSummary(state, s.exportedAt).provisional, true);

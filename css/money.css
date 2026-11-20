@@ -323,3 +323,7 @@ button.s-wl > span{text-decoration:underline dotted rgba(21,18,15,.5) 1.5px;text
   .r-b:hover{background:rgba(21,18,15,.04)}
   .tk-stay:hover{background:rgba(21,18,15,.04)}
 }
+
+.settlement-summary{margin:12px var(--gr) 16px var(--gl)}
+.settlement-summary summary,.settlement-summary button{cursor:pointer;min-height:44px}
+.settlement-summary pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;user-select:text;-webkit-user-select:text}

@@ -175,3 +175,18 @@ test("summary: the count, and today's stamp only while it is open and not yet pr
   assert.deepEqual(summary({ stampDefs: [], stamps: [], me: "Mo" }, noon5), { total: 0, n: 0, openToday: "" });
   assert.deepEqual(summary({}, noon5), { total: 0, n: 0, openToday: "" });
 });
+
+test("summary: given the Days clock's day, today's stamp is that day's; its window stays Japan's", async () => {
+  const { dec9State, et } = await import("./fixtures/dec9.js");
+  const { tripNow } = await import("../js/plan.js");
+  const defs = [{ id: "s9", date: "2026-12-09", name_ja: "空", name_en: "Air", motif: "plane" }, { id: "s10", date: "2026-12-10", name_ja: "東京", name_en: "Tokyo" }];
+  const s = dec9State({ stampDefs: defs, stamps: [] });
+  const t = et("2026-12-09T11:00"); // 01:00 on Dec 10 in Japan
+  assert.equal(summary(s, t).openToday, "2026-12-10", "by Japan's day alone it names Dec 10's");
+  assert.equal(summary(s, t, tripNow(s, t).date).openToday, "2026-12-09", "the Days clock's day: Dec 9's");
+  // The window is Japan's: Dec 9's stamp is open from Dec 8 10:00 Eastern to Dec 9 13:00 Eastern.
+  assert.equal(summary(s, et("2026-12-08T09:59"), "2026-12-09").openToday, "");
+  assert.equal(summary(s, et("2026-12-08T10:00"), "2026-12-09").openToday, "2026-12-09");
+  assert.equal(summary(s, et("2026-12-09T12:59"), "2026-12-09").openToday, "2026-12-09");
+  assert.equal(summary(s, et("2026-12-09T13:00"), "2026-12-09").openToday, "");
+});

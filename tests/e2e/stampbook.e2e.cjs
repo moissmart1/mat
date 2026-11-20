@@ -5,6 +5,7 @@
 // fake backend runs the real backend code. Every name and drawing here is
 // invented; the dates are the fixture trip's own (the eleven days of the seed).
 
+const shotPath = require("./shots.cjs");
 const assert = require("node:assert/strict");
 const { WITH_PLAN, NOON12, makeBackend, open, advance, until, text, expectText, visible } = require("./helpers.cjs");
 
@@ -464,7 +465,7 @@ module.exports = [
       assert.equal(m.squares, 11);
       assert.equal(m.squaresIn, true, JSON.stringify(m));
       assert.equal(m.ticketIn, true, JSON.stringify(m));
-      await page.screenshot({ path: "/private/tmp/claude-501/mat-shots/stamp-book/7-narrow-320-days.png" });
+      await page.screenshot({ path: shotPath("stamp-book/7-narrow-320-days.png") });
     },
   },
   ...[

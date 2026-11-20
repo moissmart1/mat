@@ -88,3 +88,9 @@ test("changeText for a stop", () => {
   assert.equal(changeText({ action: "restore", kind: "stop", item: sky }), "Put back Shibuya Sky.");
   assert.equal(changeText({ action: "undo", kind: "stop", item: sky }), "Undone.");
 });
+
+test("changeText: a stay's booking edited or a stay added says the stay's name", () => {
+  assert.equal(changeText({ kind: "stay", action: "edit", item: { name: "Tsubame-so Guest House" } }), "Changed Tsubame-so Guest House.");
+  assert.equal(changeText({ kind: "stay", action: "add", item: { name: "Lakeside Airport Inn" } }), "Added Lakeside Airport Inn.");
+  assert.equal(changeText({ kind: "stay", action: "undo", item: { name: "x" } }), "Undone.");
+});
