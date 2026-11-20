@@ -25,8 +25,9 @@ const D1 = '#rail .pg[data-date="2026-12-09"]';
 const D2 = '#rail .pg[data-date="2026-12-10"]';
 const row = (id) => '.r[data-id="' + id + '"]';
 
+// Location already turned off (mat.where), so the one-time ask is not on the ticket, as in the mock-up.
 async function ready(page, nowMs, opts = {}) {
-  const backend = await open(page, { seed: TWELVE, tab: "days", nowMs, ...opts });
+  const backend = await open(page, { seed: TWELVE, tab: "days", nowMs, storage: { "mat.where": "off" }, ...opts });
   await until(() => page.evaluate(() => document.querySelectorAll("#rail .pg .tk").length === 12), "the twelve tickets draw");
   return backend;
 }
@@ -64,8 +65,24 @@ async function shot(page, name, opts = {}) {
   if (!SHOTS) return;
   fs.mkdirSync(SHOTS, { recursive: true });
   await page.evaluate(() => document.fonts && document.fonts.ready);
-  if (opts.el) await page.locator(opts.el).first().screenshot({ path: SHOTS + "/" + name });
-  else await page.screenshot({ path: SHOTS + "/" + name });
+  if (opts.top) await page.evaluate(() => { document.getElementById("vDays").scrollTop = 0; });
+  if (opts.at) await page.evaluate((sel) => document.querySelector(sel).scrollIntoView({ block: "center" }), opts.at);
+  // The board's fill and the views' fade run in real time: wait them out (not the endless glows, not the rail's scroll-driven fan).
+  const left = () => page.evaluate(() => document.getAnimations().filter((a) => a.playState === "running" && a.timeline === document.timeline && a.effect && a.effect.getComputedTiming().iterations !== Infinity).map((a) => (a.animationName || a.transitionProperty || "?") + "@" + (a.effect.target && a.effect.target.className) + ":" + a.currentTime));
+  try {
+    await until(async () => (await left()).length === 0, "the animations have finished", 3000);
+  } catch (e) {
+    throw new Error(e.message + " " + JSON.stringify(await left()));
+  }
+  if (opts.head) {
+    // The head of a ticket close up: from its band to its perforation.
+    const clip = await page.evaluate((s) => {
+      const tk = document.querySelector(s + " .tk").getBoundingClientRect();
+      const perf = document.querySelector(s + " .tk-perf").getBoundingClientRect();
+      return { x: Math.max(0, tk.left - 8), y: Math.max(0, tk.top - 8), width: tk.width + 16, height: perf.bottom - tk.top + 16 };
+    }, opts.head);
+    await page.screenshot({ path: SHOTS + "/" + name, clip });
+  } else await page.screenshot({ path: SHOTS + "/" + name });
 }
 
 // The open checks for Day 1 at 07:00 Eastern.
@@ -81,6 +98,11 @@ async function day0700(page) {
   assert.equal(await text(page, D1 + " .zs-vh"), "Local time 07:00, Eastern. Japan 21:00, Wednesday.");
   assert.equal(await text(page, D1 + " .zs-say"), "現地Times on this ticket are local, Eastern.");
   assert.equal(await page.evaluate((s) => [...document.querySelectorAll(s + " .zc")].every((c) => c.getAttribute("aria-hidden") === "true"), D1), true);
+  // Every word of both clocks inside the ticket (the weekday goes under the time when it must).
+  assert.equal(await page.evaluate((s) => {
+    const right = document.querySelector(s + " .zs").getBoundingClientRect().right;
+    return [...document.querySelectorAll(s + " .zc *")].every((n) => n.getBoundingClientRect().right <= right + 0.5);
+  }, D1), true, "the clocks fit");
   // The clocks sit at the end of the head, after the date row.
   assert.equal(await page.evaluate((s) => document.querySelector(s + " .tk-head").lastElementChild.className, D1), "zs");
   // 前夜: between the band and the head, two past rows, 現地 on the right.
@@ -104,9 +126,8 @@ const cases = [
     async run({ page }) {
       await ready(page, et("2026-12-09T07:00"));
       await day0700(page);
-      await shot(page, "day-0700.png");
-      await page.evaluate(() => { document.getElementById("vDays").scrollTop = 0; });
-      await shot(page, "eve-strip.png", { el: D1 + " .tk" });
+      await shot(page, "day-0700.png", { top: true });
+      await shot(page, "eve-strip.png", { top: true, head: D1 });
     },
   },
   {
@@ -123,7 +144,7 @@ const cases = [
       assert.equal(await has(page, row(FLIGHT2), "is-next"), true);
       assert.equal(await text(page, row(FLIGHT2) + " .r-lv"), "Next, in 35 min.");
       assert.equal(await count(page, '#pager .sq.is-done'), 0, "nothing used yet");
-      await shot(page, "day-1145.png");
+      await shot(page, "day-1145.png", { top: true });
       // The minute timer moves the clocks without redrawing the ticket.
       await page.evaluate((s) => { document.querySelector(s + " .tk-head").__kept = true; }, D1);
       await page.clock.fastForward(60000);
@@ -156,12 +177,12 @@ const cases = [
       assert.equal(await count(page, D1 + " .zc"), 0, "no clocks on a used day");
       assert.equal(await text(page, D1 + " .zs-say"), "現地Times on this ticket are local, Eastern.");
       assert.equal(await count(page, D2 + " .zs"), 0);
-      await shot(page, "day-1250.png");
+      await shot(page, "day-1250.png", { top: true });
       await page.click("#pager .sq[data-i='0']");
       await until(async () => (await inView(page)) === "2026-12-09", "Day 1 is in view");
       await expectText(page, "#dayCount", /^Day 1 of 12 ?used$/);
       await page.clock.fastForward(1000);
-      await shot(page, "day1-used.png");
+      await shot(page, "day1-used.png", { top: true });
     },
   },
   {
@@ -184,7 +205,7 @@ const cases = [
       assert.equal(await board(page), null);
       const k = await keys(page);
       assert.ok(k.includes("tickets") && !k.includes("before"), "the Tickets key takes Before's place: " + k.join(","));
-      await shot(page, "eve-1700.png");
+      await shot(page, "eve-1700.png", { top: true });
       await page.click("#ticketsBtn");
       await until(() => page.evaluate(() => document.getElementById("vTickets").classList.contains("is-active") && !!document.querySelector("#vTickets .pc-case")), "the pass case shows");
       await expectText(page, "#pcWin .pc-tk .pc-title", "Evening train to Lakeport");
@@ -315,7 +336,8 @@ cases.push(
     timezoneId: ET,
     viewport: { width: 320, height: 568 },
     async run({ page }) {
-      await ready(page, et("2026-12-09T07:00"));
+      // The one-time location ask left on: the narrowest the head gets.
+      await ready(page, et("2026-12-09T07:00"), { storage: {} });
       await until(async () => (await clocks(page, D1)).length === 2, "the clocks draw");
       const n = await noSideways(page);
       assert.equal(n.doc, true, "the page does not scroll sideways");
@@ -325,10 +347,11 @@ cases.push(
         const b = getComputedStyle(document.querySelector(s + " .zc b")).fontSize;
         const zs = document.querySelector(s + " .zs").getBoundingClientRect();
         const kids = [...document.querySelectorAll(s + " .zc")].map((c) => c.getBoundingClientRect());
-        return { w: svg.width, b, fits: kids.every((k) => k.right <= zs.right + 0.5 && k.left >= zs.left - 0.5) };
+        const words = [...document.querySelectorAll(s + " .zc *")].every((n) => n.getBoundingClientRect().right <= zs.right + 0.5);
+        return { w: svg.width, b, fits: words && kids.every((k) => k.right <= zs.right + 0.5 && k.left >= zs.left - 0.5) };
       }, D1);
       assert.deepEqual(size, { w: 34, b: "19px", fits: true });
-      await shot(page, "day-320.png");
+      await shot(page, "day-320.png", { at: D1 + " .zs" });
     },
   },
   {
