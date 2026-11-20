@@ -355,6 +355,25 @@ cases.push(
     },
   },
   {
+    name: "Dec 9 11:00 Eastern: the stamp book's Today row is Dec 9's stamp, not Dec 10's",
+    timezoneId: ET,
+    async run({ page }) {
+      const now = et("2026-12-09T11:00");
+      const backend = makeBackend(TWELVE, { now });
+      for (const [id, date, n] of [["d9", "2026-12-09", "Day one"], ["d10", "2026-12-10", "Day two"]]) {
+        backend.fake.tables.StampDefs.push({ id, date, name_ja: "試", name_en: "Testville " + n, place: "Place " + n, motif: "plane", ink: "ai", shape: "round" });
+      }
+      // Mo pressed Dec 9's stamp at 10:30 Eastern (00:30 on Dec 10 in Japan); Dec 10's is untouched.
+      backend.fake.tables.Stamps.push({ id: "d9|Mo", def: "d9", who: "Mo", at: new Date(et("2026-12-09T10:30")).toISOString(), gone: "" });
+      await ready(page, now, { backend });
+      await page.click("#stampBtn");
+      await until(() => page.evaluate(() => { const b = document.getElementById("book"); return b.classList.contains("is-open") && Math.abs(b.getBoundingClientRect().bottom - innerHeight) < 1; }), "the book opens");
+      assert.equal(await text(page, "#bookTH"), "今日 Today");
+      const mine = await page.evaluate(() => { const p = document.querySelector("#bookWho .bk-p:nth-child(1)"); return p.querySelector("b").textContent + "|" + p.querySelector("span i").textContent; });
+      assert.equal(mine, "You|00:30", "Today is Dec 9's stamp (pressed), not Dec 10's (not yet)");
+    },
+  },
+  {
     name: "1440 × 900 at 07:00 Eastern on Dec 9: the two panes carry the clocks and the strip",
     timezoneId: ET,
     viewport: { width: 1440, height: 900 },

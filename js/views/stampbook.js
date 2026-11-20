@@ -30,7 +30,7 @@ import { bookStampSVG, countText, dayNumber, japanClock, japanDay, lockedLine, m
 import { calm, wetInk } from "../fx.js";
 import { thud, primeSound } from "../sound.js";
 import { fillSeal } from "../picture.js";
-import { inPlace } from "../plan.js";
+import { inPlace, tripNow } from "../plan.js";
 
 const RULE = "One stamp a day, pressed on the day, in the place.";
 const STAMPED = "Stamped.";
@@ -188,7 +188,7 @@ export function mountStampBook(root, store, { now = () => Date.now(), where = nu
 
   function drawToday(m) {
     const issue = m.defs.find((d) => !d.date) || null;
-    const today = japanDay(m.t);
+    const today = tripNow(m.s, m.t).date;
     const day = m.defs.find((d) => d.date === today) || null;
     const d = day || issue;
     const row = $("bookToday");
@@ -273,7 +273,7 @@ export function mountStampBook(root, store, { now = () => Date.now(), where = nu
     t.append([d.name_ja, d.name_en].filter(Boolean).join(" ") || "Stamp");
     if (d.place) t.append(el("i", "", d.place));
     const at = isoMs(stamp.at);
-    const day = d.date || (isFinite(at) ? japanDay(at) : "");
+    const day = d.date || (isFinite(at) ? japanDay(at) : ""); // own day: the pressed stamp's own date, not "today"
     const when = (day ? weekdayOf(day) + " " + monthDay(day) : "") + (isFinite(at) ? (day ? " · " : "") + "stamped " + japanClock(at) : "");
     if (when) t.append(el("i", "", when));
     if (stamp.here === true) t.append(el("i", "in", "pressed in " + (d.place || "the place")));
