@@ -494,6 +494,18 @@ async function both(page) {
   await until(() => page.evaluate(() => document.querySelectorAll("#rc .rc-row").length > 0 && document.querySelectorAll("#rail .pg .tk").length === 11), "both panes draw");
   return backend;
 }
+// Drive the phone until two rendering frames after keyup. This lets a
+// deferred key handler run before we inspect the counter and snap position.
+async function expectArrowIgnored(page, why) {
+  await page.keyboard.press("ArrowRight");
+  const painted = page.evaluate(() => new Promise(resolve => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)));
+  }));
+  await page.clock.runFor(64);
+  await painted;
+  assert.equal(await dayText(page), "Day 3 of 11", why);
+}
+
 cases.push({
   name: "on a computer the arrow keys move the day with nothing focused, and not while a field or a sheet has focus",
   viewport: WIDE,
@@ -515,12 +527,10 @@ cases.push({
     await waitOpen(page, "reg");
     await page.click("#xWhat");
     assert.equal(await page.locator("#xWhat").evaluate(el => el === document.activeElement), true);
-    await page.keyboard.press("ArrowRight");
-    assert.equal(await dayText(page), "Day 3 of 11", "not while a field has focus");
+    await expectArrowIgnored(page, "not while a field has focus");
     // The register is open and nothing has focus: still not.
     await page.evaluate(() => document.activeElement.blur());
-    await page.keyboard.press("ArrowRight");
-    assert.equal(await dayText(page), "Day 3 of 11", "not while the register is open");
+    await expectArrowIgnored(page, "not while the register is open");
     await page.keyboard.press("Escape");
     await until(async () => !(await isOpen(page, "reg")), "the register closes");
     // A Days sheet is open: not.
@@ -528,8 +538,7 @@ cases.push({
     await page.evaluate((d) => document.querySelector('#rail .pg[data-date="' + d + '"] .tk-stay').click(), D12);
     await waitOpen(page, "stay");
     await page.evaluate(() => document.activeElement && document.activeElement.blur());
-    await page.keyboard.press("ArrowRight");
-    assert.equal(await dayText(page), "Day 3 of 11", "not while a sheet is open");
+    await expectArrowIgnored(page, "not while a sheet is open");
   },
 });
 cases.push({
@@ -555,8 +564,7 @@ cases.push({
     });
     await until(() => page.evaluate(() => !document.getElementById("vDays").classList.contains("is-active")), "Before covers Days");
     await page.evaluate(() => document.activeElement && document.activeElement.blur());
-    await page.keyboard.press("ArrowRight");
-    assert.equal(await dayText(page), "Day 3 of 11");
+    await expectArrowIgnored(page, "Before covers Days");
   },
 });
 cases.push({

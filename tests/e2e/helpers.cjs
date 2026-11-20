@@ -10,7 +10,8 @@ const fs = require("fs");
 const path = require("path");
 const { createFakeBackend } = require("../fake-backend.cjs");
 
-// The runner sets MAT_PORT to its own listener before loading any cases.
+// MAT_PORT picks the port (default 4173). Two checkouts testing at once need two ports:
+// on one port the second run would be served the first one's files.
 const PORT = Number(process.env.MAT_PORT) || 4173;
 const ORIGIN = "http://localhost:" + PORT;
 const SEED = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "fixtures", "seed.json"), "utf8"));
@@ -122,8 +123,10 @@ async function open(page, { seed = SEED, key = "test-key", me = "Mo", how = "1",
     }
   }, [entries, mark]);
 
-  // install starts ticking immediately. Leave more than the case timeout
-  // before the target, then freeze there before any app timers are created.
+  // Install a minute early, then pause at nowMs: install starts the clock
+  // running in real time, so installing at nowMs itself lets a slow machine
+  // tick past nowMs before pauseAt and Playwright throws "Cannot fast-forward
+  // to the past". The margin makes the order impossible to reverse.
   await page.clock.install({ time: nowMs - 60000 });
   await page.clock.pauseAt(nowMs);
   await page.goto(ORIGIN + "/" + hash);

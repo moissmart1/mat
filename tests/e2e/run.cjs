@@ -47,6 +47,7 @@ async function hermetic(context) {
   // Let the driver pass same-origin assets through without a callback into
   // this runner for every script, image and stylesheet. All other URLs
   // still receive local fixtures, including service-worker requests.
+  if (!/^\d+$/.test(process.env.MAT_PORT || "")) throw new Error("Browser routes need the test server port");
   const external = new RegExp("^(?!http://localhost:" + process.env.MAT_PORT + "/)");
   await context.route(external, (route) => {
     const url = new URL(route.request().url());
