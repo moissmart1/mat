@@ -223,7 +223,7 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
     // personal: this phone opened its own person's link (load said so); me is then theirs.
     // cleared: the trip was taken off this phone after its key was refused ({ kept: own unsent lines kept }).
     personal: false, cleared: null,
-    history: { entries: [], more: false, loading: false, error: null },
+    history: { entries: [], more: false, loading: false, error: null, firstPageError: null },
   };
 
   const subs = new Set();
@@ -454,7 +454,7 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
       rev: null, me: null, personal: false, sheetUrl: "", plannerLinked: false, todosPulledAt: "", paymentsPulledAt: "",
       paymentProblems: { at: "", list: [], more: 0 }, todoProblems: { at: "", list: [], more: 0 },
       loadedAt: null, lastChange: null, notice: null, setAside: [],
-      history: { entries: [], more: false, loading: false, error: null },
+      history: { entries: [], more: false, loading: false, error: null, firstPageError: null },
       cleared: had ? { kept: mine.length } : null,
       settlementProvisional: false,
     });
@@ -1664,7 +1664,10 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
         changed();
         return got;
       }
-      state.history = { entries: older ? h.entries.concat(r.data.entries) : r.data.entries, more: !!r.data.more, loading: false, error: null };
+      state.history = {
+        entries: older ? h.entries.concat(r.data.entries) : r.data.entries, more: !!r.data.more,
+        loading: false, error: null, firstPageError: older ? h.firstPageError : null,
+      };
       historyLoaded = true;
     } catch (err) {
       got = { entries: [], more: false, error: codeOf(err) };
@@ -1672,7 +1675,7 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
         changed();
         return got;
       }
-      state.history = { ...state.history, loading: false, error: codeOf(err) };
+      state.history = { ...state.history, loading: false, error: got.error, firstPageError: older ? h.firstPageError : got.error };
     }
     changed();
     return got;
