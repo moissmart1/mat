@@ -395,7 +395,7 @@ export function mountStub(root, store, keep, { clock = null } = {}) {
     tag.append(el("span", "kt-hole"), el("div", "kt-yado kt-burn", "宿"), nm, el("div", "kt-nights kt-burn", night.total ? words : ""));
     const n = notches(night);
     if (n) tag.append(n);
-    wrap.append(cord(60, 44, "left:50%;margin-left:-30px;top:-28px"), tag);
+    wrap.append(cord(60, 44, { left: "50%", marginLeft: "-30px", top: "-28px" }), tag);
 
     // The paper label tied to it.
     const label = el("div", "kt-label");

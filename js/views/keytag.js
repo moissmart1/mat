@@ -7,7 +7,7 @@
 // (js/views/stub.js). Decoration only: every tag is aria-hidden, and the words
 // beside it say the same.
 //
-// - cord(w, h, style): the red cord, an inline SVG.
+// - cord(w, h, style): the red cord, an inline SVG; style: { left, marginLeft, top }.
 // - notches(night): one notch per night (up to 7; more nights, none), filled
 //   for the nights reached; null when there are none to draw.
 // - tagSmall(ref, night): the 92 px tag: 宿, the reference on its label
@@ -35,7 +35,8 @@ export function cord(w, h, style) {
   svg.setAttribute("viewBox", "0 0 " + w + " " + h);
   svg.setAttribute("aria-hidden", "true");
   svg.setAttribute("focusable", "false");
-  if (style) svg.setAttribute("style", style);
+  // Through the style object, never a style attribute (the page's CSP refuses those).
+  if (style) for (const [k, v] of Object.entries(style)) svg.style[k] = v;
   const m = w / 2;
   const d = "M" + (m - 7) + " " + h + " C " + (m - 16) + " " + h * 0.35 + ", " + (m - 4) + " 4, " + m + " 4 S " + (m + 16) + " " + h * 0.35 + ", " + (m + 7) + " " + h;
   for (const [stroke, width, dash] of [["#8E2B1B", "3.2", ""], ["#D85A3F", "1", "2 3"]]) {
@@ -87,6 +88,6 @@ export function tagSmall(ref, night) {
   const n = notches(night);
   if (n) tag.append(n);
   tag.append(el("div", "kt-nights kt-burn", nightsShort(night)));
-  wrap.append(cord(40, 34, "left:50%;margin-left:-20px;top:-22px"), tag);
+  wrap.append(cord(40, 34, { left: "50%", marginLeft: "-20px", top: "-22px" }), tag);
   return wrap;
 }

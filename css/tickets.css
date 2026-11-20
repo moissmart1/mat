@@ -214,10 +214,11 @@
 #tix .kt-label{position:relative;margin-top:-8px;background:var(--grain),var(--tag);color:var(--print);border-radius:3px;box-shadow:0 30px 50px -18px #000;transform:rotate(.5deg);font-weight:700}
 #tix .kt-label::before{content:"";position:absolute;left:50%;top:10px;width:12px;height:12px;margin-left:-6px;border-radius:50%;background:#0F0C0B;box-shadow:0 0 0 2px #C9A66B}
 #tix .kt-label .stub-p{padding:30px 14px 0}
-#tix .kt-label .ref-big b{font-size:44px}
+#tix .kt-label .ref-big b{font-size:44px;letter-spacing:.04em}
+#tix .kt-label .stub-k>span:last-child{flex:none;white-space:nowrap}
 #tix .kt-label .facts{margin-top:10px}
 #tix .pg-cap{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin:12px 0 0;font-size:12.5px;font-weight:900}
-#tix .pg-cap span{font-weight:700}
+#tix .pg-cap span{flex:none;font-weight:700;white-space:nowrap}
 #tix .pages{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:10px 0 2px;align-items:start}
 #tix .pages.is-one{grid-template-columns:1fr}
 #tix .pages .stub-code.is-page{width:100%;margin:0}
