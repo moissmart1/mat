@@ -342,7 +342,7 @@ test("check.yml's slices and triggers, the branch name and the repository are re
   assert.equal(startsOnCi(yml.replace('[dev, "ci/**"]', "[dev]")), false, "a ci/ push would start no run");
   assert.equal(startsOnCi(""), false);
   assert.equal(ciBranch(HEAD), "ci/release-a1b2c3d");
-  assert.equal(judgePush({ remoteRef: "refs/heads/" + ciBranch(HEAD), localSha: HEAD, ci: { atHead: true, clean: true, found: 0 } }), null, "the push check lets it out");
+  assert.equal(judgePush({ remoteRef: "refs/heads/" + ciBranch(HEAD), localSha: HEAD, scan: { atHead: true, clean: true, found: 0 } }), null, "the push check lets it out");
   assert.equal(repoOf("https://github.com/moissmart1/mat.git"), "moissmart1/mat");
   assert.equal(repoOf("git" + "@github.com:moissmart1/mat.git"), "moissmart1/mat"); // in two pieces: the scan reads it as a mail address
   assert.equal(repoOf("https://example.com/x/y.git"), "");
