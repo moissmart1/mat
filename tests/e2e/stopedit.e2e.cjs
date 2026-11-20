@@ -4,7 +4,7 @@
 // clock is 13:20 on Dec 12 in Japan, Day 3 (Shibuya Sky at 14:00 is next).
 
 const assert = require("node:assert/strict");
-const { WITH_PLAN, open, advance, until, text, expectText } = require("./helpers.cjs");
+const { WITH_PLAN, open, advance, until, text, expectText, visible } = require("./helpers.cjs");
 
 const D12 = "2026-12-12";
 const SKY = "planstop1203";
