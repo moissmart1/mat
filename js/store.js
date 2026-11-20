@@ -277,6 +277,9 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
     for (const op of ops) {
       if (op.kind === "expense" || op.kind === "payment") {
         // Once delayed, a retry remains provisional until the write is acknowledged.
+        // op.delayed is deliberately sticky (derive sets it and never clears it; the
+        // op is dropped once acknowledged) and is not saved to mat.queue: ops restored
+        // from it come back queued, which sets it again (#21 review M3).
         if (op.status === "queued" || op.status === "failed" || op.lost || !state.online) op.delayed = true;
         if (op.delayed) state.settlementProvisional = true;
       }

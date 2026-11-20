@@ -177,6 +177,25 @@ module.exports = [
     },
   },
   {
+    name: "a phone that has not picked a name shows the provisional line on Money as well as on the slip",
+    async run({ page }) {
+      const backend = await open(page, { seed: SEED, nowMs: NOON12, me: null });
+      await until(() => page.evaluate(() => globalThis.__matTest.store.state.status === "ready"), "the trip loads");
+      assert.equal(await page.evaluate(() => globalThis.__matTest.store.state.me), null, "no name picked");
+      await until(() => visible(page, "#slip"), "the slip draws");
+      assert.equal(await visible(page, "#moneyProvisional"), false);
+      assert.equal(await visible(page, "#slipProvisional"), false);
+
+      backend.failWith = "network";
+      await advance(page, backend, POLL_MS);
+      await until(() => page.evaluate(() => globalThis.__matTest.store.state.online === false), "no signal");
+      await page.evaluate(() => globalThis.__matTest.store.addExpense({ day: "pre", title: "Onigiri", amount: 450, currency: "JPY", paidBy: "Mo", split: ["Mo", "Ajen", "Trenton"], splitMode: "equal", splitVals: [], note: "", kind: "" }));
+      await until(() => visible(page, "#moneyProvisional"), "Money says the balance is provisional");
+      assert.equal(await visible(page, "#slipProvisional"), true);
+      // Clearing once synced is covered by the case above (a phone with a name).
+    },
+  },
+  {
     name: "one check at a time: a check that never answers is not joined by more",
     async run({ page }) {
       const backend = await ready(page);

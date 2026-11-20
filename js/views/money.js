@@ -215,7 +215,9 @@ export function mountMoney(root, store, { onRing = () => {}, onLine = () => {}, 
     // The same reading the slip shows (one source: viewerOwed).
     const { live, list, bal, provisional } = viewerOwed(s);
     say.textContent = s.me ? sentence(standing(s.me, list, bal)) : "";
-    provisionalNote.hidden = !provisional || !s.me;
+    // Shown whether or not this phone has picked a name, as the slip's own line is:
+    // the totals and the slip are just as provisional (#21 review M1).
+    provisionalNote.hidden = !provisional;
     // The words stay dim; the three figures are bold and bright.
     sayP.replaceChildren("The trip so far is ", el("b", "", dollars(sum(live, cadCents))), ", about ", el("b", "", yen(sum(live, jpyOf))),
       ", across ", el("b", "", String(live.length)), live.length === 1 ? " receipt." : " receipts.");

@@ -110,7 +110,7 @@ const calm = () => !!(globalThis.matchMedia && globalThis.matchMedia("(prefers-r
 const newestFirst = (a, b) => (a.stampedAt === b.stampedAt ? 0 : String(b.stampedAt || "") < String(a.stampedAt || "") ? -1 : 1);
 
 // The viewer's reading of who owes whom, under their own Simplify setting:
-// The one source for both the slip and
+// { names, live, simplify, provisional, list, bal }. The one source for both the slip and
 // the sentence at the top of Money (#say), so they cannot disagree.
 export function viewerOwed(s) {
   const names = s.people.map((p) => p.name);
