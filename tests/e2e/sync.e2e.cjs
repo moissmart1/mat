@@ -53,6 +53,40 @@ const waitNoRow = (page, title, what = "") => until(async () => !(await rowOf(pa
 const comeBack = (page) => page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
 const signalBack = (page) => page.evaluate(() => window.dispatchEvent(new Event("online")));
 
+// What the worker sends each open page when a new release takes over (as tests/e2e/update.e2e.cjs).
+const announce = (page) => page.evaluate(() => new Promise((resolve) => {
+  const ch = new MessageChannel();
+  ch.port1.onmessage = () => resolve(true);
+  navigator.serviceWorker.dispatchEvent(new MessageEvent("message", { data: { type: "mat-new-version" }, ports: [ch.port2] }));
+  setTimeout(() => resolve(false), 500);
+}));
+const markPage = (page) => page.evaluate(() => { window.__notReloaded = true; });
+const reloaded = (page) => page.evaluate(() => window.__notReloaded !== true).catch(() => true);
+const failQueueWrites = (page) => page.evaluate(() => {
+  const save = Storage.prototype.setItem;
+  Storage.prototype.setItem = function (key, value) {
+    if (key === "mat.queue") throw new DOMException("Storage full", "QuotaExceededError");
+    return save.call(this, key, value);
+  };
+});
+const MEMORY_ONLY = "Unsent changes are only in this app’s memory: don’t close it while you copy your link.";
+
+// With no signal a line is rung up; then the key is refused, the trip comes
+// off the phone and the no-key screen shows, the line kept for the new link.
+async function refusedWithOneUnsent(page, backend) {
+  backend.failWith = "network";
+  await advance(page, backend, POLL_MS);
+  await expectText(page, "#net", /^No signal\./);
+  await ringUp(page, "Onigiri", "4 5 0");
+  await page.click("#regDone");
+  await waitClosed(page);
+  backend.failWith = "bad_key";
+  await page.evaluate(() => globalThis.__matTest.store.checkRev());
+  await until(() => visible(page, "#gate"), "the no-key screen shows", 10000);
+  assert.equal(await page.evaluate(() => globalThis.__matTest.store.outbox().unsent), 0, "nothing left in the outbox: only the memory copy holds the line");
+  await page.evaluate(() => document.activeElement && document.activeElement.blur());
+}
+
 async function ready(page, opts = {}) {
   const backend = await open(page, { seed: SEED, nowMs: NOON12, ...opts });
   await waitRows(page, 8);
@@ -175,6 +209,32 @@ module.exports = [
       await until(async () => !(await visible(page, "#net")), "#net goes away");
       await idle(page);
       assert.equal(backend.requests.filter((r) => r.action === "addExpense").length, 1, "sent once");
+    },
+  },
+  {
+    name: "the signal strip warns when the phone cannot save the queue",
+    async run({ page }) {
+      const backend = await ready(page);
+      await page.evaluate(() => {
+        const save = Storage.prototype.setItem;
+        Storage.prototype.setItem = function (key, value) {
+          if (key === "mat.queue") throw new DOMException("Storage full", "QuotaExceededError");
+          return save.call(this, key, value);
+        };
+      });
+
+      backend.failWith = "network";
+      await advance(page, backend, POLL_MS);
+      await expectText(page, "#net", NO_SIGNAL);
+      await ringUp(page, "Onigiri", "4 5 0");
+      await page.click("#regDone");
+      await waitClosed(page);
+      await expectText(page, "#net", "No signal. Couldn’t save unsent changes on this device. Keep the app open to avoid losing them. 1 to send.");
+
+      backend.failWith = null;
+      await signalBack(page);
+      await waitRow(page, "Onigiri", (r) => !r.cls.includes("is-pending"), "sent");
+      await until(async () => !(await visible(page, "#net")), "the queue warning goes away");
     },
   },
   {
@@ -327,6 +387,36 @@ module.exports = [
       await context.route("**/*", (route) => route.abort());
       await page.reload();
       await expectText(page, "body", "No signal. Open again when you have some.");
+    },
+  },
+  {
+    name: "a refused key while the queue cannot be saved: the no-key screen says not to close the app, and a new release waits",
+    async run({ page }) {
+      const backend = await ready(page);
+      await failQueueWrites(page);
+      await refusedWithOneUnsent(page, backend);
+      assert.equal(await page.evaluate(() => globalThis.__matTest.store.state.queueStorageFailed), true);
+      const said = await text(page, "#gate p");
+      assert.ok(said.endsWith(" " + MEMORY_ONLY), "the screen ends with the memory-only sentence: " + said);
+      assert.equal(said.includes("Keep the app open"), false, "no 'Keep the app open' on the no-key screen");
+      await markPage(page);
+      assert.equal(await announce(page), true, "the page answers");
+      await advance(page, backend, 7000);
+      assert.equal(await reloaded(page), false, "not while the unsent line is only in memory");
+    },
+  },
+  {
+    name: "a refused key with the queue saved: no memory-only sentence, and a new release reloads",
+    async run({ page }) {
+      const backend = await ready(page);
+      await refusedWithOneUnsent(page, backend);
+      assert.equal(await page.evaluate(() => globalThis.__matTest.store.state.queueStorageFailed), false);
+      assert.equal((await text(page, "#gate p")).includes(MEMORY_ONLY), false);
+      await markPage(page);
+      // Safe at once, so it reloads straight away (as update.e2e's first case).
+      const answered = announce(page).catch(() => true);
+      await until(() => reloaded(page), "it reloads", 10000);
+      await answered;
     },
   },
 ];

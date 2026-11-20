@@ -3,7 +3,8 @@
 // sentence. It shows while the phone has no signal ("No signal." alone when
 // this phone has never loaded anything), or while a line or a stamp
 // is held on the phone for the next contact, and says how many lines are
-// still to send. While it shows, the screens move down by its height (the
+// still to send. It also warns if the queue could not be saved. While it
+// shows, the screens move down by its height (the
 // --net-h property on the phone), so it never covers the sentence, and it
 // sits below every sheet and the bottom bar.
 //
@@ -11,6 +12,7 @@
 
 const SHOWING_LAST = "No signal. Showing what this phone last saw.";
 const NOTHING_YET = "No signal.";
+export const KEEP_OPEN = "Couldn’t save unsent changes on this device. Keep the app open to avoid losing them.";
 
 export function mountNet(root, store) {
   const strip = document.createElement("div");
@@ -32,10 +34,11 @@ export function mountNet(root, store) {
 
   function render(s) {
     const { unsent, waiting } = store.outbox();
-    const show = !s.online || waiting > 0;
-    // With nothing loaded yet there is nothing being shown: just "No signal."
-    words.textContent = s.online ? "" : s.loadedAt === null ? NOTHING_YET : SHOWING_LAST;
-    count.textContent = unsent > 0 ? (s.online ? "" : " ") + unsent + " to send." : "";
+    let message = s.online ? "" : s.loadedAt === null ? NOTHING_YET : SHOWING_LAST;
+    if (s.queueStorageFailed) message = s.online ? KEEP_OPEN : NOTHING_YET + " " + KEEP_OPEN;
+    const show = !!message || waiting > 0;
+    words.textContent = message;
+    count.textContent = unsent > 0 ? (message ? " " : "") + unsent + " to send." : "";
     if (strip.hidden === show) {
       strip.hidden = !show;
       root.classList.toggle("net-on", show);

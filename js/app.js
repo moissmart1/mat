@@ -48,10 +48,10 @@ function phoneStorage() {
   try {
     const s = globalThis.localStorage;
     s.getItem("mat.key");
-    return s;
+    return { storage: s, durableStorage: true };
   } catch {
     const mem = new Map();
-    return {
+    const storage = {
       getItem: (k) => (mem.has(k) ? mem.get(k) : null),
       setItem: (k, v) => mem.set(k, String(v)),
       removeItem: (k) => mem.delete(k),
@@ -60,6 +60,7 @@ function phoneStorage() {
         return mem.size;
       },
     };
+    return { storage, durableStorage: false };
   }
 }
 
@@ -240,7 +241,7 @@ function mountTabs(store, storage) {
 }
 
 function start() {
-  const raw = phoneStorage();
+  const { storage: raw, durableStorage } = phoneStorage();
   const taken = takeKey(raw);
   let keyHere = taken.key;
   const storage = withKey(raw, () => keyHere);
@@ -262,6 +263,7 @@ function start() {
   store = createStore({
     api,
     storage,
+    durableStorage,
     isHidden: () => document.visibilityState === "hidden",
     clear: (queue) => {
       keyHere = null;
@@ -784,8 +786,10 @@ function start() {
   });
   // A new release reloads the page only when nothing would be lost (js/update.js).
   // Nothing unsent or still sending, no notice waiting to be read (it would be
-  // wiped), and Add tickets not reading or adding, open or closed (fix round 1, I4).
-  nothingUnsent = () => store.outbox().unsent === 0 && !store.busy() && !store.state.notice && !bulk.isBusy();
+  // wiped), Add tickets not reading or adding, open or closed (fix round 1, I4),
+  // and no unsent changes held only in memory because the phone could not save them (#20).
+  nothingUnsent = () =>
+    store.outbox().unsent === 0 && !store.busy() && !store.state.notice && !bulk.isBusy() && !store.state.queueStorageFailed;
   if (document.visibilityState !== "hidden") startChecking();
 }
 
