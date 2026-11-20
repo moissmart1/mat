@@ -19,7 +19,10 @@ read `AGENTS.md` as well.
 
 ## How a change gets to the phones
 
-1. Branch from `dev`. Name the branch for what it does.
+1. Branch from `dev`. Name the branch for what it does. On the release Mac,
+   commit your changes and push the feature branch from a clean checkout at
+   that exact commit. The local pre-push hook runs the full private-data
+   scan, including the private list, as it does for a `ci/<name>` branch.
 2. Use Node 25, the version the release runs on (on Node 22 one test file's
    timer cases are cancelled). Make the change with its tests. `npm test` runs the unit tests;
    `node tests/e2e/run.cjs <words>` runs the browser tests whose file names
