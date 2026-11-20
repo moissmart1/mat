@@ -299,6 +299,7 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
     count.replaceChildren(...parts);
     count.hidden = !dates.length;
     pager.querySelectorAll(".sq").forEach((b, i) => {
+      rail.children[i].classList.toggle("is-neighbor", Math.abs(i - cur) === 1);
       b.classList.toggle("is-cur", i === cur);
       b.classList.toggle("is-done", states[i] === "used");
       if (i === cur) b.setAttribute("aria-current", "date");
@@ -398,7 +399,21 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
     openId = was === r.dataset.id ? null : r.dataset.id;
     applyOpen();
   }
+  // A mouse press on a neighboring control must not focus it and scroll
+  // the strip before the click has a chance to select its day.
+  const neighborPaper = (ev) => ev.target.closest(".pg.is-neighbor .tk");
+  rail.addEventListener("pointerdown", (ev) => {
+    if (ev.button === 0 && ev.pointerType === "mouse" && neighborPaper(ev)) ev.preventDefault();
+  });
   rail.addEventListener("click", (ev) => {
+    // Older browsers deliver clicks as MouseEvents, without a pointer type.
+    const mouse = ev.detail > 0 && (ev.pointerType ? ev.pointerType === "mouse" : matchMedia("(hover: hover) and (pointer: fine)").matches);
+    const paper = mouse && neighborPaper(ev);
+    if (paper) {
+      ev.preventDefault();
+      jump(dates.indexOf(paper.closest(".pg").dataset.date), true);
+      return;
+    }
     if (where && ev.target.closest(".tk-ask .yes")) {
       where.ask();
       return;
