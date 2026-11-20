@@ -8,7 +8,7 @@ const fs = require("node:fs");
 const { WITH_PLAN, makeBackend, open, until, text, expectText } = require("./helpers.cjs");
 const { pngBytes, pdfBytes, SVG } = require("./pictures.cjs");
 
-const SHOTS = "/private/tmp/claude-501/mat-shots/tickets";
+const SHOTS = require("./shots.cjs")("tickets");
 const D12 = "2026-12-12";
 const SKY = "planstop1203";
 const LUNCH = "planstop1202";

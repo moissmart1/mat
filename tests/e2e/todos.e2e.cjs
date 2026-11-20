@@ -5,6 +5,7 @@
 // cannot: fake.planner.cellFails), and every write it receives is recorded.
 // Every item, note, link and id here is made up.
 
+const shotPath = require("./shots.cjs");
 const assert = require("node:assert/strict");
 const { SEED, NOON12, makeBackend, open, advance, until, text, expectText, visible } = require("./helpers.cjs");
 
@@ -685,8 +686,8 @@ module.exports.push(
         bold: 0, below: true, fits: true,
       });
       await page.evaluate(() => document.getElementById("bwProblems").scrollIntoView({ block: "end" }));
-      require("fs").mkdirSync("/private/tmp/claude-501/mat-shots/ticks", { recursive: true });
-      await page.screenshot({ path: "/private/tmp/claude-501/mat-shots/ticks/before-problems.png" });
+      require("fs").mkdirSync(shotPath("ticks"), { recursive: true });
+      await page.screenshot({ path: shotPath("ticks/before-problems.png") });
       // The planner put right: the next real pull clears the block.
       backend.fake.planner.tabs["Book Now"].splice(-2, 2);
       await advance(page, backend, 31 * 1000);

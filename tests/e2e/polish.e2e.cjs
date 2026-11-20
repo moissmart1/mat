@@ -292,7 +292,6 @@ const linesOf = (page, sel) => page.evaluate((s) => {
   }
   return lines.map((l) => l.words.join(" "));
 }, sel);
-// With the stand-in face these tests run in, 390 px breaks well and 393 to 425 px leave "you." alone.
 for (const size of [PORTRAIT, { width: 393, height: 852 }, { width: 402, height: 874 }, { width: 414, height: 896 }, { width: 320, height: 568 }]) {
   cases.push({
     name: "the Invite hint on You at " + size.width + " px has no one-word last line",
@@ -659,7 +658,7 @@ function trouble(page) {
     return out;
   }, SMALLEST);
 }
-const SHOTS = "/private/tmp/claude-501/mat-shots/polish";
+const SHOTS = require("./shots.cjs")("polish");
 async function clean(page, name) {
   const fs = require("fs");
   fs.mkdirSync(SHOTS, { recursive: true });
