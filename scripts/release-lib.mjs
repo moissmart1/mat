@@ -198,6 +198,8 @@ export async function migrateUntilCurrent(ask, wanted, { sleep = (ms) => new Pro
   let waited = 0;
   let calls = 0;
   let seen = "no answer";
+  // A missing wanted stamp can never be "this commit": refuse rather than match an answer without one.
+  if (typeof wanted !== "string" || wanted.trim() === "") return { ok: false, added: [], calls: 0, why: "no commit stamp to wait for" };
   for (let wait = 3000; ; wait = Math.min(Math.round(wait * 1.5), 15000)) {
     const r = await ask().catch(() => null);
     calls++;

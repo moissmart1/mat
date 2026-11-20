@@ -244,3 +244,13 @@ test("ship settles migrate only through migrateUntilCurrent with the commit's st
   const actions = readFileSync(join(ROOT, "backend", "Actions.js"), "utf8");
   assert.match(actions, /ok_\(\{ added: added, stamp: typeof BACKEND_STAMP === "string" \? BACKEND_STAMP : "" \}/);
 });
+
+test("migrate wait refuses when there is no commit stamp to wait for (review minor 1)", async () => {
+  const { migrateUntilCurrent } = await import("../scripts/release-lib.mjs");
+  for (const wanted of [undefined, "", "  "]) {
+    let asked = 0;
+    const r = await migrateUntilCurrent(async () => { asked++; return { ok: true, data: { added: [] } }; }, wanted, { sleep: async () => {}, budgetMs: 0 });
+    assert.equal(r.ok, false);
+    assert.equal(asked, 0);
+  }
+});
