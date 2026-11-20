@@ -1197,13 +1197,27 @@ test("loadHistory({ older: true }) appends the next page", async () => {
   await p.store.loadHistory();
   assert.equal(p.store.state.history.entries.length, 200);
   assert.equal(p.store.state.history.more, true);
-  p.net.failing.add("history");
-  await p.store.loadHistory();
-  p.net.failing.delete("history");
   await p.store.loadHistory({ older: true });
   assert.equal(p.store.state.history.entries.length, 205);
   assert.equal(p.store.state.history.more, false);
   assert.equal(new Set(p.store.state.history.entries.map((e) => e.id)).size, 205);
+  assert.equal(p.store.state.history.firstPageError, null);
+});
+
+test("a failed first-page refresh stays marked through Show older and clears on a fresh first page", async () => {
+  const expenses = [];
+  for (let i = 0; i < 205; i++) expenses.push({ id: "bulk" + String(i).padStart(6, "0"), day: "pre", title: "Line " + i, amount: 100, currency: "JPY", paidBy: "Mo", split: ALL.slice(), addedAt: new Date(Date.UTC(2026, 10, 1) + i * 1000).toISOString() });
+  const p = phone({ seed: { expenses } });
+  await p.store.boot();
+  await p.store.loadHistory();
+  assert.equal(p.store.state.history.firstPageError, null);
+  p.net.failing.add("history");
+  await p.store.loadHistory();
+  assert.equal(p.store.state.history.entries.length, 200, "the entries already loaded are kept");
+  assert.equal(p.store.state.history.firstPageError, "network");
+  p.net.failing.delete("history");
+  await p.store.loadHistory({ older: true });
+  assert.equal(p.store.state.history.entries.length, 205);
   assert.equal(p.store.state.history.firstPageError, "network", "an older page cannot refresh the newest entries");
   await p.store.loadHistory();
   assert.equal(p.store.state.history.firstPageError, null);
