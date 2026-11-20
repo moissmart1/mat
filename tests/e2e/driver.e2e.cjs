@@ -10,7 +10,7 @@ const assert = require("node:assert/strict");
 const fs = require("fs");
 const { WITH_PLAN, open, until, text } = require("./helpers.cjs");
 
-const SHOTS = "/private/tmp/claude-501/mat-shots/loc";
+const SHOTS = require("./shots.cjs")("loc");
 const shot = async (page, name) => {
   fs.mkdirSync(SHOTS, { recursive: true });
   await page.screenshot({ path: SHOTS + "/" + name + ".png" });

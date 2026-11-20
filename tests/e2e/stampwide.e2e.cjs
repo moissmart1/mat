@@ -19,7 +19,7 @@ const DEFS = [
   })),
   { id: "iss", date: "", name_ja: "発行", name_en: "Issued", place: "", motif: "crest", ink: "shu", shape: "round" },
 ];
-const SHOTS = "/private/tmp/claude-501/mat-shots/stamp-book";
+const SHOTS = require("./shots.cjs")("stamp-book");
 
 async function ready(page) {
   const backend = makeBackend(WITH_PLAN, { now: NOON12 });

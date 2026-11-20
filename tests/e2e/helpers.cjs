@@ -126,6 +126,8 @@ async function open(page, { seed = SEED, key = "test-key", me = "Mo", how = "1",
   await page.clock.install({ time: nowMs });
   await page.clock.pauseAt(nowMs);
   await page.goto(ORIGIN + "/" + hash);
+  // Initial geometry is measured with the faces the page has requested.
+  await page.evaluate(() => document.fonts.ready.then(() => true));
   return be;
 }
 
