@@ -170,7 +170,13 @@ const ADDRESS_KEY_REFUSED = "That link didn’t work. This phone stays on the li
 // phone's keep, to send one that was queued (its data is never in mat.queue).
 // afterLoad(): called after every load that answered (js/tickets.js
 // fetchMissing hangs here).
-export function createStore({ api, storage, now = () => Date.now(), wait = defaultWait, clear = (queue) => clearTrip(storage, { queue }), ticketData = async () => null, afterLoad = null }) {
+export function createStore({ api, storage, now = () => Date.now(), wait = defaultWait, clear = (queue) => clearTrip(storage, { queue }), ticketData = async () => null, afterLoad = null, isHidden = () => false }) {
+  // How many times the page went to the background. A request that failed
+  // while the page was hidden, or that was running when it went hidden, was
+  // most likely cut off by the phone, not by a lost signal: it is not news
+  // (issue 14). The app asks again at once when the page is back on screen.
+  let hiddenCount = 0;
+  const pageHidden = () => { hiddenCount++; };
   // Set once the trip was taken off this phone: nothing more is written to
   // storage or sent with the refused key until boot() starts again.
   let wiped = false;
@@ -347,6 +353,7 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
   async function call(action, args, opts) {
     if (wiped) throw refusedError();
     const wipesAt = wipes;
+    const hiddenAt = hiddenCount;
     for (let attempt = 0; ; attempt++) {
       try {
         const r = opts ? await api(action, args, opts) : await api(action, args);
@@ -364,7 +371,7 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
           await wait(BUSY_DELAY_MS);
           continue;
         }
-        if (code === "network") state.online = false;
+        if (code === "network" && !isHidden() && hiddenCount === hiddenAt) state.online = false;
         if (code === "bad_key") {
           state.status = "nokey";
           state.keyRefused = true; // a key was tried and the trip said no
@@ -1750,7 +1757,7 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
       return () => subs.delete(fn);
     },
     boot, refresh, checkRev, flush, idle,
-    setMe, setPerson, markSeen, forgot, unsentCount, notify, clearNotice, claudeToken, syncPayments, autoPayments,
+    setMe, setPerson, markSeen, pageHidden, forgot, unsentCount, notify, clearNotice, claudeToken, syncPayments, autoPayments,
     syncTodos, tickTodo, claimTodo,
     pressStamp,
     addTicket, ticketOutcome, fetchTicket, listTickets, listTicketFile,

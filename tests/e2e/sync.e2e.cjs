@@ -155,6 +155,39 @@ module.exports = [
     },
   },
   {
+    name: "a check cut off while the page is hidden is not no signal; back on screen it asks again and the strip stays away",
+    async run({ page }) {
+      const backend = await ready(page);
+      const hide = (hidden) =>
+        page.evaluate((h) => {
+          Object.defineProperty(document, "visibilityState", { configurable: true, get: () => (h ? "hidden" : "visible") });
+          document.dispatchEvent(new Event("visibilitychange"));
+        }, hidden);
+      await hide(true);
+      backend.failWith = "network";
+      await page.evaluate(() => globalThis.__matTest.store.checkRev());
+      assert.equal(await visible(page, "#net"), false, "a failure while hidden is not no signal");
+      backend.failWith = null;
+      const revs = backend.requests.filter((r) => r.action === "rev").length;
+      await hide(false);
+      await until(() => backend.requests.filter((r) => r.action === "rev").length > revs, "it asks again at once");
+      await idle(page);
+      assert.equal(await visible(page, "#net"), false, "still no strip once the backend answers");
+    },
+  },
+  {
+    name: "a check that fails while the page is on screen still shows No signal, and the next answer clears it",
+    async run({ page }) {
+      const backend = await ready(page);
+      backend.failWith = "network";
+      await page.evaluate(() => globalThis.__matTest.store.checkRev());
+      await expectText(page, "#net", NO_SIGNAL);
+      backend.failWith = null;
+      await comeBack(page);
+      await until(async () => !(await visible(page, "#net")), "#net goes away when the backend answers");
+    },
+  },
+  {
     name: "one check at a time: a check that never answers is not joined by more",
     async run({ page }) {
       const backend = await ready(page);

@@ -262,6 +262,7 @@ function start() {
   store = createStore({
     api,
     storage,
+    isHidden: () => document.visibilityState === "hidden",
     clear: (queue) => {
       keyHere = null;
       clearTrip(raw, { queue });
@@ -735,10 +736,11 @@ function start() {
     if (inFlight) return inFlight;
     const st = store.state.status;
     if (st !== "ready" && st !== "error") return Promise.resolve();
-    inFlight = store.checkRev().finally(() => {
-      inFlight = null;
+    const mine = store.checkRev().finally(() => {
+      if (inFlight === mine) inFlight = null;
     });
-    return inFlight;
+    inFlight = mine;
+    return mine;
   };
   // Each look also asks for the planner's payments, at most every 10 minutes (store.autoPayments).
   // And, on the owner's phone, at the planner's ticket list (auto-add), at most every 10 minutes.
@@ -757,6 +759,8 @@ function start() {
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") {
       store.markSeen();
+      store.pageHidden();
+      inFlight = null; // a check running as the page left may be cut off: the return asks again, not joins it
       stopChecking();
     } else {
       look();

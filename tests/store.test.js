@@ -44,7 +44,7 @@ function memStorage(init = {}) {
 //   net.garble         actions that reach the backend but get a non-envelope reply
 //   net.knownOffline   the phone itself says it has no network: nothing is sent
 //   timeoutMs          how long the api waits for a reply (the app's own 30 s by default)
-function phone({ seed, fake, storage, me = "Mo", nowMs = NOW, clock, timeoutMs, ticketData } = {}) {
+function phone({ seed, fake, storage, me = "Mo", nowMs = NOW, clock, timeoutMs, ticketData, isHidden } = {}) {
   fake = fake || createFakeBackend(seed);
   storage = storage || memStorage({ "mat.key": KEY, "mat.me": me });
   const net = { offline: false, knownOffline: false, failing: new Set(), lose: new Set(), garble: new Set(), override: null, holds: [], sent: [] };
@@ -71,7 +71,7 @@ function phone({ seed, fake, storage, me = "Mo", nowMs = NOW, clock, timeoutMs, 
   };
   const api = createApi({ url: URL, getKey: () => storage.getItem("mat.key"), getActor: () => storage.getItem("mat.me"), fetchImpl, isOnline: () => !net.knownOffline, ...(timeoutMs ? { timeoutMs } : {}) });
   const waits = [];
-  const store = createStore({ api, storage, now: clock || (() => nowMs), wait: async (ms) => { waits.push(ms); }, ...(ticketData ? { ticketData } : {}) });
+  const store = createStore({ api, storage, now: clock || (() => nowMs), wait: async (ms) => { waits.push(ms); }, ...(ticketData ? { ticketData } : {}), ...(isHidden ? { isHidden } : {}) });
   return { fake, storage, net, api, store, waits };
 }
 
@@ -276,6 +276,47 @@ test("a failed load keeps the cached loadedAt and goes offline; the next good ca
   assert.equal(p.store.state.loadedAt, 1234);
   assert.equal(p.store.state.expenses.length, 9);
   p.net.offline = false;
+  await p.store.checkRev();
+  assert.equal(p.store.state.online, true);
+});
+
+test("a request that fails while the page is hidden does not mark the phone offline; back on screen it asks again and is online", async () => {
+  let hidden = false;
+  const p = phone({ seed: SEED, isHidden: () => hidden });
+  await p.store.boot();
+  assert.equal(p.store.state.online, true);
+  hidden = true;
+  p.store.pageHidden();
+  p.net.failing.add("rev");
+  await p.store.checkRev();
+  assert.equal(p.store.state.online, true, "cut off in the background is not no signal");
+  hidden = false;
+  p.net.failing.delete("rev");
+  const before = sent(p.fake, "rev");
+  await p.store.checkRev(); // what the app does at once on visible
+  assert.equal(sent(p.fake, "rev"), before + 1);
+  assert.equal(p.store.state.online, true);
+});
+
+test("a request that was running when the page went hidden, and fails after it is back, is not no signal either", async () => {
+  const p = phone({ seed: SEED });
+  await p.store.boot();
+  const release = p.net.hold("rev");
+  p.net.failing.add("rev");
+  const pending = p.store.checkRev();
+  p.store.pageHidden(); // the page went to the background mid-request
+  release();
+  await pending;
+  assert.equal(p.store.state.online, true);
+});
+
+test("a request that fails while the page is visible still marks the phone offline", async () => {
+  const p = phone({ seed: SEED, isHidden: () => false });
+  await p.store.boot();
+  p.net.failing.add("rev");
+  await p.store.checkRev();
+  assert.equal(p.store.state.online, false);
+  p.net.failing.delete("rev");
   await p.store.checkRev();
   assert.equal(p.store.state.online, true);
 });
