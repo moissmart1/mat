@@ -31,7 +31,7 @@ module.exports = [
       await open(page);
       await waitRows(page, 8);
       await page.locator(".settlement-summary summary").click();
-      await expectText(page, ".settlement-summary pre", "Recorded payments");
+      await expectText(page, ".settlement-summary pre", /Recorded payments/);
       const [download] = await Promise.all([
         page.waitForEvent("download"),
         page.getByRole("button", { name: "Download text" }).click(),
