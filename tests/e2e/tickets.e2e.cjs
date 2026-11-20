@@ -10,7 +10,7 @@ const fs = require("node:fs");
 const { WITH_PLAN, makeBackend, open, advance, until, text, expectText } = require("./helpers.cjs");
 const { png } = require("./pictures.cjs");
 
-const SHOTS = "/private/tmp/claude-501/mat-shots/tickets";
+const SHOTS = require("./shots.cjs")("tickets");
 const D12 = "2026-12-12";
 const SKY = "planstop1203"; // 14:00, the next stop: three per-person codes
 const MEIJI = "planstop1201"; // 09:00: one code for all three
