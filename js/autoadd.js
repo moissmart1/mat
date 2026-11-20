@@ -80,7 +80,8 @@ export function listPlan({ rows = [], files = [], state = {}, skip = new Set() }
       continue;
     }
     if (!(byTid.get(tid) || []).length) {
-      if (!days.has(str(row.start_date))) {
+      // A stay's booking is never outside: it is matched to its stay, or offered as one to add.
+      if (!days.has(str(row.start_date)) && low(row.type) !== "lodging") {
         quiet.outside += 1;
         continue;
       }
@@ -98,23 +99,27 @@ export function listPlan({ rows = [], files = [], state = {}, skip = new Set() }
     if (!add.length && !drop.length) continue;
     // Where the new file goes: where the line's pictures are now.
     const at = (drop[0] || tied[0] || (byTid.get(tid) || [])[0]);
-    changed.push({ key: "chg:" + tid, tid: label, row, add, drop, stop: at.stop, who: at.who || "" });
+    const one = { key: "chg:" + tid, tid: label, row, add, drop, stop: at.stop, who: at.who || "" };
+    if (at.stay) one.stay = at.stay;
+    changed.push(one);
   }
   // Active lines on the trip's days with no file and no picture: said in one quiet line.
   for (const [tid, r] of rowOf) {
-    if (groups.has(tid) || byTid.has(tid) || (str(r.status) && low(r.status) !== "active") || !days.has(str(r.start_date))) continue;
+    if (groups.has(tid) || byTid.has(tid) || (str(r.status) && low(r.status) !== "active") || (!days.has(str(r.start_date)) && low(r.type) !== "lodging")) continue;
     quiet.noFile += 1;
   }
   return { fresh, changed, cancelled, quiet };
 }
 
 // A stop someone filled by hand: any live picture there with no tie, for the
-// same person or for everyone (or any, when the list's is for everyone).
+// same person or for everyone (or any, when the list's is for everyone). The
+// same for a stay (its pictures have stay); a stay still to add has none.
 export function byHand(items, tickets) {
   const hand = (tickets || []).filter((t) => t && !t.gone && !t.from);
   const keep = [], out = [];
   for (const it of items) {
-    const filled = hand.some((t) => t.stop === it.stop && (!it.who || !t.who || t.who === it.who));
+    const here = (t) => (it.stay ? t.stay === it.stay : it.newStay ? false : !t.stay && t.stop === it.stop);
+    const filled = hand.some((t) => here(t) && (!it.who || !t.who || t.who === it.who));
     (filled ? out : keep).push(it);
   }
   return { keep, out };

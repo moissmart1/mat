@@ -12,7 +12,7 @@
 // reader on them, alone). Tapping a day closes the sheet and calls
 // onPick with that day's index. Text from the Sheet goes in with textContent.
 
-import { dayState, nowIn, header } from "../plan.js";
+import { dayState, tripNow, header } from "../plan.js";
 import { dayHead } from "../format.js";
 
 const MARKUP = `
@@ -73,8 +73,8 @@ export function mountAllDays(root, store, { clock, onPick = () => {} } = {}) {
   function draw() {
     const s = store.state;
     const days = list(s.days).filter((d) => d && typeof d.date === "string" && d.date);
-    const tz = (s.trip && s.trip.tz) || "Asia/Tokyo";
-    const today = nowIn(tz, clock.now()).date;
+    // Today by the Days clock (a day in its own zone is that place's).
+    const today = tripNow(s, clock.now()).date;
     // Everything a row prints: its number and date, city, title, colour, today/used.
     const sig = JSON.stringify(days.map((d) => {
       const h = header(d);

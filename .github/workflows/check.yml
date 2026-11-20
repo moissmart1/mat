@@ -30,9 +30,8 @@ jobs:
       - run: node scripts/scan.mjs --patterns-only
 
   browser:
-    # macOS on purpose: the suite's layout checks were written against Google
-    # Chrome on a Mac, and fonts and sizes differ on Linux.
-    runs-on: macos-latest
+    # Pin the Intel image for all four browser shards (issue #8).
+    runs-on: macos-15-intel
     timeout-minutes: 25
     strategy:
       fail-fast: false

@@ -131,6 +131,32 @@ button.bar-t{border:0;background:none;padding:0;min-height:36px;min-width:0;colo
 .tk-ask .no{border:1.5px solid var(--print);background:none;color:var(--print)}
 .tk-ask button:active{transform:scale(.98)}
 .tk-ask+.tk-stampline{margin-top:4px}
+/* T1 現地時刻: a day that keeps its own clock. The two clocks over a hotel
+   desk (only while the day is today), then the line that says the times are local. */
+.zs{display:grid;grid-template-columns:1fr 1fr;margin:11px 0 -3px;padding:9px 0 0;border-top:1px solid rgba(21,18,15,.17)}
+.zs.is-say{display:block}
+.zc{display:flex;align-items:center;gap:8px;min-width:0}
+.zc+.zc{padding-left:10px;border-left:1.5px dashed rgba(21,18,15,.38)}
+.zc svg{flex:none;width:44px;height:44px}
+.zc small{display:block;font-size:11.5px;font-weight:900;white-space:nowrap}
+.zc small i{font-weight:700;margin-left:4px}
+.zc>div{min-width:0}
+/* The weekday goes under the time when the two do not fit side by side. */
+.zc b{display:flex;flex-wrap:wrap;align-items:baseline;column-gap:4px;font-size:23px;font-weight:900;line-height:1.05;font-variant-numeric:tabular-nums;white-space:nowrap}
+.zc b em{font-style:normal;font-size:11.5px;font-weight:900}
+.zc.is-dim{opacity:.55}
+.zs-say{grid-column:1/-1;margin:8px 0 0;font-size:12.5px;font-weight:900}
+.zs.is-say .zs-say{margin-top:0}
+.zs-say b{border:1.5px solid var(--print);border-radius:2px;padding:0 4px 1px;margin-right:6px}
+.zs-vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap}
+@media (max-width:350px){ .zc svg{width:34px;height:34px} .zc b{font-size:19px} .zc{gap:6px} .zc+.zc{padding-left:8px} }
+/* 前夜: the evening before the first day, a strip at the head of its ticket. */
+.eve{padding:8px 14px 2px;background:rgba(21,18,15,.07);border-bottom:2px dashed rgba(21,18,15,.38)}
+.eve-h{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:12.5px;font-weight:900}
+.eve-h b{border:1.5px solid var(--print);border-radius:2px;padding:0 4px 1px;margin-right:6px}
+.eve-h>span+span{flex:none;white-space:nowrap}
+.eve .rows{padding:0}
+.eve .r:last-child{border-bottom:0}
 
 /* ＋ Add a stop: a blank line after the day's stops, in the stop's print. */
 .tk-add{display:block;width:calc(100% - 28px);min-height:44px;margin:0 14px;padding:10px 0 11px calc(3.7em + 8px);border:0;border-top:1px solid rgba(21,18,15,.17);

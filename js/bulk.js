@@ -24,9 +24,21 @@
 //   pages: the pictures it makes, a PDF's page count; sig: { mime, w, h,
 //   size, hash } of its first picture, for already-there).
 //   answers: placement key -> { out: true, why } | { stop, who, rowIds, pages, cut }.
-//   isThere(fileKey, stopId, who): the stop already has this picture for who.
+//   isThere(fileKey, stopId, who, place): the stop (or place.stay) already
+//   has this picture for who.
 // - factsFor(items, rows, stops) -> { stopId: patch }: the stop's ticket
 //   facts from the list, only where the stop's own field is empty.
+//   stayFactsFor(items, rows, stays) -> { stayId: patch }: the same for a
+//   stay's booking (tkRef, tkName).
+//
+// A stay's booking (S2 鍵札): a `lodging` line is matched to a stay, not a
+// stop, before the trip's days are looked at: the live stay whose first night
+// is the line's start_date (one, or the one whose name shares a word with the
+// line's title or provider), a card when two or more start that night and
+// the name does not settle it, else a card that offers to add the stay
+// (newStay: { name, firstNight, lastNight } from the line). Everywhere a
+// place, choice or item has `stop` it may instead have `stay` or `newStay`,
+// exactly one (placeKey tells them apart).
 
 import { LIMITS } from "./tickets.js";
 import { minutesOf } from "./plan.js";
@@ -243,6 +255,73 @@ export function stopLabel(stop, days) {
 
 const dayOf = (date, days) => (days || []).findIndex((x) => x && x.date === date) + 1;
 
+// ---------- places: a stop, a stay, or a stay to add ----------
+
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+// "Dec 8".
+export const monthDay = (date) => {
+  const [, m, d] = String(date).split("-").map(Number);
+  return MON[m - 1] + " " + d;
+};
+const shiftDay = (date, by) => {
+  const [y, m, d] = String(date).split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + by)).toISOString().slice(0, 10);
+};
+// Nights from the first to the last, both counted.
+export const nightsOf = (st) => Math.round((Date.parse(st.lastNight) - Date.parse(st.firstNight)) / 86400000) + 1;
+// "Dec 8 to 9", "Dec 13 to 15", "Dec 30 to Jan 2": the first night to the morning after the last.
+export function spanOf(st) {
+  if (!st || !DATE.test(String(st.firstNight)) || !DATE.test(String(st.lastNight))) return "";
+  const after = shiftDay(st.lastNight, 1);
+  const [, m1] = st.firstNight.split("-").map(Number);
+  const [, m2, d2] = after.split("-").map(Number);
+  return monthDay(st.firstNight) + " to " + (m1 === m2 ? "" : MON[m2 - 1] + " ") + d2;
+}
+
+// The stay a lodging line would add: its name (the title, else the provider,
+// at most 80 letters), its first night (start_date) and last (the day before
+// end_date, else the first). null with no name or no usable date.
+export function newStayFrom(row) {
+  const name = (str(row && row.title) || str(row && row.provider)).slice(0, 80).trim();
+  const first = str(row && row.start_date);
+  if (!name || !DATE.test(first)) return null;
+  const end = str(row.end_date);
+  const last = DATE.test(end) && end > first ? shiftDay(end, -1) : first;
+  return { name, firstNight: first, lastNight: last };
+}
+
+// What a place is, as a key: "stop:<id>", "stay:<id>" or "new:<first night>:<name>".
+export const placeKey = (p) => (p.stay ? "stay:" + p.stay : p.newStay ? "new:" + p.newStay.firstNight + ":" + p.newStay.name : "stop:" + p.stop);
+// Only the place's own field: { stop }, { stay } or { newStay }.
+export const placeOf = (p) => (p.stay ? { stay: p.stay } : p.newStay ? { newStay: p.newStay } : { stop: p.stop });
+const target = (got) => (got && got.sure ? (got.sure.stay ? { stay: got.sure.stay } : { stop: got.sure.id }) : null);
+
+// A lodging line to a stay: { sure: { stay } } or { card }.
+function stayForRow(row, s) {
+  const date = str(row.start_date);
+  const stays = (s.stays || []).filter((x) => x && !x.deleted && x.id);
+  const near = new Set([...words(row.title), ...words(row.provider)]);
+  // The line as its card shows it: its name and its night.
+  const line = { title: str(row.title) || str(row.provider), date: DATE.test(date) ? date : "" };
+  const starts = DATE.test(date) ? stays.filter((x) => x.firstNight === date) : [];
+  // No stay starts that night: a stay that covers it (first night <= date <= last night) is the one.
+  const covers = DATE.test(date) && !starts.length ? stays.filter((x) => DATE.test(String(x.firstNight)) && DATE.test(String(x.lastNight)) && x.firstNight <= date && date <= x.lastNight) : [];
+  const on = starts.length ? starts : covers;
+  const verb = starts.length ? "start" : "cover";
+  if (on.length === 1) return { sure: { stay: on[0].id } };
+  if (on.length > 1) {
+    const named = on.filter((x) => shares(new Set([...words(x.name), ...words(x.nameJp)]), near));
+    if (named.length === 1) return { sure: { stay: named[0].id } };
+    const offer = named.length ? named : on;
+    return { card: { kind: "stays", ask: (offer.length === 2 ? "Two stays" : offer.length + " stays") + " " + verb + " that night.", hint: "The list dates it " + monthDay(date) + ".", short: offer.length + " stays " + verb + " " + monthDay(date), choices: offer.map((x) => ({ stay: x.id })), line } };
+  }
+  const ns = newStayFrom(row);
+  const nights = ns ? nightsOf(ns) : 0;
+  const hint = ns ? "The list dates it " + monthDay(ns.firstNight) + ", " + (nights === 1 ? "one night" : nights + " nights") + ". No stay in MAT has that night." : DATE.test(date) ? "The list dates it " + monthDay(date) + " but gives it no name." : "The list gives it no date.";
+  return { card: { kind: "newstay", ask: "A stay with no card yet: add it?", hint, short: "a stay with no card", choices: ns ? [{ newStay: ns }] : [], line } };
+}
+
 // Who a line is for: "" (everyone), a person's name, or { stranger } (a name not on the trip).
 function whoOf(row, people) {
   const t = low(row && row.traveler);
@@ -256,6 +335,8 @@ const timeText = (t) => (minutesOf(t) === null ? "" : t);
 
 // A line of the list to a stop: { sure: stop } or { card: { kind, ask, hint, short, choices } }.
 function stopForRow(row, s) {
+  // A stay's booking, wherever its night falls.
+  if (low(row.type) === "lodging") return stayForRow(row, s);
   const days = s.days || [];
   const stops = (s.stops || []).filter((x) => x && !x.deleted);
   const date = str(row.start_date);
@@ -265,17 +346,6 @@ function stopForRow(row, s) {
   const named = (list) => list.filter((x) => shares(words(x.title), near));
   if (!n) {
     return { card: { kind: "outside", ask: "Not in the trip’s days.", hint: date ? "The list dates it " + date + "." : "The list gives it no date.", short: "not in the trip’s days", choices: [] } };
-  }
-  if (low(row.type) === "lodging") {
-    // The stop that starts the stay: on its first day, by name, else the stop nearest its time.
-    let offer = named(onDay);
-    const t = minutesOf(row.start_time);
-    if (!offer.length && t !== null) {
-      const timed = onDay.filter((x) => minutesOf(x.time) !== null && Math.abs(minutesOf(x.time) - t) <= NEAR_MIN);
-      timed.sort((a, b) => Math.abs(minutesOf(a.time) - t) - Math.abs(minutesOf(b.time) - t));
-      offer = timed.slice(0, 1);
-    }
-    return { card: { kind: "lodging", ask: "A stay: which stop starts it?", hint: "Check-in on Day " + n + (timeText(row.start_time) ? " at " + row.start_time : "") + ".", short: "a stay, D" + n, choices: offer.map((x) => x.id) } };
   }
   const t = minutesOf(row.start_time);
   let close;
@@ -291,7 +361,7 @@ function stopForRow(row, s) {
     const c = close[0];
     const gap = t === null || minutesOf(c.time) === null ? 0 : Math.abs(minutesOf(c.time) - t);
     if (gap > SURE_GAP_MIN && !shares(words(c.title), near)) {
-      return { card: { kind: "far", ask: "Is it this stop?", hint: "Day " + n + ": the list says " + row.start_time + ", the stop is at " + c.time + ".", short: "check the stop on D" + n, choices: [c.id] } };
+      return { card: { kind: "far", ask: "Is it this stop?", hint: "Day " + n + ": the list says " + row.start_time + ", the stop is at " + c.time + ".", short: "check the stop on D" + n, choices: [{ stop: c.id }] } };
     }
     return { sure: c };
   }
@@ -299,7 +369,7 @@ function stopForRow(row, s) {
     const byName = named(close);
     if (byName.length === 1) return { sure: byName[0] };
     const offer = byName.length ? byName : close;
-    return { card: { kind: "close", ask: (offer.length === 2 ? "Two stops" : offer.length + " stops") + " are close" + (t === null ? "." : " to " + row.start_time + "."), hint: "Day " + n + ".", short: offer.length + " stops on D" + n, choices: offer.map((x) => x.id) } };
+    return { card: { kind: "close", ask: (offer.length === 2 ? "Two stops" : offer.length + " stops") + " are close" + (t === null ? "." : " to " + row.start_time + "."), hint: "Day " + n + ".", short: offer.length + " stops on D" + n, choices: offer.map((x) => ({ stop: x.id })) } };
   }
   const at = t === null ? "" : " at " + row.start_time;
   return { card: { kind: "nostop", ask: "No stop on Day " + n + at + ".", hint: onDay.length ? "Day " + n + " has " + onDay.length + (onDay.length === 1 ? " stop" : " stops") + ", none close." : "Day " + n + " has no stops.", short: "no stop on D" + n, choices: [] } };
@@ -322,7 +392,8 @@ function natural(file, found, s) {
     for (const r of found.rows) {
       const got = active(r) ? stopForRow(r, s) : null;
       const w = whoOf(r, people);
-      if (got && got.sure && typeof w === "string") opts.push({ stop: got.sure.id, who: w, rowIds: [r.ticket_id] });
+      const t = target(got);
+      if (t && typeof w === "string") opts.push({ ...t, who: w, rowIds: [r.ticket_id] });
     }
     return { card: { kind: "several", ask: (found.rows.length === 2 ? "Two lines" : found.rows.length + " lines") + " on the list have this reference.", hint: found.rows.map((r) => r.ticket_id).join(", ") + ".", short: "several lines on the list", choices: opts, who: "", rowIds: [] } };
   }
@@ -341,20 +412,29 @@ function natural(file, found, s) {
   const odd = results.find((x) => x.card);
   // Found by a reference in its name (fix round 1, C1): said on the card.
   const byRef = found.how === "ref" ? "Its name has the reference of " + rowIds.join(" ") + " · check it." : "";
+  // The places, each once, in the order met.
+  const uniq = (list) => {
+    const seen = new Map();
+    for (const p of list) if (!seen.has(placeKey(p))) seen.set(placeKey(p), p);
+    return [...seen.values()];
+  };
   if (stranger) {
-    const offer = [...new Set(results.filter((x) => x.sure).map((x) => x.sure.id))];
-    return { card: { kind: "stranger", ask: "For " + stranger.stranger + ", who isn’t on the trip.", hint: (byRef ? byRef + " " : "") + "It can go in for everyone, or stay out.", short: "for " + stranger.stranger, choices: offer.map((id) => ({ stop: id, who: "", rowIds })), who: "", rowIds } };
+    const offer = uniq(results.map(target).filter(Boolean));
+    return { card: { kind: "stranger", ask: "For " + stranger.stranger + ", who isn’t on the trip.", hint: (byRef ? byRef + " " : "") + "It can go in for everyone, or stay out.", short: "for " + stranger.stranger, choices: offer.map((p) => ({ ...p, who: "", rowIds })), who: "", rowIds } };
   }
   if (odd) {
-    const extra = results.filter((x) => x.sure).map((x) => x.sure.id);
-    const ids = [...new Set([...odd.card.choices, ...extra])];
+    const extra = results.map(target).filter(Boolean);
+    const places = uniq([...odd.card.choices, ...extra]);
     const who = whos.length === 1 ? whos[0] : "";
-    return { card: { ...odd.card, hint: (byRef ? byRef + " " : "") + odd.card.hint, choices: ids.map((id) => ({ stop: id, who, rowIds })), who, rowIds } };
+    return { card: { ...odd.card, hint: (byRef ? byRef + " " : "") + odd.card.hint, choices: places.map((p) => ({ ...p, who, rowIds })), who, rowIds } };
   }
-  // Every line has its stop. Grouped by stop: one picture per stop.
+  // Every line has its place. Grouped by place: one picture per stop or stay.
   const byStop = new Map();
+  const placeAt = new Map();
   rows.forEach((r, i) => {
-    const id = results[i].sure.id;
+    const t = target(results[i]);
+    const id = placeKey(t);
+    placeAt.set(id, t);
     if (!byStop.has(id)) byStop.set(id, []);
     byStop.get(id).push(i);
   });
@@ -364,9 +444,9 @@ function natural(file, found, s) {
   };
   if (byStop.size > 1 && whos.some((w) => w)) {
     // The same picture as someone's own code on several stops: a person decides.
-    return { card: { kind: "split", ask: "One file, lines on " + byStop.size + " stops.", hint: "It is someone’s own ticket, so it goes on one stop only.", short: "lines on " + byStop.size + " stops", choices: [...byStop.entries()].map(([id, idx]) => ({ stop: id, who: whoAt(idx), rowIds: idx.map((i) => rowIds[i]) })), who: "", rowIds } };
+    return { card: { kind: "split", ask: "One file, lines on " + byStop.size + " stops.", hint: "It is someone’s own ticket, so it goes on one stop only.", short: "lines on " + byStop.size + " stops", choices: [...byStop.entries()].map(([id, idx]) => ({ ...placeAt.get(id), who: whoAt(idx), rowIds: idx.map((i) => rowIds[i]) })), who: "", rowIds } };
   }
-  const places = [...byStop.entries()].map(([id, idx]) => ({ stop: id, who: whoAt(idx), rowIds: idx.map((i) => rowIds[i]) }));
+  const places = [...byStop.entries()].map(([id, idx]) => ({ ...placeAt.get(id), who: whoAt(idx), rowIds: idx.map((i) => rowIds[i]) }));
   if (byRef) {
     // Never sure: the line's stop is the first choice.
     return { card: { kind: "ref", ask: byRef, hint: "“" + found.ref + "” is in the file’s name.", short: "found by its reference", choices: places, who: places.length === 1 ? places[0].who : "", rowIds } };
@@ -380,9 +460,14 @@ export function sortFiles({ files = [], rows = [], listError = null, state = {},
   const s = state;
   const days = s.days || [];
   const stopsById = new Map((s.stops || []).filter((x) => x && !x.deleted).map((x) => [x.id, x]));
+  const staysById = new Map((s.stays || []).filter((x) => x && !x.deleted && x.id).map((x) => [x.id, x]));
   const ans = answers instanceof Map ? answers : new Map(Object.entries(answers || {}));
   const live = (s.tickets || []).filter((t) => t && !t.gone);
   const onStop = (id) => live.filter((t) => t.stop === id).length;
+  // The pictures on a place now: a stop's, a stay's, none on a stay still to add.
+  const onPlace = (p) => (p.stay ? live.filter((t) => t.stay === p.stay).length : p.newStay ? 0 : onStop(p.stop));
+  // A place that is there: a live stop, a live stay, or a stay to add with a name and a first night.
+  const isPlace = (p) => (p.stay ? staysById.has(p.stay) : p.newStay ? !!(p.newStay && str(p.newStay.name) && DATE.test(String(p.newStay.firstNight))) : stopsById.has(p.stop));
   const list = listError ? [] : rows;
   const out = { items: [], cards: [], out: [], quiet: 0, listError, now: live.length, after: live.length };
   const used = new Set();
@@ -405,7 +490,7 @@ export function sortFiles({ files = [], rows = [], listError = null, state = {},
     const base = { file, label, pages: Math.max(1, Number(file.pages) || 1) };
     const take = (key, a, from, short) => {
       if (a.out) out.out.push({ kind: "leftOut", file, label, key, why: "left out" + (a.why ? ": " + a.why : short ? ": " + short : "") });
-      else if (stopsById.has(a.stop)) placed.push({ ...base, key, stop: a.stop, who: a.who || "", rowIds: a.rowIds || [], want: a.pages || null, cut: a.cut || "", from });
+      else if (isPlace(a)) placed.push({ ...base, key, ...placeOf(a), who: a.who || "", rowIds: a.rowIds || [], want: a.pages || null, cut: a.cut || "", from });
       else return false;
       return true;
     };
@@ -413,53 +498,56 @@ export function sortFiles({ files = [], rows = [], listError = null, state = {},
       const key = file.key + "#0";
       const a = ans.get(key);
       if (a && take(key, a, "card", nat.card.short)) continue;
-      pending.push({ ...nat.card, key, file, label, onList: found.rows.length > 0 && found.how !== "several", choices: nat.card.choices.filter((c) => stopsById.has(c.stop)) });
+      pending.push({ ...nat.card, key, file, label, onList: found.rows.length > 0 && found.how !== "several", choices: nat.card.choices.filter(isPlace) });
       continue;
     }
     nat.places.forEach((p, i) => {
       const key = file.key + "#" + i;
       const a = ans.get(key);
-      if (!(a && take(key, a, "sure"))) placed.push({ ...base, key, stop: p.stop, who: p.who, rowIds: p.rowIds, want: null, cut: "", from: "sure" });
+      if (!(a && take(key, a, "sure"))) placed.push({ ...base, key, ...placeOf(p), who: p.who, rowIds: p.rowIds, want: null, cut: "", from: "sure" });
     });
   }
 
-  // In the trip's order: day, time, then the file's name.
+  // In the trip's order: day, time, then the file's name; a stay's at its first night, 15:00.
   const order = (p) => {
+    if (p.stay || p.newStay) return (p.stay ? staysById.get(p.stay).firstNight : p.newStay.firstNight) + " 15:00 " + p.file.name;
     const st = stopsById.get(p.stop);
     return (st.date || "") + " " + (minutesOf(st.time) === null ? "99:99" : st.time) + " " + p.file.name;
   };
   placed.sort((a, b) => (order(a) < order(b) ? -1 : order(a) > order(b) ? 1 : 0));
 
-  const extra = new Map(); // stop -> pictures going in
+  const extra = new Map(); // place -> pictures going in
   let trip = live.length;
   const limitCards = [];
   for (const p of placed) {
-    const st = stopsById.get(p.stop);
+    const pk = placeKey(p);
+    const onStay = !!(p.stay || p.newStay);
     // Fix round 1, M5: the same picture is already there only for the same person (two people's codes can share a cover page).
-    const there = isThere(p.file.key, p.stop, p.who) || out.items.some((q) => q.stop === p.stop && q.who === p.who && sigEq(q.file.sig, p.file.sig));
+    const there = (!p.newStay && isThere(p.file.key, p.stop || "", p.who, placeOf(p))) || out.items.some((q) => placeKey(q) === pk && q.who === p.who && sigEq(q.file.sig, p.file.sig));
     if (there) {
-      out.out.push({ kind: "there", file: p.file, label: p.label, key: p.key, stop: p.stop, why: "already there" });
+      out.out.push({ kind: "there", file: p.file, label: p.label, key: p.key, ...placeOf(p), why: "already there" });
       continue;
     }
-    const has = onStop(p.stop) + (extra.get(p.stop) || 0);
+    const has = onPlace(p) + (extra.get(pk) || 0);
     const room = Math.max(0, Math.min(LIMITS.perStop - has, LIMITS.perTrip - trip));
     const want = p.want && p.want <= p.pages ? p.want : p.pages;
     if (want > room) {
       const full = room === 0;
       const tripFull = LIMITS.perTrip - trip <= LIMITS.perStop - has;
-      const lab = stopLabel(st, days);
+      const title = p.stay ? str(staysById.get(p.stay).name) || "The stay" : p.newStay ? p.newStay.name : stopLabel(stopsById.get(p.stop), days).title;
+      const what = onStay ? "stay" : "stop";
       limitCards.push({
         kind: "limit", key: p.key, file: p.file, label: p.label, onList: p.rowIds.length > 0, who: p.who, rowIds: p.rowIds,
-        ask: full ? (tripFull ? "The trip is full: " + LIMITS.perTrip + " pictures." : lab.title + " is full: " + LIMITS.perStop + " of " + LIMITS.perStop + ".") : p.pages + " pages, " + room + " fit.",
-        hint: tripFull ? "A trip holds " + LIMITS.perTrip + " pictures." : "A stop holds " + LIMITS.perStop + " pictures; " + lab.title + " has " + has + ".",
-        short: full ? (tripFull ? "trip full, " + LIMITS.perTrip + " of " + LIMITS.perTrip : "stop full, " + LIMITS.perStop + " of " + LIMITS.perStop) : p.pages + " pages, " + room + " fit",
-        choices: room > 0 ? [{ stop: p.stop, who: p.who, rowIds: p.rowIds, pages: room, cut: tripFull ? "trip" : "stop" }] : [],
+        ask: full ? (tripFull ? "The trip is full: " + LIMITS.perTrip + " pictures." : title + " is full: " + LIMITS.perStop + " of " + LIMITS.perStop + ".") : p.pages + " pages, " + room + " fit.",
+        hint: tripFull ? "A trip holds " + LIMITS.perTrip + " pictures." : "A " + what + " holds " + LIMITS.perStop + " pictures; " + title + " has " + has + ".",
+        short: full ? (tripFull ? "trip full, " + LIMITS.perTrip + " of " + LIMITS.perTrip : what + " full, " + LIMITS.perStop + " of " + LIMITS.perStop) : p.pages + " pages, " + room + " fit",
+        choices: room > 0 ? [{ ...placeOf(p), who: p.who, rowIds: p.rowIds, pages: room, cut: tripFull ? "trip" : what }] : [],
       });
       continue;
     }
-    extra.set(p.stop, (extra.get(p.stop) || 0) + want);
+    extra.set(pk, (extra.get(pk) || 0) + want);
     trip += want;
-    out.items.push({ key: p.key, file: p.file, label: p.label, stop: p.stop, who: p.who, rowIds: p.rowIds, pages: want, cut: want < p.pages ? p.cut || "stop" : "", from: p.from });
+    out.items.push({ key: p.key, file: p.file, label: p.label, ...placeOf(p), who: p.who, rowIds: p.rowIds, pages: want, cut: want < p.pages ? p.cut || (onStay ? "stay" : "stop") : "", from: p.from });
   }
   out.cards = pending.concat(limitCards);
   out.after = trip;
@@ -501,6 +589,29 @@ export function factsFor(items, rows, stops) {
       if (str(w.stop[k])) continue;
       out[id] = out[id] || {};
       out[id][k] = v.slice(0, LIMITS.fact);
+    }
+  }
+  return out;
+}
+
+// A stay's booking from the list's lines on it, only where the stay's own
+// field is empty (never overwritten): tkRef the confirmation (else the
+// ticket_ref), tkName the holder. stays: the stays as the phone has them.
+export function stayFactsFor(items, rows, stays) {
+  const byId = new Map((rows || []).map((r) => [r.ticket_id, r]));
+  const out = {};
+  for (const it of items) {
+    if (!it.stay) continue;
+    const stay = (stays || []).find((x) => x && x.id === it.stay);
+    if (!stay) continue;
+    for (const id of it.rowIds || []) {
+      const r = byId.get(id);
+      if (!r) continue;
+      for (const [k, v] of [["tkRef", str(r.confirmation) || str(r.ticket_ref)], ["tkName", str(r.holder)]]) {
+        if (!v || str(stay[k]) || (out[it.stay] && out[it.stay][k])) continue;
+        out[it.stay] = out[it.stay] || {};
+        out[it.stay][k] = v.slice(0, LIMITS.fact);
+      }
     }
   }
   return out;

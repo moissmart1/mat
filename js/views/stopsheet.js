@@ -283,7 +283,10 @@ export function mountStopSheet(root, store, { keep = null } = {}) {
     tries = 0;
     head.textContent = title;
     const dh = dayHead(day);
-    dayLine.replaceChildren(el("b", "", dh.en), el("i", "", dh.jp));
+    // A stop on the evening before the first day (前夜) keeps that day: it reads so.
+    const eve = (store.state.eves || []).some((d) => d && d.date === day);
+    if (eve) dayLine.replaceChildren(el("b", "", "前夜 " + dh.en));
+    else dayLine.replaceChildren(el("b", "", dh.en), el("i", "", dh.jp));
     saveWord = word;
     del.hidden = mode !== "edit";
     sheet.classList.add("is-open");
