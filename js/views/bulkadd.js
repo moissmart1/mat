@@ -1135,9 +1135,9 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     const offBefore = [], offAfter = [];
     for (const { card, act } of done) {
       if (act === "replace" || act === "first" || act === "add") {
-        card.got.forEach((f, i) => extra.push({ key: card.key + "#" + i, file: f, label: card.label, ...placeOf(card), who: card.who, rowIds: card.rowIds, pages: Math.min(Math.max(1, f.pages || 1), LIMITS.perStop), cut: "", from: "card" }));
+        card.got.forEach((f, i) => extra.push({ key: card.key + "#" + i, cardKey: card.key, file: f, label: card.label, ...placeOf(card), who: card.who, rowIds: card.rowIds, pages: Math.min(Math.max(1, f.pages || 1), LIMITS.perStop), cut: "", from: "card" }));
       }
-      const ids = card.drop.map((t) => ({ id: t.id, label: card.label }));
+      const ids = card.drop.map((t) => ({ id: t.id, label: card.label, cardKey: card.key }));
       if (act === "first" || act === "off") offBefore.push(...ids);
       if (act === "replace") offAfter.push(...ids);
     }
@@ -1163,6 +1163,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     say.textContent = all.length ? "Adding " + plural(all.length, "ticket", "tickets") + "." : "Taking " + plural(offBefore.length, "picture", "pictures") + " off.";
 
     // 1. Every picture made (in memory only), nothing kept or sent yet.
+    const failedReplacements = new Set();
     const pics = []; // { it, id, pic, k }
     const hold = (it, pic, k) => {
       pics.push({ it, id: newId(), pic, k });
@@ -1191,6 +1192,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
       } catch {
         it.failed += 1;
         pics.splice(firstPicture);
+        if (it.cardKey) failedReplacements.add(it.cardKey);
         it.message = "That PDF couldn’t be read here. Try a screenshot of the ticket instead.";
       }
       if (dead()) return;
@@ -1201,8 +1203,9 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
 
     // Pictures a card said to take off, one at a time, each waited on (soft: History puts them back).
     async function takeOff(list) {
-      for (const { id, label } of list) {
+      for (const { id, label, cardKey } of list) {
         if (dead()) return;
+        if (failedReplacements.has(cardKey)) continue;
         let unsure = null;
         const noReply = new Promise((resolve) => {
           unsure = resolve;
@@ -1227,7 +1230,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     // up on it. One that is not added keeps its pictures out.
     const made = new Map(); // newStay's place key -> the stay's id, or { failed: why }
     for (const it of adding.items) {
-      if (!it.newStay || dead()) continue;
+      if (!it.newStay || it.failed || dead()) continue;
       const pk = placeKey(it);
       if (!made.has(pk)) {
         adding.step = "stay";

@@ -182,6 +182,30 @@ cases.push({
 });
 
 cases.push({
+  name: "a later PDF render failure keeps the first page out of the upload",
+  async run({ page }) {
+    const file = { ...FOLDER()[0], name: "T001 Sky order.pdf", mime: "application/pdf", data: b64(pdfBytes(2)) };
+    const backend = tripWith({ lines: [LINES[0]], folder: [file] });
+    await ready(page, backend);
+    await openYou(page);
+    await until(() => visible(page, "#setListNt"), "the notice shows");
+    await page.dispatchEvent("#setListNt", "click");
+    await listSorted(page);
+    await page.evaluate(() => {
+      const getContext = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function(...args) {
+        if (args[0] === "2d") throw new Error("render unavailable");
+        return getContext.apply(this, args);
+      };
+    });
+    await page.click("#bulkPunch");
+    await added(page);
+    assert.equal(calls(backend, "addTicket").length, 0);
+    assert.match(await text(page, "#bulk"), /PDF couldn’t be read/);
+  },
+});
+
+cases.push({
   name: "a reviewed single-page PDF uploads its prepared picture without encoding it again",
   async run({ page }) {
     const file = { ...FOLDER()[0], name: "T001 Sky order.pdf", mime: "application/pdf", data: b64(pdfBytes(1)) };
