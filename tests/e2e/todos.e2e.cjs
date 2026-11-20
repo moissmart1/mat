@@ -960,16 +960,14 @@ module.exports.push({
     const box = await page.locator('#nav [data-tab="money"]').boundingBox();
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.down();
-    // Measured once the key's own press transition has finished, not after a fixed wait: on a busy
-    // machine 250 ms of real time could still catch the .08 s transition mid-flight (it read 1.06 px).
-    await until(() => page.evaluate(() => {
-      const b = document.querySelector('#nav [data-tab="money"]');
-      return b.matches(":active") && b.getAnimations().length === 0;
-    }), "the key is down and still");
-    const pressed = await page.evaluate(() => {
-      const b = document.querySelector('#nav [data-tab="money"]');
-      return { y: b.getBoundingClientRect().y, shadow: getComputedStyle(b).boxShadow };
-    });
+    // A transition may not yet exist on the first frame after mouse-down.
+    // Observe the pressed geometry and the flattened shadow together.
+    const pressed = await until(async () => {
+      const state = await page.locator('#nav [data-tab="money"]').evaluate(b => ({
+        active: b.matches(":active"), y: b.getBoundingClientRect().y, shadow: getComputedStyle(b).boxShadow,
+      }));
+      return state.active && Math.abs(state.y - box.y - 1.5) < 0.3 && !state.shadow.includes("3px") && state;
+    }, "the key moves down 1.5 px and its drop shadow flattens");
     await page.mouse.move(2, 2);
     await page.mouse.up();
     assert.ok(Math.abs(pressed.y - box.y - 1.5) < 0.3, "moved down " + (pressed.y - box.y));
