@@ -22,11 +22,22 @@
 // ref and seat goes in with textContent; a picture only as an <img> from a
 // blob: URL made from bytes whose type was checked (js/tickets.js sniff).
 // Reduced motion: no tear, it is simply there (css/tickets.css).
+//
+// A stay's booking (S2 鍵札, the key tag off the hook): open(stayId, opener,
+// { stay: true }), or openStay(stayId, opener), shares the slots, the
+// fetching, the zoom, the wake lock, closing and focus, and draws its own
+// page (paintStay): the big key tag with the stay's name and the night, and
+// tied to it a paper label with the booking's reference and a sentence for
+// the front desk, the facts, and the confirmation's pages (two columns, tap
+// to enlarge). No tear: it is simply there. The night comes from clock() (the
+// trip's zone: { date, minutes }). It closes itself when the stay, or its
+// booking, is gone.
 
-import { header } from "../plan.js";
+import { header, nightOf, staySpan } from "../plan.js";
 import { fillSeal } from "../picture.js";
 import { dayHead } from "../format.js";
-import { ticketKinds, hasFacts, sniff, fromBase64 } from "../tickets.js";
+import { ticketKinds, hasFacts, hasStayFacts, stayPictures, sniff, fromBase64 } from "../tickets.js";
+import { cord, notches, nightsLong } from "./keytag.js";
 
 const NUMBER_WORD = { 2: "TWO", 3: "THREE", 4: "FOUR", 5: "FIVE", 6: "SIX" };
 
@@ -50,12 +61,32 @@ function staffLines(stop) {
   return { jp, en };
 }
 
-export function mountStub(root, store, keep) {
+// The sentence for the front desk on a stay's booking: in Japanese and
+// English, the name it is under, the nights and from when ("本日から" on the
+// first night, else the date).
+function deskLines(stay, today) {
+  const name = str(stay.tkName);
+  if (!name) return null;
+  const night = nightOf(stay, { today: stay.firstNight, minutes: 720 });
+  const total = night.total;
+  if (!total) return null;
+  const first = stay.firstNight === today;
+  const [, m, d] = stay.firstNight.split("-").map(Number);
+  const en = dayHead(stay.firstNight, []).en.split(" ").slice(1).join(" "); // "Dec 10"
+  return {
+    jp: [name + " の名前で、", (first ? "本日から" : m + "月" + d + "日から") + total + "泊予約しています。"],
+    en: "We have a booking for " + total + (total === 1 ? " night" : " nights") + " from " + (first ? "today" : en) + " under " + name + ".",
+  };
+}
+
+// clock(): { date, minutes } now, in the trip's zone (the night on a stay's booking).
+export function mountStub(root, store, keep, { clock = null } = {}) {
   const host = el("div", "tix");
   host.id = "tix";
   host.hidden = true;
   root.append(host);
 
+  let mode = "stop"; // "stop", or "stay" for a stay's booking
   let stopId = null;
   let opener = null;
   let urls = [];
@@ -69,7 +100,12 @@ export function mountStub(root, store, keep) {
   const isOpen = () => !host.hidden;
   const online = () => store.state.online !== false;
   const stopOf = () => (store.state.stops || []).find((s) => s && s.id === stopId && !s.deleted) || null;
-  const picsOf = () => (store.state.tickets || []).filter((t) => t && t.stop === stopId && !t.gone);
+  const stayOf = () => (store.state.stays || []).find((s) => s && s.id === stopId && !s.deleted) || null;
+  const picsOf = () => (mode === "stay" ? stayPictures(stayOf(), store.state.tickets) : (store.state.tickets || []).filter((t) => t && t.stop === stopId && !t.gone));
+  const nowHere = () => {
+    const c = clock ? clock() : null;
+    return c && typeof c.date === "string" ? c : { date: "", minutes: 0 };
+  };
 
   function forget() {
     for (const u of urls) URL.revokeObjectURL(u);
@@ -299,6 +335,15 @@ export function mountStub(root, store, keep) {
   }
 
   function signature() {
+    if (mode === "stay") {
+      const stay = stayOf();
+      const now = nowHere();
+      return JSON.stringify([
+        stay && [stay.name, stay.nameJp, stay.firstNight, stay.lastNight, stay.tkRef, stay.tkName, stay.tkPeople, stay.tkRoom],
+        picsOf().map((t) => [t.id, t.who, t.page, keep.have(t.id)]),
+        stay ? nightOf(stay, { today: now.date, minutes: now.minutes }) : null, now.date, online(),
+      ]);
+    }
     const stop = stopOf();
     const pics = picsOf();
     return JSON.stringify([
@@ -309,8 +354,115 @@ export function mountStub(root, store, keep) {
     ]);
   }
 
+  // A stay's booking: the big key tag and the paper label tied to it.
+  function paintStay() {
+    const stay = stayOf();
+    const pics = picsOf();
+    if (!stay || (!pics.length && !hasStayFacts(stay))) {
+      close(false);
+      return;
+    }
+    sig = signature();
+    forget();
+    const now = nowHere();
+    const night = nightOf(stay, { today: now.date, minutes: now.minutes });
+    const name = str(stay.name) || str(stay.nameJp);
+    const span = staySpan(stay);
+    const nights = night.total ? night.total + "泊" : "";
+
+    const ov = el("div", "ov oa is-stay");
+    ov.setAttribute("role", "dialog");
+    ov.setAttribute("aria-modal", "true");
+    ov.setAttribute("aria-label", "Booking: " + name);
+    const top = el("div", "oa-top");
+    const back = el("button", "", "Hang it back");
+    back.type = "button";
+    back.dataset.close = "";
+    top.append(el("span", "", "鍵札 Off the hook" + (now.date ? " · " + dayHead(now.date, []).en : "")), back);
+
+    // The big tag: 宿, the stay's name (Japanese first), the night, the notches.
+    const hang = el("div", "kt-hang");
+    const wrap = el("div", "kt-wrap is-big");
+    wrap.setAttribute("aria-hidden", "true");
+    const tag = el("div", "kt big");
+    const tagName = str(stay.nameJp) || name;
+    const nm = el("div", "kt-nm kt-burn" + ([...tagName].length > 8 ? " is-long" : ""), tagName);
+    const words = night.state === "on"
+      ? "第" + night.n + "夜 · " + nightsLong(night)
+      : night.state === "before"
+      ? nights + " · from " + dayHead(stay.firstNight, []).en
+      : nights + " · " + nightsLong(night);
+    tag.append(el("span", "kt-hole"), el("div", "kt-yado kt-burn", "宿"), nm, el("div", "kt-nights kt-burn", night.total ? words : ""));
+    const n = notches(night);
+    if (n) tag.append(n);
+    wrap.append(cord(60, 44, { left: "50%", marginLeft: "-30px", top: "-28px" }), tag);
+
+    // The paper label tied to it.
+    const label = el("div", "kt-label");
+    const p = el("div", "stub-p");
+    const k = el("div", "stub-k");
+    const kk = el("span", "", "予約");
+    kk.append(el("i", "", "Booking · " + name));
+    k.append(kk, el("span", "", span));
+    p.append(k);
+    const ref = str(stay.tkRef);
+    const said = deskLines(stay, now.date);
+    if (ref || said) {
+      const big = el("div", "ref-big");
+      big.append(el("small", "", "予約番号 Confirmation"));
+      if (ref) big.append(el("b", "", ref));
+      if (said) {
+        const jp = el("p");
+        jp.append(said.jp[0], el("br"), said.jp[1]);
+        big.append(jp, el("span", "", said.en));
+      }
+      p.append(big);
+    }
+    const rows = [
+      ["お名前", "Name on booking", str(stay.tkName)],
+      ["人数", "In the room", str(stay.tkPeople)],
+      ["部屋", "Room", str(stay.tkRoom)],
+      ["泊数", "Nights", [nights, span].filter(Boolean).join(" · ")],
+    ].filter((r) => r[2]);
+    if (rows.length) {
+      const dl = el("dl", "facts");
+      for (const [jp, en, v] of rows) {
+        const d = el("div");
+        const dt = el("dt", "", jp);
+        dt.append(el("i", "", en));
+        d.append(dt, el("dd", "", v));
+        dl.append(d);
+      }
+      p.append(dl);
+    }
+    label.append(p);
+    // The confirmation's pages, in order of person then page.
+    if (pics.length) {
+      const f = el("div", "stub-f");
+      const cap = el("div", "pg-cap", "予約確認書 Confirmation, " + (pics.length === 1 ? "1 page" : pics.length + " pages"));
+      cap.append(el("span", "", "Tap to enlarge"));
+      const pages = el("div", "pages" + (pics.length === 1 ? " is-one" : ""));
+      pages.append(...pics.map((t) => slot(t, { zoom: true, page: true })));
+      f.append(cap, pages);
+      label.append(el("div", "stub-perf"), f);
+    }
+    const foot = el("div", "stub-foot");
+    foot.append(keptLine(pics.length ? "pics" : null, pics.every((t) => keep.have(t.id))), el("span", "", nights));
+    label.append(foot);
+    hang.append(wrap, label);
+    const wl = el("span", "oa-x", "Screen stays on while the tag is off the hook.");
+    wl.hidden = !locked;
+    ov.append(top, hang, wl);
+    host.replaceChildren(ov);
+    groupKey = null;
+  }
+
   // Draws the stub. again: a redraw of the one up (no tear, the page in view kept).
   function paint(again = false) {
+    if (mode === "stay") {
+      paintStay();
+      return;
+    }
     const s = store.state;
     const stop = stopOf();
     if (!stop) {
@@ -408,8 +560,9 @@ export function mountStub(root, store, keep) {
     } else groupKey = null;
   }
 
-  function open(id, from = null) {
+  function open(id, from = null, { stay = false } = {}) {
     if (typeof id !== "string" || !id) return false;
+    mode = stay === true ? "stay" : "stop";
     stopId = id;
     opener = from;
     groupKey = null;
@@ -433,6 +586,7 @@ export function mountStub(root, store, keep) {
     locked = false;
     root.classList.remove("stub-open");
     stopId = null;
+    mode = "stop";
     sig = "";
     const back = opener;
     opener = null;
@@ -453,8 +607,8 @@ export function mountStub(root, store, keep) {
       zoomIn(z);
       return;
     }
-    // The dark around the stub.
-    if (!ev.target.closest(".tstub")) close();
+    // The dark around the stub (or around the key tag and its label).
+    if (!ev.target.closest(".tstub, .kt-label, .kt-wrap")) close();
   });
   host.addEventListener("keydown", (ev) => {
     if ((ev.key === "Enter" || ev.key === " ") && ev.target.matches(".stub-code.can-zoom")) {
@@ -472,5 +626,5 @@ export function mountStub(root, store, keep) {
   store.subscribe(again);
   keep.subscribe(again);
 
-  return { open, close, isOpen };
+  return { open, openStay: (id, from = null) => open(id, from, { stay: true }), close, isOpen };
 }

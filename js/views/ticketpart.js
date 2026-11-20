@@ -7,8 +7,13 @@
 // theirs in trip order, one tap changes it) and, for a person, their seat;
 // then the four facts shown with the ticket.
 //
-// mountTicketPart(box, store, keep) -> { fill(stop), read(), fieldsOf(stop),
+// mountTicketPart(box, store, keep, { on }) -> { fill(stop), read(), fieldsOf(stop),
 //   changed(), pending(), setBusy(on), upload(stopId), clear(), inputs() }
+// With { on: "stay" } it is a stay's booking (js/views/staysheet.js): the
+// pictures are those with t.stay === the stay's id and are sent with stay
+// (no stop), the fourth fact is Room (tkRoom) where a stop has Seats or time,
+// and the words say stay and booking. Without it every word and call is as
+// it was for a stop.
 // - fill(stop): the stop's facts and pictures, nothing picked (stop is {} for a new one).
 // - read(): the facts as the backend takes them ({ tkRef, tkName, tkPeople, tkSeat }).
 // - upload(stopId) -> { saved, waiting, failed }: sends each picked picture in
@@ -34,11 +39,17 @@ function el(tag, cls, text) {
 }
 
 const str = (v) => (typeof v === "string" ? v : "");
-const FACTS = [
+const STOP_FACTS = [
   ["tkRef", "Booking ref"],
   ["tkName", "Name on booking"],
   ["tkPeople", "People"],
   ["tkSeat", "Seats or time"],
+];
+const STAY_FACTS = [
+  ["tkRef", "Booking ref"],
+  ["tkName", "Name on booking"],
+  ["tkPeople", "People"],
+  ["tkRoom", "Room"],
 ];
 const mb = (chars) => {
   const bytes = (chars * 3) / 4;
@@ -53,33 +64,39 @@ export function waitingSentence(out) {
   return "Saved on this phone. It goes up when there is signal.";
 }
 
-export function mountTicketPart(box, store, keep) {
+export function mountTicketPart(box, store, keep, { on = "stop" } = {}) {
+  const onStay = on === "stay";
+  const FACTS = onStay ? STAY_FACTS : STOP_FACTS;
+  // The words that differ on a stay.
+  const W = onStay
+    ? { none: "No booking on this stay yet.", shown: "Shown with the booking", full: "This stay has no room for more pictures (" + LIMITS.perStop + " at most).", holds: "a stay holds", rest: "The rest are on the stay.", file: "syTkFile", field: "sy" }
+    : { none: "No ticket on this stop yet.", shown: "Shown with the ticket", full: "This stop has no room for more pictures (" + LIMITS.perStop + " at most).", holds: "a stop holds", rest: "The rest are on the stop.", file: "stTkFile", field: "st" };
   box.classList.add("tkp");
   const head = el("div", "st-sec tkp-h");
   const count = el("i", "", "Optional");
   head.append(el("b", "", "切符"), "Ticket", count);
   const have = el("div", "tkp-have");
-  const none = el("p", "st-none", "No ticket on this stop yet.");
+  const none = el("p", "st-none", W.none);
   const pick = el("label", "tkp-add");
   const input = el("input");
   input.type = "file";
   input.accept = "image/jpeg,image/png,application/pdf";
   input.multiple = true;
-  input.id = "stTkFile";
+  input.id = W.file;
   pick.append(input, el("span", "", "Add pictures or a PDF"));
   const picked = el("div", "tkp-picked");
   const say = el("p", "tkp-say");
   say.setAttribute("role", "status");
   const facts = el("div", "tkp-facts");
   const fhead = el("div", "st-sec tkp-fh");
-  fhead.append(el("b", "", "控"), "Shown with the ticket");
+  fhead.append(el("b", "", "控"), W.shown);
   const fields = {};
   const pair = () => el("div", "st-2");
   const rows = [pair(), pair()];
   FACTS.forEach(([k, label], i) => {
     const l = el("label", "st-f");
     const f = el("input");
-    f.id = "st" + k[0].toUpperCase() + k.slice(1);
+    f.id = W.field + k[0].toUpperCase() + k.slice(1);
     f.maxLength = LIMITS.fact;
     f.autocomplete = "off";
     f.enterKeyHint = i === FACTS.length - 1 ? "done" : "next";
@@ -99,7 +116,9 @@ export function mountTicketPart(box, store, keep) {
   let reading = 0; // files still being turned into pictures
 
   const people = () => (store.state.people || []).map((p) => p.name).filter(Boolean);
-  const liveOn = (id) => (store.state.tickets || []).filter((t) => t && t.stop === id && !t.gone);
+  // The live pictures on a stop (t.stop) or, on a stay, on that stay (t.stay).
+  const liveOn = (id) => (store.state.tickets || []).filter((t) => t && (onStay ? t.stay === id : t.stop === id) && !t.gone);
+  const placeOf = (t) => (onStay ? t.stay : t.stop);
   const room = () => {
     const onStop = stop && stop.id ? liveOn(stop.id).length : 0;
     const inTrip = (store.state.tickets || []).filter((t) => t && !t.gone).length;
@@ -126,7 +145,7 @@ export function mountTicketPart(box, store, keep) {
 
   function whoLabel(t) {
     if (t.who) return t.who + "’s code";
-    return liveOn(t.stop).length > 1 ? "Page " + t.page : "For all three";
+    return liveOn(placeOf(t)).length > 1 ? "Page " + t.page : "For all three";
   }
 
   // The pictures already on the stop, each with Remove (at once, Undo on the bar).
@@ -230,7 +249,7 @@ export function mountTicketPart(box, store, keep) {
         if (type === "application/pdf") {
           const space = room();
           if (!space) {
-            cut = "This stop has no room for more pictures (" + LIMITS.perStop + " at most).";
+            cut = W.full;
             continue;
           }
           say.textContent = "Reading the PDF…";
@@ -257,7 +276,7 @@ export function mountTicketPart(box, store, keep) {
           }
           if (failedPage) cut = "Not every page of that PDF could be made into a picture on this phone. Try a screenshot of the ticket instead.";
           else if (got.total > got.drawn) {
-            cut = "This PDF has " + got.total + " pages; a stop holds " + LIMITS.perStop + " pictures, so only the first " + got.drawn + (got.drawn === 1 ? " page" : " pages") + " will be kept.";
+            cut = "This PDF has " + got.total + " pages; " + W.holds + " " + LIMITS.perStop + " pictures, so only the first " + got.drawn + (got.drawn === 1 ? " page" : " pages") + " will be kept.";
           }
           // One page alone is named after the file.
           if (got.total === 1 && picks.length && picks[picks.length - 1].name === name + " · page 1") picks[picks.length - 1].name = name;
@@ -268,7 +287,7 @@ export function mountTicketPart(box, store, keep) {
           continue;
         }
         if (!room()) {
-          cut = "This stop has no room for more pictures (" + LIMITS.perStop + " at most).";
+          cut = W.full;
           continue;
         }
         try {
@@ -370,7 +389,7 @@ export function mountTicketPart(box, store, keep) {
 
   async function upload(stopId) {
     const out = { saved: 0, waiting: 0, failed: 0, busy: 0 };
-    stop = (store.state.stops || []).find((s) => s && s.id === stopId) || { id: stopId };
+    stop = (store.state[onStay ? "stays" : "stops"] || []).find((s) => s && s.id === stopId) || { id: stopId };
     const todo = picks.filter((p) => p.state !== "saved");
     const at = keep.gen; // a wipe meanwhile: nothing more is kept or sent
     for (const p of todo) {
@@ -385,7 +404,8 @@ export function mountTicketPart(box, store, keep) {
       // never answers must not hold up Save; the data travels with the add.
       keep.put(id, p.blob, { gen: at });
       const sameWho = liveOn(stopId).filter((t) => (t.who || "") === p.who).length;
-      const token = store.addTicket({ id, stop: stopId, who: p.who, seat: p.seat.trim(), page: Math.min(LIMITS.perStop, Math.max(p.page, sameWho + 1)), mime: p.mime, w: p.w, h: p.h, data: p.data });
+      const where = onStay ? { stay: stopId } : { stop: stopId };
+      const token = store.addTicket({ id, ...where, who: p.who, seat: p.seat.trim(), page: Math.min(LIMITS.perStop, Math.max(p.page, sameWho + 1)), mime: p.mime, w: p.w, h: p.h, data: p.data });
       const res = await store.ticketOutcome(token);
       if (res && res.saved) {
         p.state = "saved";
@@ -404,7 +424,7 @@ export function mountTicketPart(box, store, keep) {
       drawPicked();
     }
     say.textContent = out.failed
-      ? (out.failed === 1 ? "One picture wasn’t saved. " : out.failed + " pictures weren’t saved. ") + "The rest are on the stop."
+      ? (out.failed === 1 ? "One picture wasn’t saved. " : out.failed + " pictures weren’t saved. ") + W.rest
       : out.waiting
       ? waitingSentence(out)
       : "";

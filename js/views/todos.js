@@ -43,7 +43,7 @@
 // Everything from the planner goes in with textContent; a link only through
 // safeHref.
 
-import { safeHref, nowIn } from "../plan.js";
+import { safeHref, tripNow } from "../plan.js";
 import { fillSeal } from "../picture.js";
 import { paidStampSVG } from "../stamp.js";
 import { wetInk, rollingCount } from "../fx.js";
@@ -324,11 +324,11 @@ export function mountTodos(root, store, { clock, now = () => Date.now(), onState
     if (target && typeof target.focus === "function") target.focus({ preventScroll: true });
   }
 
-  // Before the trip's first day, by the Days clock, in the trip's zone.
+  // Before the trip's first day, by the Days clock (plan.js tripNow).
   function beforeTrip(s) {
     const trip = s.trip;
     if (!trip || typeof trip.start !== "string" || !trip.start) return true;
-    return nowIn(trip.tz || "Asia/Tokyo", clock ? clock.now() : now()).date < trip.start;
+    return tripNow(s, clock ? clock.now() : now()).date < trip.start;
   }
 
   // "13:20" today, "Dec 3, 13:20" another day: the phone's own clock.

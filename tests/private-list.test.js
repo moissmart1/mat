@@ -28,3 +28,11 @@ test("I4: a name on a booking that is only a trip person's first name is not lis
   assert.equal([...out].some((s) => s.toLowerCase() === "trenton"), false);
   assert.equal(out.has(""), false);
 });
+
+test("a stay's booking reference, name on the booking and room are on the private list", () => {
+  const out = privateStrings({ people: trip.people, stays: [{ id: "y1", tkRef: "TSB-4827-KQ", tkName: "M. EXAMPLE", tkRoom: "Room 204 east" }, { id: "y2", tkRef: "", tkName: "Ajen" }, { id: "y3" }] }, {});
+  assert.ok(out.has("TSB-4827-KQ"));
+  assert.ok(out.has("M. EXAMPLE"));
+  assert.ok(out.has("Room 204 east"));
+  assert.equal([...out].some((s) => s.toLowerCase() === "ajen"), false);
+});
