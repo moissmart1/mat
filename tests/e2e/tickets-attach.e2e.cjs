@@ -58,7 +58,37 @@ const waitPicked = (page, n) => until(async () => (await picked(page)).length ==
 const sheetClosed = (page) => until(() => page.evaluate(() => !document.getElementById("stop").classList.contains("is-open")), "the sheet closes", 15000);
 const scrollTo = (page, sel) => page.evaluate((s) => document.querySelector(s).scrollIntoView({ block: "center" }), sel);
 
+const SHOT_DIR = process.env.MAT_TAB_SHOTS || "";
+const shotTo = async (page, name) => {
+  if (!SHOT_DIR) return;
+  fs.mkdirSync(SHOT_DIR, { recursive: true });
+  await page.screenshot({ path: SHOT_DIR + "/" + name + ".png" });
+};
+
 const cases = [];
+cases.push({
+  name: "the For choice shows a person's picture, or their letter when they have none",
+  viewport: SIZES[0].viewport,
+  async run({ page }) {
+    const backend = makeBackend(WITH_PLAN, { now: NOON12 });
+    backend.fake.primitives.updateWhere_("People", "name", "Mo", { photo: require("../fixtures/picture.json").jpeg });
+    await ready(page, { backend });
+    await edit(page, SKY);
+    await page.setInputFiles("#stTkFile", [1, 2, 3].map((i) => file("IMG_" + i + ".PNG", "image/png", pngBytes(400, 400, 70 + i))));
+    await waitPicked(page, 3);
+    const seals = () => page.evaluate(() => [...document.querySelectorAll("#stTix .tkp-picked .file:nth-child(1) .file-for button[aria-label]")].map((b) => ({
+      label: b.getAttribute("aria-label"), pic: b.querySelector(".mini").classList.contains("has-pic"), img: !!b.querySelector(".mini img"), text: b.textContent, on: b.classList.contains("is-on"), pressed: b.getAttribute("aria-pressed"),
+    })));
+    assert.deepEqual(await seals(), [
+      { label: "For Mo", pic: true, img: true, text: "", on: true, pressed: "true" },
+      { label: "For Ajen", pic: false, img: false, text: "A", on: false, pressed: "false" },
+      { label: "For Trenton", pic: false, img: false, text: "T", on: false, pressed: "false" },
+    ]);
+    await expectText(page, "#stTix .tkp-picked .file:nth-child(1) .file-for button:first-of-type", "All three");
+    await scrollTo(page, "#stTix .tkp-picked");
+    await shotTo(page, "for-row");
+  },
+});
 for (const size of SIZES) {
   cases.push({
     name: size.tag + ": three pictures, the three people in order, the facts; saved; another phone sees it; Remove and Undo",

@@ -24,6 +24,7 @@
 
 import { LIMITS, NOT_A_TICKET, sniff, shrink, shrinkCanvas, pdfPages } from "../tickets.js";
 import { newId } from "../time.js";
+import { fillSeal } from "../picture.js";
 
 function el(tag, cls, text) {
   const n = document.createElement(tag);
@@ -161,10 +162,14 @@ export function mountTicketPart(box, store, keep) {
   function forRow(p) {
     const fr = el("div", "file-for");
     fr.append("For ");
-    const opts = [["", "All three"], ...people().map((name) => [name, [...name][0].toUpperCase()])];
+    const opts = [["", "All three"], ...people().map((name) => [name, null])];
     if (people().length !== 3) opts[0][1] = "Everyone";
     for (const [v, label] of opts) {
-      const b = el("button", p.who === v ? "is-on" : "", label);
+      const b = el("button", p.who === v ? "is-on" : "", label || "");
+      if (!label) {
+        const person = (store.state.people || []).find((x) => x && x.name === v);
+        b.append(fillSeal(el("span", "mini"), { ...person, initials: [...v][0].toUpperCase() }, v));
+      }
       b.type = "button";
       b.dataset.for = p.key + "|" + v;
       b.setAttribute("aria-pressed", String(p.who === v));

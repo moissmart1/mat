@@ -132,6 +132,10 @@
 .tkp .file-for{grid-column:2 / span 2;grid-row:2;display:flex;flex-wrap:wrap;align-items:center;gap:5px;font-size:12px;font-weight:700}
 .tkp .file-for button{height:30px;min-width:30px;padding:0 7px;border:1.5px solid rgba(21,18,15,.45);border-radius:15px;background:none;color:var(--print);font-size:12px;font-weight:900}
 .tkp .file-for button.is-on{background:var(--shu);border-color:var(--shu);color:#fff}
+/* A person's seal inside the choice: fits the pill; on the vermilion one the ring and letter go white. */
+.tkp .file-for button .mini{width:22px;height:22px;font-size:10px;border-width:1.5px;color:inherit;border-color:currentColor;pointer-events:none}
+.tkp .file-for button .mini.has-pic{border-color:var(--print)}
+.tkp .file-for button.is-on .mini.has-pic{border-color:#fff}
 .tkp .file-seat{grid-column:2 / span 2;grid-row:3}
 
 /* Held sideways, the bar is a rail on the right: the stub leaves it be. */

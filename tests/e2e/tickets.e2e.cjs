@@ -18,6 +18,7 @@ const LUNCH = "planstop1202"; // 12:30: a PDF's two pages
 const DINNER = "planstop1204"; // 19:00: reference only
 const NOON12 = Date.parse("2026-12-12T13:20:00+09:00");
 const KEY = "test-key";
+const JPEG = require("../fixtures/picture.json").jpeg;
 
 const SIZES = [
   { tag: "393", viewport: { width: 393, height: 852 } },
@@ -105,6 +106,12 @@ const shot = async (page, name) => {
   fs.mkdirSync(SHOTS, { recursive: true });
   await page.screenshot({ path: SHOTS + "/" + name + ".png" });
 };
+const SHOT_DIR = process.env.MAT_TAB_SHOTS || "";
+const shotTo = async (page, name) => {
+  if (!SHOT_DIR) return;
+  fs.mkdirSync(SHOT_DIR, { recursive: true });
+  await page.screenshot({ path: SHOT_DIR + "/" + name + ".png" });
+};
 const noSideways = async (page) => {
   const w = await page.evaluate(() => ({
     doc: document.scrollingElement.scrollWidth <= innerWidth,
@@ -127,6 +134,8 @@ for (const size of SIZES) {
     ...base,
     async run({ page }) {
       const backend = await ticketed();
+      // Mo has chosen a picture; Ajen and Trenton have not.
+      backend.fake.primitives.updateWhere_("People", "name", "Mo", { photo: JPEG });
       await ready(page, { backend, me: "Ajen" });
       await allKept(page);
       await expectText(page, row(SKY) + " .tk-mark", "券 3 codes · on this phone");
@@ -139,7 +148,16 @@ for (const size of SIZES) {
       assert.equal(await page.evaluate(() => document.getElementById("phone").classList.contains("stub-open")), true);
       // Opens on this phone's person (Ajen), then the others in trip order.
       assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll("#tix .pp-pg")].map((p) => p.dataset.who)), ["Ajen", "Mo", "Trenton"]);
-      assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll("#tix .who3 button")].map((b) => b.textContent)), ["AYou", "MMo", "TTrenton"]);
+      assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll("#tix .who3 button")].map((b) => b.textContent)), ["AYou", "Mo", "TTrenton"]);
+      // Mo's seal is his picture; the others keep their letter.
+      assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll("#tix .who3 .seal")].map((s) => [s.classList.contains("has-pic"), !!s.querySelector("img"), s.classList.contains("is-on")])), [[false, false, true], [true, true, false], [false, false, false]]);
+      // A picture arriving while the stub is open redraws the seal (Ajen's, from another phone).
+      backend.fake.primitives.updateWhere_("People", "name", "Ajen", { photo: JPEG });
+      await page.evaluate(() => globalThis.__matTest.store.refresh());
+      await until(() => page.evaluate(() => !!document.querySelector("#tix .who3 button:nth-child(1) .seal img")), "Ajen's picture redraws his seal");
+      assert.equal(await page.evaluate(() => document.querySelector("#tix .who3 button:nth-child(1) .seal").classList.contains("is-on")), true);
+      assert.equal(await text(page, "#tix .who3 button:nth-child(1)"), "You");
+      if (size.tag === "393" || size.tag === "320") await shotTo(page, "switch" + (size.tag === "320" ? "-320" : ""));
       await expectText(page, "#tix .pp-pg .stub-who", "AJENCar 7 · 10B");
       await expectText(page, "#tix .facts", /予約番号Booking refTEST-3001.*名義Name on bookingMO.*人数People3 adults.*座席SeatCar 7 · 10B/);
       await expectText(page, "#tix .kept", "保存済On this phone. Works with no signal.");
