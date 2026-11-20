@@ -597,8 +597,9 @@ cases.push({
 // is covered by something on top (a sheet over Days, the bar over a scrolled
 // view) is not looked at, and the day strip scrolls sideways by design.
 const SMALLEST = 10.5;
-function trouble(page) {
-  return page.evaluate((smallest) => {
+async function trouble(page) {
+  const ink = await page.evaluateHandle(require("./text-ink.cjs"));
+  return page.evaluate(({ smallest, ink }) => {
     const out = [];
     const desc = (e) => e.tagName.toLowerCase() + (e.id ? "#" + e.id : "") + (typeof e.className === "string" && e.className ? "." + e.className.trim().split(/\s+/).join(".") : "");
     const doc = document.documentElement;
@@ -624,12 +625,14 @@ function trouble(page) {
       if (!r0) continue;
       const hit = document.elementFromPoint(Math.min(innerWidth - 1, Math.max(1, r0.left + Math.min(r0.width / 2, 8))), Math.min(innerHeight - 1, Math.max(1, r0.top + r0.height / 2)));
       if (!hit || !(el.contains(hit) || hit.contains(el))) continue;
-      leaves.push({ el, rs, text: t.textContent.trim().slice(0, 24) });
+      leaves.push({ node: t, el, rs, text: t.textContent.trim().slice(0, 24) });
     }
     for (const l of leaves) {
       const fs = parseFloat(getComputedStyle(l.el).fontSize);
       if (fs < smallest) out.push("set at " + fs + " px: " + desc(l.el) + " " + JSON.stringify(l.text));
-      if (l.rs.some((r) => r.right > innerWidth + 0.5 || r.left < -0.5)) out.push("off the screen's side: " + desc(l.el) + " " + JSON.stringify(l.text));
+      const chips = l.el.closest(".chips");
+      const scrollableChips = chips && ["auto", "scroll"].includes(getComputedStyle(chips).overflowX) && chips.scrollWidth > chips.clientWidth;
+      if (!scrollableChips && l.rs.some((r) => r.right > innerWidth + 0.5 || r.left < -0.5)) out.push("off the screen's side: " + desc(l.el) + " " + JSON.stringify(l.text));
       for (let p = l.el; p && p.id !== "phone"; p = p.parentElement) {
         const cs = getComputedStyle(p);
         // The views, the day strip and the quick chips scroll sideways by design.
@@ -650,13 +653,14 @@ function trouble(page) {
         const a = leaves[i], b = leaves[j];
         if (a.el === b.el) continue;
         if ((a.el.closest("#nav") && b.el.closest(".view")) || (b.el.closest("#nav") && a.el.closest(".view"))) continue;
-        let hit = 0;
-        for (const ra of a.rs) for (const rb of b.rs) hit = Math.max(hit, inter(ra, rb));
-        if (hit > 6) out.push("overlap: " + JSON.stringify(a.text) + " (" + desc(a.el) + ") and " + JSON.stringify(b.text) + " (" + desc(b.el) + ")");
+        if (!a.rs.some(ra => b.rs.some(rb => inter(ra, rb) > 6))) continue;
+        a.ink ??= ink(a.node);
+        b.ink ??= ink(b.node);
+        if (a.ink.some(ra => b.ink.some(rb => inter(ra, rb) > 6))) out.push("overlap: " + JSON.stringify(a.text) + " (" + desc(a.el) + ") and " + JSON.stringify(b.text) + " (" + desc(b.el) + ")");
       }
     }
     return out;
-  }, SMALLEST);
+  }, { smallest: SMALLEST, ink });
 }
 const SHOTS = require("./shots.cjs")("polish");
 async function clean(page, name) {

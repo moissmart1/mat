@@ -730,7 +730,8 @@ function railKeys(page) {
 
 // The bottom bar's keys, measured: on one line, apart, inside the bar, no text clipped or touching a key's edge, each at least 44 px tall.
 async function barShape(page) {
-  return page.evaluate(() => {
+  const ink = await page.evaluateHandle(require("./text-ink.cjs"));
+  return page.evaluate((ink) => {
     const navEl = document.getElementById("nav");
     const nav = navEl.getBoundingClientRect();
     const items = [...document.querySelectorAll("#nav button")].filter((b) => !b.hidden);
@@ -770,10 +771,8 @@ async function barShape(page) {
       const walker = document.createTreeWalker(document.getElementById("beforeBtn"), NodeFilter.SHOW_TEXT);
       for (let q = walker.nextNode(); q; q = walker.nextNode()) {
         if (!q.textContent.trim() || pill.contains(q)) continue;
-        const range = document.createRange();
-        range.selectNodeContents(q);
-        const w = range.getBoundingClientRect();
-        if (p.left < w.right - 0.5 && w.left < p.right - 0.5 && p.top < w.bottom - 0.5 && w.top < p.bottom - 0.5) cover.push(q.textContent.trim());
+        if (ink(q).some(w => p.left < w.right - 0.5 && w.left < p.right - 0.5 &&
+          p.top < w.bottom - 0.5 && w.top < p.bottom - 0.5)) cover.push(q.textContent.trim());
       }
     }
     const ring = document.getElementById("ring");
@@ -801,7 +800,7 @@ async function barShape(page) {
       ringHeight: rr.height,
       lamps: items.map(lamp),
     };
-  });
+  }, ink);
 }
 
 // The measured bar in its five-key or four-key state. Returns the id of the one lit lamp.

@@ -42,3 +42,34 @@ module.exports = [{
     }
   },
 }];
+
+module.exports.push({
+  name: "overlap checks distinguish glyphs that touch from overlapping font boxes",
+  async run({ page }) {
+    await open(page);
+    const ink = await page.evaluateHandle(require("./text-ink.cjs"));
+    const result = await page.evaluate(async (ink) => {
+      await document.fonts.load('700 20px "Zen Kaku Gothic New"', "M");
+      const label = () => {
+        const span = document.createElement("span");
+        Object.assign(span.style, { position: "fixed", left: "10px", top: "10px", font: '700 20px "Zen Kaku Gothic New"' });
+        span.textContent = "M";
+        document.body.append(span);
+        return span;
+      };
+      const upper = label(), lower = label();
+      const line = (el) => {
+        const range = document.createRange();
+        range.selectNodeContents(el.firstChild);
+        return range.getBoundingClientRect();
+      };
+      const collides = () => ink(upper.firstChild)[0].bottom > ink(lower.firstChild)[0].top;
+      lower.style.top = (10 + line(upper).height - 2) + "px";
+      const boxesOverlap = line(upper).bottom > line(lower).top;
+      const separatedInk = !collides();
+      lower.style.top = upper.style.top;
+      return { boxesOverlap, separatedInk, overprintedInk: collides() };
+    }, ink);
+    assert.deepEqual(result, { boxesOverlap: true, separatedInk: true, overprintedInk: true });
+  },
+});
