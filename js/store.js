@@ -206,7 +206,7 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
 
   const state = {
     status: "boot", online: true, rev: null, me: null,
-    trip: null, people: [], days: [], stops: [], stays: [], expenses: [], payments: [], rateToday: null, rateSource: null, sheetUrl: "", plannerLinked: false, todos: [], todosPulledAt: "", paymentsPulledAt: "", stampDefs: [], stamps: [], paymentProblems: { at: "", list: [], more: 0 }, todoProblems: { at: "", list: [], more: 0 }, tickets: [], ticketsReady: false, ticketList: false,
+    trip: null, people: [], days: [], eves: [], stops: [], stays: [], expenses: [], payments: [], rateToday: null, rateSource: null, sheetUrl: "", plannerLinked: false, todos: [], todosPulledAt: "", paymentsPulledAt: "", stampDefs: [], stamps: [], paymentProblems: { at: "", list: [], more: 0 }, todoProblems: { at: "", list: [], more: 0 }, tickets: [], ticketsReady: false, ticketList: false,
     loadedAt: null, seenAt: null, lastChange: null, notice: null, setAside: [], keyRefused: false,
     // personal: this phone opened its own person's link (load said so); me is then theirs.
     // cleared: the trip was taken off this phone after its key was refused ({ kept: own unsent lines kept }).
@@ -284,6 +284,11 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
       else list.push(shown);
     }
     for (const kind of Object.keys(LIST)) state[LIST[kind]] = lists[kind];
+    // The evening before the first day (Days.kind "eve", typed in the Sheet)
+    // is not a trip day: it is kept apart, in order, so nothing that counts or
+    // numbers the days ever sees it. The kept base and the cache are as loaded.
+    state.eves = state.days.filter((d) => d && d.kind === "eve");
+    state.days = state.days.filter((d) => !(d && d.kind === "eve"));
     state.me = myName && state.people.some((p) => p.name === myName) ? myName : null;
   }
 
@@ -420,6 +425,7 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
     myName = null;
     for (const k of DATA_KEYS) state[k] = Array.isArray(state[k]) ? [] : null;
     Object.assign(state, {
+      eves: [],
       rev: null, me: null, personal: false, sheetUrl: "", plannerLinked: false, todosPulledAt: "", paymentsPulledAt: "",
       paymentProblems: { at: "", list: [], more: 0 }, todoProblems: { at: "", list: [], more: 0 },
       loadedAt: null, lastChange: null, notice: null, setAside: [],

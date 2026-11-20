@@ -513,7 +513,7 @@ test("validateDayPatch", () => {
   assert.deepEqual(P.validateDayPatch({ lineColour: "" }).value, { lineColour: "" });
 });
 test("day rows, labels and links", () => {
-  const d = { date: "2026-12-12", city: "Tokyo", title: "", lineJp: "山手線", lineEn: "Yamanote", lineColour: "#9ACD32", fromJp: "", fromEn: "", toJp: "", toEn: "", lat: "", lng: "" };
+  const d = { date: "2026-12-12", city: "Tokyo", title: "", lineJp: "山手線", lineEn: "Yamanote", lineColour: "#9ACD32", fromJp: "", fromEn: "", toJp: "", toEn: "", lat: "", lng: "", tz: "", kind: "" };
   assert.deepEqual(P.dayFromRow(P.dayToRow(d)), d);
   assert.equal(P.dayFromRow({ date: "2026-12-12", line_colour: "not a colour" }).lineColour, "");
   assert.equal(P.dayLabel("2026-12-12"), "Sat Dec 12");
@@ -790,4 +790,26 @@ test("I3: the backend's pointFromLink never reads a directions link, and the map
   assert.deepEqual(P.pointFromLink("https://www.google.com/maps/search/ramen/@34.9858,135.7588,15z"), { lat: "34.9858", lng: "135.7588" });
   assert.deepEqual(P.pointFromLink("https://www.google.com/maps/place/x/@1,2,3z/data=!3d35.5!4d139.5"), { lat: "35.5", lng: "139.5" });
   assert.deepEqual(P.pointFromLink("https://www.google.com/maps/@1,2,3z/data=!3d35.5!4d139.5"), { lat: "35.5", lng: "139.5" });
+});
+
+test("Days.tz and Days.kind: read from the Sheet, never written by an action", () => {
+  assert.deepEqual(P.TABS.Days.slice(-2), ["tz", "kind"], "at the end, after lat and lng");
+  const tz = (v) => P.dayFromRow({ date: "2026-12-09", tz: v }).tz;
+  assert.equal(tz("America/New_York"), "America/New_York");
+  assert.equal(tz(" America/New_York "), "America/New_York");
+  assert.equal(tz("America/Argentina/Buenos_Aires"), "America/Argentina/Buenos_Aires");
+  assert.equal(tz("Etc/GMT+5"), "Etc/GMT+5");
+  for (const bad of ["", undefined, null, "UTC", "America", "America/New York", "America/a/b/c", "=IMPORTXML(1)", "<b>x</b>/y", "/Tokyo", 5, "A/" + "b".repeat(39)]) assert.equal(tz(bad), "", String(bad));
+  assert.equal(tz("A/" + "b".repeat(38)), "A/" + "b".repeat(38), "40 letters");
+  const kind = (v) => P.dayFromRow({ date: "2026-12-08", kind: v }).kind;
+  assert.equal(kind("eve"), "eve");
+  assert.equal(kind(" Eve "), "eve");
+  for (const other of ["", undefined, "evening", "day", 1]) assert.equal(kind(other), "", String(other));
+  const day = P.dayFromRow({ date: "2026-12-09", city: "Lakeport", tz: "America/New_York", kind: "eve" });
+  const row = P.dayToRow(day);
+  assert.equal("tz" in row, false, "dayToRow leaves tz out");
+  assert.equal("kind" in row, false, "dayToRow leaves kind out");
+  assert.equal(P.DAY_PATCH_KEYS.includes("tz") || P.DAY_PATCH_KEYS.includes("kind"), false);
+  assert.equal(P.validateDayPatch({ tz: "America/New_York" }).message, "Only a day’s city, title, line and places can be changed.");
+  assert.equal(P.validateDayPatch({ kind: "eve" }).message, "Only a day’s city, title, line and places can be changed.");
 });

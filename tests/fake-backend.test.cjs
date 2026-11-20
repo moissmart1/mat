@@ -1813,3 +1813,73 @@ test("an add writes no row onto the expense, and the problem list is not in the 
   await call("syncPayments");
   assert.equal(JSON.stringify(call.fake.tables.Log).includes('"row"'), false);
 });
+
+// ---------- a day in its own zone, and the eve (Dec 9 brief) ----------
+// tests/fixtures/dec9.json: invented places, flights and hotel.
+
+const DEC9 = require("./fixtures/dec9.json");
+const daysRow = (call, date) => call.fake.tables.Days.find((r) => r.date === date);
+
+test("load gives each day its tz and kind; the eve and Dec 9 come first, in row order", async () => {
+  const call = client(DEC9);
+  const l = (await call("load")).data;
+  assert.equal(l.trip.start, "2026-12-09");
+  assert.deepEqual(l.days.slice(0, 3).map((d) => [d.date, d.tz, d.kind]), [["2026-12-08", "America/New_York", "eve"], ["2026-12-09", "America/New_York", ""], ["2026-12-10", "", ""]]);
+  assert.equal(l.days.length, 13);
+});
+
+test("set_day and its undo on a day with a tz leave the tz and kind cells as they were", async () => {
+  const call = client(DEC9);
+  const before = { ...daysRow(call, "2026-12-09") };
+  const s = await call("setDay", { date: "2026-12-09", patch: { title: "Out by air", city: "Port Kiri" } });
+  assert.equal(s.ok, true, JSON.stringify(s));
+  assert.deepEqual([s.data.day.tz, s.data.day.kind], ["America/New_York", ""]);
+  assert.deepEqual([daysRow(call, "2026-12-09").tz, daysRow(call, "2026-12-09").kind], ["America/New_York", ""]);
+  const u = await call("undo", { logId: s.data.logId });
+  assert.equal(u.ok, true, JSON.stringify(u));
+  assert.deepEqual(daysRow(call, "2026-12-09"), before, "the row is as it was");
+  // The eve's own row: a change and its undo keep the eve an eve.
+  const eve = { ...daysRow(call, "2026-12-08") };
+  const e = await call("setDay", { date: "2026-12-08", patch: { city: "Lakeport" } });
+  assert.deepEqual([daysRow(call, "2026-12-08").tz, daysRow(call, "2026-12-08").kind], ["America/New_York", "eve"]);
+  await call("undo", { logId: e.data.logId });
+  assert.deepEqual(daysRow(call, "2026-12-08"), eve);
+  assert.equal((await call("setDay", { date: "2026-12-09", patch: { tz: "Asia/Tokyo" } })).error, "bad_input");
+  assert.equal((await call("setDay", { date: "2026-12-08", patch: { kind: "" } })).error, "bad_input");
+});
+
+test("a Sheet without Days.tz and Days.kind loads as now; migrate adds them", async () => {
+  const call = client({ missingColumns: ["Days.tz", "Days.kind"] });
+  const l = (await call("load")).data;
+  assert.equal(l.days.length, 11);
+  assert.ok(l.days.every((d) => d.tz === "" && d.kind === ""));
+  const s = await call("setDay", { date: "2026-12-12", patch: { title: "Busy" } });
+  assert.equal(s.ok, true, "a day change needs neither column");
+  assert.deepEqual((await call("migrate", {}, { actor: undefined })).data, { added: ["Days.tz", "Days.kind"] });
+  assert.deepEqual((await call("migrate", {}, { actor: undefined })).data, { added: [] });
+});
+
+const EVE_PAY = { ...PX7, payment_id: "E8", date_paid: "2026-12-08", description: "Evening train" };
+const D9_PAY = { ...PX7, payment_id: "N9", date_paid: "2026-12-09", description: "Shuttle tip" };
+
+test("a payment dated on the eve comes in as pre; one dated Dec 9 on Dec 9", async () => {
+  const call = linked(DEC9, [PHEAD, prow(EVE_PAY), prow(D9_PAY)]);
+  const r = await call("syncPayments");
+  assert.equal(r.ok, true, JSON.stringify(r));
+  assert.equal(r.data.added, 2);
+  const day = (pid) => call.fake.primitives.readTable_("Expenses").find((x) => x.planner_id === pid).day;
+  assert.equal(day("E8"), "pre", "the eve is not a money day");
+  assert.equal(day("N9"), "2026-12-09");
+});
+
+test("lines already pulled as pre stay pre once Dec 9 becomes a day (the pull never moves a line's day)", async () => {
+  const call = linked({}, [PHEAD, prow(EVE_PAY), prow(D9_PAY)]);
+  await call("syncPayments");
+  const day = (pid) => call.fake.primitives.readTable_("Expenses").find((x) => x.planner_id === pid).day;
+  assert.deepEqual([day("E8"), day("N9")], ["pre", "pre"], "the 11-day trip: both before it");
+  // The coordinator adds the eve and Dec 9 to the Sheet.
+  for (const o of DEC9.daysBefore) call.fake.primitives.appendObj_("Days", o);
+  const r = await call("syncPayments");
+  assert.deepEqual([r.data.added, r.data.changed, r.data.same], [0, 0, 2]);
+  assert.deepEqual([day("E8"), day("N9")], ["pre", "pre"]);
+});

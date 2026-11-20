@@ -382,7 +382,7 @@ function mcpDefaultDay_() {
 
 function mcpAddExpense_(args, who) {
   // The app's own register only offers these; the backend takes any real date.
-  if (args.day !== undefined && args.day !== "pre" && tripDates_().indexOf(args.day) === -1) {
+  if (args.day !== undefined && args.day !== "pre" && moneyDates_().indexOf(args.day) === -1) {
     mcpBad_("day has to be pre or one of the trip’s days, as YYYY-MM-DD.");
   }
   var expense = {
@@ -523,7 +523,7 @@ function mcpTools_() {
         amount: arg("number", "The amount, in the currency given.", true),
         currency: arg("string", "JPY for yen or CAD for Canadian dollars.", true, ["JPY", "CAD"]),
         paid_by: arg("string", "The name of the one who paid.", true),
-        day: arg("string", "The day, YYYY-MM-DD, or pre for before the trip; by default today in Japan."),
+        day: arg("string", "The day, YYYY-MM-DD, or pre for before the trip. Left out, it is today’s date in Japan."),
         split: arg("array", "The names of those who share it; by default everyone."),
         note: arg("string", "A note, under 200 letters."),
         kind: arg("string", "food, transport, stay, activity or shopping.", false, ["food", "transport", "stay", "activity", "shopping"]),

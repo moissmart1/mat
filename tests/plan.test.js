@@ -320,3 +320,136 @@ test("staySpan: the first night to the morning after the last", () => {
   assert.equal(staySpan({ firstNight: "2026-11-29", lastNight: "2026-11-30" }), "Nov 29 to Dec 1");
   assert.equal(staySpan({ firstNight: "", lastNight: "2026-12-12" }), "");
 });
+
+// ---- a day that keeps its own clock (T1 現地時刻, Dec 9) ----
+import { zoneOf, daySpan, tripNow } from "../js/plan.js";
+import { dec9State, seedState, et, ET } from "./fixtures/dec9.js";
+
+const D9 = dec9State();
+const tn = (s, ms) => {
+  const n = tripNow(s, ms);
+  return [n.date, n.minutes, n.zone, n.local];
+};
+
+test("zoneOf: a day's own zone when it names a real one, else the trip's", () => {
+  const trip = { tz: TZ };
+  assert.equal(zoneOf(trip, { tz: ET }), ET);
+  assert.equal(zoneOf(trip, { tz: " America/New_York " }), ET);
+  assert.equal(zoneOf(trip, { tz: "" }), TZ);
+  assert.equal(zoneOf(trip, {}), TZ);
+  assert.equal(zoneOf(trip, null), TZ);
+  assert.equal(zoneOf(trip, { tz: "Mars/Olympus_Mons" }), TZ, "not a zone");
+  assert.equal(zoneOf(trip, { tz: 5 }), TZ);
+  assert.equal(zoneOf({}, { tz: "" }), TZ, "no trip zone: Japan");
+  assert.equal(zoneOf({ tz: "Europe/London" }, {}), "Europe/London");
+});
+
+test("daySpan: the eve runs midnight to midnight; Day 1 ends 30 min after its last flight", () => {
+  assert.deepEqual(daySpan(D9, "2026-12-08"), { begins: et("2026-12-08T00:00"), ends: et("2026-12-09T00:00") });
+  assert.deepEqual(daySpan(D9, "2026-12-09"), { begins: et("2026-12-09T00:00"), ends: et("2026-12-09T12:50") });
+  assert.equal(daySpan(D9, "2026-12-10"), null, "a day in the trip's zone");
+  assert.equal(daySpan(D9, "2026-12-01"), null, "no such day");
+  assert.equal(daySpan(seedState(), "2026-12-10"), null);
+});
+
+test("daySpan: without the 12:20 flight Day 1 ends at 10:30; with no stops at Japan's midnight (10:00)", () => {
+  const no1220 = dec9State({ stops: D9.stops.filter((x) => x.id !== "dec9stop0903") });
+  assert.equal(daySpan(no1220, "2026-12-09").ends, et("2026-12-09T10:30"));
+  const removed = dec9State({ stops: D9.stops.map((x) => (x.id === "dec9stop0903" ? { ...x, deleted: true } : x)) });
+  assert.equal(daySpan(removed, "2026-12-09").ends, et("2026-12-09T10:30"), "a removed stop does not count");
+  const none = dec9State({ stops: D9.stops.filter((x) => x.date !== "2026-12-09") });
+  assert.equal(daySpan(none, "2026-12-09").ends, et("2026-12-09T10:00"));
+  const untimed = dec9State({ stops: [{ id: "u", date: "2026-12-09", time: "", title: "Buy snacks" }] });
+  assert.equal(daySpan(untimed, "2026-12-09").ends, et("2026-12-09T10:00"), "an untimed stop does not count");
+  const early = dec9State({ stops: [{ id: "e", date: "2026-12-09", time: "06:00", title: "Coffee" }] });
+  assert.equal(daySpan(early, "2026-12-09").ends, et("2026-12-09T10:00"), "never before Japan's midnight");
+  const late = dec9State({ stops: [{ id: "l", date: "2026-12-09", time: "23:50", title: "Red-eye" }] });
+  assert.equal(daySpan(late, "2026-12-09").ends, et("2026-12-10T00:00"), "never after its own midnight");
+});
+
+test("tripNow: the worked case (Eastern, eve Dec 8, Day 1 Dec 9)", () => {
+  assert.deepEqual(tn(D9, et("2026-12-07T23:00")), ["2026-12-07", 1380, ET, true], "Japan is on Dec 8, the eve has not begun");
+  assert.deepEqual(tn(D9, et("2026-12-08T17:00")), ["2026-12-08", 1020, ET, true]);
+  assert.deepEqual(tn(D9, et("2026-12-09T07:00")), ["2026-12-09", 420, ET, true]);
+  assert.deepEqual(tn(D9, et("2026-12-09T11:45")), ["2026-12-09", 705, ET, true], "Japan's midnight passed at 10:00 and nothing moved");
+  assert.deepEqual(tn(D9, et("2026-12-09T12:49")), ["2026-12-09", 769, ET, true]);
+  assert.deepEqual(tn(D9, et("2026-12-09T12:50")), ["2026-12-10", 170, TZ, false]);
+  assert.deepEqual(tn(D9, et("2026-12-09T20:20")), ["2026-12-10", 620, TZ, false], "in the air");
+});
+
+test("tripNow: minute by minute around each edge", () => {
+  const edges = [
+    // The eve begins.
+    ["2026-12-07T23:59", "2026-12-07", 1439, true],
+    ["2026-12-08T00:00", "2026-12-08", 0, true],
+    // Eve to Day 1, both Eastern.
+    ["2026-12-08T23:59", "2026-12-08", 1439, true],
+    ["2026-12-09T00:00", "2026-12-09", 0, true],
+    // Japan's midnight (10:00 Eastern) moves nothing.
+    ["2026-12-09T09:59", "2026-12-09", 599, true],
+    ["2026-12-09T10:00", "2026-12-09", 600, true],
+    ["2026-12-09T10:01", "2026-12-09", 601, true],
+    // Day 1 ends at 12:50.
+    ["2026-12-09T12:49", "2026-12-09", 769, true],
+    ["2026-12-09T12:50", "2026-12-10", 170, false],
+    ["2026-12-09T12:51", "2026-12-10", 171, false],
+  ];
+  for (const [at, date, minutes, local] of edges) {
+    const n = tripNow(D9, et(at));
+    assert.deepEqual([n.date, n.minutes, n.local], [date, minutes, local], at);
+  }
+  // Before Japan reaches Dec 8 (10:00 Eastern on Dec 7): Japan's own clock.
+  assert.deepEqual(tn(D9, et("2026-12-07T09:59")), ["2026-12-07", 1439, TZ, false]);
+  assert.deepEqual(tn(D9, et("2026-12-07T10:00")), ["2026-12-07", 600, ET, true]);
+});
+
+test("tripNow: without the eve row, Dec 8 17:00 Eastern is still Dec 8", () => {
+  const s = dec9State({ eves: [] });
+  assert.deepEqual(tn(s, et("2026-12-08T17:00")), ["2026-12-08", 1020, ET, true]);
+  assert.deepEqual(tn(s, et("2026-12-09T07:00")), ["2026-12-09", 420, ET, true]);
+  assert.deepEqual(tn(s, et("2026-12-09T12:50")), ["2026-12-10", 170, TZ, false]);
+});
+
+test("tripNow: a bad tz on a row is the trip's zone", () => {
+  const bad = (tz) => dec9State({ eves: D9.eves.map((d) => ({ ...d, tz })), days: D9.days.map((d) => (d.date === "2026-12-09" ? { ...d, tz } : d)) });
+  for (const tz of ["Mars/Olympus_Mons", "", "not a zone", "UTC+5"]) {
+    const s = bad(tz);
+    for (const at of ["2026-12-08T17:00", "2026-12-09T07:00", "2026-12-09T11:45"]) {
+      const ms = et(at);
+      assert.deepEqual(tn(s, ms), [nowIn(TZ, ms).date, nowIn(TZ, ms).minutes, TZ, false], tz + " " + at);
+    }
+  }
+});
+
+test("tripNow: with no zoned day it equals nowIn(trip.tz) at every instant", () => {
+  for (const s of [seedState(), seedState({ eves: [{ date: "2026-12-09", kind: "eve", tz: "" }] }), seedState({ trip: { start: "2026-12-10", end: "2026-12-20" } }), {}, null]) {
+    const tz = (s && s.trip && s.trip.tz) || TZ;
+    // Two whole days, every 7 minutes, across Japan's midnight and the trip's start.
+    for (let ms = at("2026-12-09T00:00:00+09:00"); ms < at("2026-12-11T00:00:00+09:00"); ms += 7 * 60000) {
+      const n = tripNow(s, ms);
+      const want = nowIn(tz, ms);
+      assert.equal(n.date, want.date);
+      assert.equal(n.minutes, want.minutes);
+      assert.equal(n.zone, tz);
+      assert.equal(n.local, false);
+    }
+  }
+  // A trip whose own zone is not Japan: still its own clock.
+  const s = seedState({ trip: { start: "2026-12-10", end: "2026-12-20", tz: "Europe/London" } });
+  assert.deepEqual(tn(s, at("2026-12-10T23:30:00Z")), ["2026-12-10", 1410, "Europe/London", false]);
+});
+
+test("openDayIndex and daysToGo take the Days clock's date when given", () => {
+  const T12 = { start: "2026-12-09", end: "2026-12-20", tz: TZ };
+  const days = D9.days;
+  const ms = et("2026-12-09T11:45"); // Dec 10 in Japan
+  assert.equal(openDayIndex(T12, days, ms), 1, "Japan's date");
+  assert.equal(openDayIndex(T12, days, ms, "2026-12-09"), 0, "the clock's date");
+  assert.equal(openDayIndex(T12, days, ms, "2026-12-08"), 0, "before the trip");
+  assert.equal(openDayIndex(T12, days, ms, "2026-12-21"), 11, "after it");
+  const eve = et("2026-12-08T17:00"); // Dec 9 in Japan
+  assert.equal(daysToGo(T12, eve), 0);
+  assert.equal(daysToGo(T12, eve, "2026-12-08"), 1);
+  assert.equal(daysToGo({ start: "2026-12-12", tz: TZ }, eve, "2026-12-08"), 4);
+  assert.equal(daysToGo(T12, eve, undefined), 0, "undefined: the trip zone's date");
+});
