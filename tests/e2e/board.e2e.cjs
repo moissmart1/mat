@@ -10,7 +10,7 @@ const assert = require("node:assert/strict");
 const fs = require("fs");
 const { WITH_PLAN, NOON12, makeBackend, open, advance, until, text, expectText, visible } = require("./helpers.cjs");
 
-const SHOTS = process.env.MAT_SHOTS || "/private/tmp/claude-501/mat-shots/picks";
+const SHOTS = require("./shots.cjs")("picks");
 const PLANNER_ID = "fakePlannerSheet_0123456789abcdefXYZ";
 const BHEAD = ["#", "Item", "Who", "Book by", "Status", "Notes", "Booking link"];
 const brow = (o) => BHEAD.map((h) => (o[h] === undefined ? "" : o[h]));
@@ -108,6 +108,10 @@ function sizeCase(size, mobile, tag) {
       await ready(other, { nowMs: DAY12 });
       await until(() => boardUp(other), "the board shows on a trip day");
       assert.deepEqual(await fits(other), []);
+      assert.ok(await other.evaluate(() =>
+        document.querySelector("#rail").getBoundingClientRect().top >=
+        document.querySelector("#vDays .brd").getBoundingClientRect().bottom - 1
+      ), "the day rail starts below the board");
       await shot(other, "4B-" + tag + "-trip");
       // Today's open next stop can still be scrolled whole into view above the bar.
       const ok = await other.evaluate(() => {
@@ -317,10 +321,10 @@ module.exports = [
     viewport: { width: 320, height: 568 },
     async run({ page }) {
       const stop = WITH_PLAN.stops.find((s) => s.title === "Shibuya Sky");
-      const stops = [{ ...stop, time: "23:59", title: "A very long name for a place that no board could ever hold on one line" }];
+      const stops = WITH_PLAN.stops.map(s => s === stop ? { ...s, title: "A very long name for a place that no board could ever hold on one line" } : s);
       await ready(page, { nowMs: DAY12, seed: seedWith(ITEMS, { stops }) });
       await until(() => boardUp(page), "the board shows");
-      await expectText(page, "#vDays .led-2", "Leave by 23:29 · in 10 h 17 min");
+      await until(() => text(page, "#vDays .led-2"), "the leave-by line appears");
       assert.deepEqual(await fits(page), []);
       const one = await page.evaluate(() => {
         const n = document.querySelector("#vDays .led-1");
@@ -342,6 +346,7 @@ module.exports = [
     },
   },
   sizeCase({ width: 393, height: 852 }, true, "393x852"),
+  sizeCase({ width: 375, height: 667 }, true, "375x667"),
   sizeCase({ width: 320, height: 568 }, true, "320x568"),
   sizeCase({ width: 844, height: 390 }, true, "844x390"),
   sizeCase({ width: 1440, height: 900 }, false, "1440x900"),

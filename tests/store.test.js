@@ -44,7 +44,7 @@ function memStorage(init = {}) {
 //   net.garble         actions that reach the backend but get a non-envelope reply
 //   net.knownOffline   the phone itself says it has no network: nothing is sent
 //   timeoutMs          how long the api waits for a reply (the app's own 30 s by default)
-function phone({ seed, fake, storage, me = "Mo", nowMs = NOW, clock, timeoutMs } = {}) {
+function phone({ seed, fake, storage, me = "Mo", nowMs = NOW, clock, timeoutMs, ticketData, isHidden } = {}) {
   fake = fake || createFakeBackend(seed);
   storage = storage || memStorage({ "mat.key": KEY, "mat.me": me });
   const net = { offline: false, knownOffline: false, failing: new Set(), lose: new Set(), garble: new Set(), override: null, holds: [], sent: [] };
@@ -71,7 +71,7 @@ function phone({ seed, fake, storage, me = "Mo", nowMs = NOW, clock, timeoutMs }
   };
   const api = createApi({ url: URL, getKey: () => storage.getItem("mat.key"), getActor: () => storage.getItem("mat.me"), fetchImpl, isOnline: () => !net.knownOffline, ...(timeoutMs ? { timeoutMs } : {}) });
   const waits = [];
-  const store = createStore({ api, storage, now: clock || (() => nowMs), wait: async (ms) => { waits.push(ms); } });
+  const store = createStore({ api, storage, now: clock || (() => nowMs), wait: async (ms) => { waits.push(ms); }, ...(ticketData ? { ticketData } : {}), ...(isHidden ? { isHidden } : {}) });
   return { fake, storage, net, api, store, waits };
 }
 
@@ -136,22 +136,34 @@ test("api rejects with the backend's error code, network when fetch fails, serve
   }
 });
 
-test("api gives up after its timeout: a request that never settles is a network failure", async () => {
+test("api gives up after its timeout: a request that never settles is a network failure", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   let signal = null;
   const never = (url, init) => { signal = init.signal; return new Promise(() => {}); }; // ignores the signal, never settles
   const api = createApi({ url: URL, getKey: () => "sekret-key", getActor: () => "Mo", fetchImpl: never, timeoutMs: 20 });
-  const started = Date.now();
-  const err = await api("rev").then(() => null, (e) => e);
+  const request = api("rev").then(() => null, (e) => e);
+  t.mock.timers.tick(19);
+  assert.equal(signal.aborted, false, "the request gets its full timeout");
+  t.mock.timers.tick(1);
+  const err = await request;
   assert.ok(err instanceof Error);
   assert.equal(err.code, "network");
-  assert.ok(Date.now() - started < 1000, "gave up at the timeout");
   assert.ok(signal && signal.aborted, "the request was aborted");
   assert.equal(String(err.message).includes("sekret"), false);
 
   // A body that never finishes counts the same.
-  const slowBody = async () => ({ ok: true, status: 200, text: () => new Promise(() => {}) });
-  const err2 = await createApi({ url: URL, getKey: () => KEY, getActor: () => "Mo", fetchImpl: slowBody, timeoutMs: 20 })("rev").then(() => null, (e) => e);
-  assert.equal(err2.code, "network");
+  let reading = false;
+  const slowBody = async () => ({
+    text() {
+      reading = true;
+      return new Promise(() => {});
+    },
+  });
+  const body = createApi({ url: URL, getKey: () => KEY, getActor: () => "Mo", fetchImpl: slowBody, timeoutMs: 20 })("rev").then(() => null, (e) => e);
+  await Promise.resolve(); // fetch answered, but reading its body is still pending
+  assert.equal(reading, true);
+  t.mock.timers.tick(20);
+  assert.equal((await body).code, "network");
 });
 
 test("api waits 30 seconds by default before giving up", async () => {
@@ -278,6 +290,75 @@ test("a failed load keeps the cached loadedAt and goes offline; the next good ca
   p.net.offline = false;
   await p.store.checkRev();
   assert.equal(p.store.state.online, true);
+});
+
+test("a request that fails while the page is hidden does not mark the phone offline; back on screen it asks again and is online", async () => {
+  let hidden = false;
+  const p = phone({ seed: SEED, isHidden: () => hidden });
+  await p.store.boot();
+  assert.equal(p.store.state.online, true);
+  hidden = true;
+  p.store.pageHidden();
+  p.net.failing.add("rev");
+  await p.store.checkRev();
+  assert.equal(p.store.state.online, true, "cut off in the background is not no signal");
+  hidden = false;
+  p.net.failing.delete("rev");
+  const before = sent(p.fake, "rev");
+  await p.store.checkRev(); // what the app does at once on visible
+  assert.equal(sent(p.fake, "rev"), before + 1);
+  assert.equal(p.store.state.online, true);
+});
+
+test("a request that was running when the page went hidden, and fails after it is back, is not no signal either", async () => {
+  const p = phone({ seed: SEED });
+  await p.store.boot();
+  const release = p.net.hold("rev");
+  p.net.failing.add("rev");
+  const pending = p.store.checkRev();
+  p.store.pageHidden(); // the page went to the background mid-request
+  release();
+  await pending;
+  assert.equal(p.store.state.online, true);
+});
+
+test("a request that fails while the page is visible still marks the phone offline", async () => {
+  const p = phone({ seed: SEED, isHidden: () => false });
+  await p.store.boot();
+  p.net.failing.add("rev");
+  await p.store.checkRev();
+  assert.equal(p.store.state.online, false);
+  p.net.failing.delete("rev");
+  await p.store.checkRev();
+  assert.equal(p.store.state.online, true);
+});
+
+test("the first check after coming back is retried once before it counts: fails once then answers -> never offline", async () => {
+  const p = phone({ seed: SEED, isHidden: () => false });
+  await p.store.boot();
+  p.store.pageHidden();
+  p.store.pageShown();
+  let failsLeft = 1;
+  p.net.failing = { has: (a) => a === "rev" && failsLeft-- > 0 };
+  const seen = [];
+  p.store.subscribe(() => seen.push(p.store.state.online));
+  await p.store.checkRev();
+  assert.equal(p.store.state.online, true);
+  assert.equal(seen.includes(false), false, "never marked offline");
+  assert.ok(p.waits.includes(1500));
+});
+
+test("the first check after coming back fails twice -> No signal; later failures are not retried", async () => {
+  const p = phone({ seed: SEED, isHidden: () => false });
+  await p.store.boot();
+  p.store.pageHidden();
+  p.store.pageShown();
+  p.net.failing.add("rev");
+  await p.store.checkRev();
+  assert.equal(p.store.state.online, false);
+  p.waits.length = 0;
+  await p.store.checkRev();
+  assert.equal(p.waits.includes(1500), false, "only the first check after return retries");
 });
 
 test("with no cache and no signal, boot ends in error", async () => {
@@ -3114,13 +3195,17 @@ test("wave A 3: a tick whose reply comes after the phone stopped waiting: one ti
   assert.equal(byId(p.store.state.todos, "1").tickedBy, "Mo");
 });
 
-test("wave A 3: a re-send while the first tick's reply is still out: refused as done, and the phone still ends up showing the tick", async () => {
+test("wave A 3: a re-send while the first tick's reply is still out: refused as done, and the phone still ends up showing the tick", async (t) => {
   const p = phone({ seed: bookSeed(2), timeoutMs: 40 });
   await p.store.boot();
   await p.store.syncTodos();
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const release = p.net.hold("tickTodo");
   p.store.tickTodo("1");
   p.store.tickTodo("1"); // a second tap, sent once the first has given up
+  await new Promise(setImmediate); // let the first request reach the backend and hold its reply
+  assert.equal(p.net.holds[0].used, true);
+  t.mock.timers.tick(40);
   await p.store.idle();
   release();
   assert.equal(p.fake.tables.Log.filter((r) => r.kind === "todo" && r.action === "tick").length, 1);
@@ -3514,4 +3599,142 @@ test("round 2: an address key that is taken becomes the saved trip at once, so a
   await again.store.idle();
   assert.equal(storage.getItem("mat.key"), mine);
   assert.equal(again.store.state.me, "Trenton");
+});
+
+// ---------- a stay's booking (S2 鍵札): saveStay, addStay, a picture on a stay ----------
+
+const INN = { id: "stayINN00001", name: "Tsubame-so Guest House", nameJp: "つばめ荘", addressJp: "東京都台東区 つばめ町 1-2-3", firstNight: "2026-12-10", lastNight: "2026-12-12" };
+const stayOf = (store, id) => byId(store.state.stays, id);
+
+test("saveStay sends merge: true and only the patch; shown at once, saved, on the bar once saved", async () => {
+  const p = phone({ seed: { stays: [INN] } });
+  await p.store.boot();
+  // Someone typed a note in the Sheet since this phone loaded: it is kept.
+  p.fake.tables.Stays.find((r) => r.id === INN.id).note = "typed in the Sheet";
+  const t = p.store.saveStay(INN.id, { tkRef: "TSB-4827-KQ", tkRoom: "Tatami room for 3" }, QUIET);
+  assert.equal(stayOf(p.store, INN.id).tkRef, "TSB-4827-KQ", "shown at once");
+  const out = await p.store.outcome(t);
+  await p.store.idle();
+  assert.equal(out.saved, true);
+  const body = p.net.sent.find((b) => b.action === "saveStay");
+  assert.deepEqual(body.args, { stay: { id: INN.id, tkRef: "TSB-4827-KQ", tkRoom: "Tatami room for 3" }, merge: true });
+  const row = p.fake.tables.Stays.find((r) => r.id === INN.id);
+  assert.deepEqual([row.tk_ref, row.tk_room, row.note, row.name], ["TSB-4827-KQ", "Tatami room for 3", "typed in the Sheet", INN.name]);
+  assert.deepEqual([p.store.state.lastChange.kind, p.store.state.lastChange.action], ["stay", "edit"]);
+  assert.deepEqual(queueOf(p.storage), []);
+});
+
+test("saveStay is not queued with no signal: rolled back, said not sent; nothing in mat.queue", async () => {
+  const p = phone({ seed: { stays: [INN] } });
+  await p.store.boot();
+  p.net.knownOffline = true;
+  const out = await p.store.outcome(p.store.saveStay(INN.id, { tkRef: "TSB-4827-KQ" }, QUIET));
+  await p.store.idle();
+  assert.deepEqual(out, { saved: false, reason: "notSent" });
+  assert.equal(stayOf(p.store, INN.id).tkRef, "");
+  assert.deepEqual(queueOf(p.storage), []);
+  assert.equal(p.net.sent.filter((b) => b.action === "saveStay").length, 0);
+});
+
+test("saveStay refused by the backend rolls back with its sentence", async () => {
+  const p = phone({ seed: { stays: [INN] } });
+  await p.store.boot();
+  const out = await p.store.outcome(p.store.saveStay(INN.id, { tkRef: "x".repeat(61) }, QUIET));
+  await p.store.idle();
+  assert.deepEqual(out, { saved: false, reason: "refused", message: "Keep each booking detail under 60 letters." });
+  assert.equal(stayOf(p.store, INN.id).tkRef, "");
+});
+
+test("saveStay with no reply: unsure, then the truth from the next load", async () => {
+  const p = phone({ seed: { stays: [INN] } });
+  await p.store.boot();
+  p.net.lose.add("saveStay");
+  let unsure = false;
+  const out = await p.store.outcome(p.store.saveStay(INN.id, { tkName: "M. EXAMPLE" }, { ...QUIET, onUnsure: () => { unsure = true; } }));
+  await p.store.idle();
+  assert.equal(unsure, true);
+  assert.equal(out.saved, true, "it did land");
+  assert.equal(stayOf(p.store, INN.id).tkName, "M. EXAMPLE");
+});
+
+test("addStay adds a bare stay through saveStay { stay }; refused, it is gone", async () => {
+  const p = phone({ seed: {} });
+  await p.store.boot();
+  const t = p.store.addStay({ name: "Lakeside Airport Inn", firstNight: "2026-12-10", lastNight: "2026-12-10" }, { ...QUIET, id: "stayNEW00001" });
+  assert.equal(stayOf(p.store, "stayNEW00001").pending, true);
+  const out = await p.store.outcome(t);
+  await p.store.idle();
+  assert.equal(out.saved, true);
+  assert.deepEqual(p.net.sent.find((b) => b.action === "saveStay").args, { stay: { name: "Lakeside Airport Inn", firstNight: "2026-12-10", lastNight: "2026-12-10", id: "stayNEW00001" } });
+  assert.equal(p.fake.tables.Stays.length, 1);
+  const bad = await p.store.outcome(p.store.addStay({ name: "", firstNight: "2026-12-10", lastNight: "2026-12-10" }, { ...QUIET, id: "stayNEW00002" }));
+  await p.store.idle();
+  assert.equal(bad.saved, false);
+  assert.equal(stayOf(p.store, "stayNEW00002"), undefined);
+});
+
+test("a stay's picture waits on the phone with its stay, survives mat.queue and a reload, and goes up on the stay", async () => {
+  const kept = new Map();
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]).toString("base64");
+  const p = phone({ seed: { stays: [INN] }, ticketData: async (id) => kept.get(id) || null });
+  await p.store.boot();
+  p.net.knownOffline = true;
+  const token = p.store.addTicket({ stay: INN.id, who: "", seat: "", page: 1, mime: "image/png", w: 10, h: 10, data: png });
+  const id = p.store.state.tickets[0].id;
+  kept.set(id, png);
+  assert.equal(p.store.state.tickets[0].stay, INN.id);
+  assert.equal(p.store.state.tickets[0].stop, "");
+  const out = await p.store.ticketOutcome(token);
+  assert.equal(out.reason, "queued");
+  const q = queueOf(p.storage);
+  assert.equal(q[0].ticket.stay, INN.id);
+  assert.equal(q[0].ticket.stop, "");
+  assert.equal(JSON.stringify(q).includes(png), false);
+  // Closed and opened again, with signal: sent with its stay.
+  const again = phone({ fake: p.fake, storage: p.storage, ticketData: async (i) => kept.get(i) || null });
+  await again.store.boot();
+  assert.equal(again.store.state.tickets.find((t) => t.id === id).stay, INN.id, "the reloaded queue still says its stay");
+  await again.store.idle();
+  const row = again.fake.tables.Tickets.find((r) => r.id === id);
+  assert.deepEqual([row.stay, row.stop], [INN.id, ""]);
+  assert.deepEqual(queueOf(again.storage), []);
+});
+
+// ---------- the eve kept apart from the days (Dec 9 brief) ----------
+
+const DEC9 = require("./fixtures/dec9.json");
+
+test("derive keeps the eve apart: state.eves, in order; state.days the rest; the cache as loaded", async () => {
+  const p = phone({ seed: DEC9 });
+  assert.deepEqual(p.store.state.eves, [], "eves starts empty");
+  await p.store.boot();
+  const s = p.store.state;
+  assert.deepEqual(s.eves.map((d) => [d.date, d.kind, d.tz]), [["2026-12-08", "eve", "America/New_York"]]);
+  assert.equal(s.days.length, 12, "Dec 9 to 20");
+  assert.deepEqual([s.days[0].date, s.days[0].tz, s.days[0].kind], ["2026-12-09", "America/New_York", ""]);
+  assert.ok(s.days.every((d) => d.kind !== "eve"));
+  const cache = JSON.parse(p.storage.getItem("mat.cache"));
+  assert.deepEqual(cache.data.days.map((d) => d.date).slice(0, 3), ["2026-12-08", "2026-12-09", "2026-12-10"], "the cache keeps every row as loaded");
+  assert.equal(cache.data.days.length, 13);
+  assert.equal("eves" in cache.data, false);
+  // A phone that boots from that cache with no signal splits it the same way.
+  const q = phone({ fake: p.fake, storage: p.storage });
+  q.net.offline = true;
+  await q.store.boot();
+  assert.deepEqual([q.store.state.eves.length, q.store.state.days.length, q.store.state.days[0].date], [1, 12, "2026-12-09"]);
+});
+
+test("a trip with no eve has eves [] and its days as loaded", async () => {
+  const p = phone({ seed: SEED });
+  await p.store.boot();
+  assert.deepEqual(p.store.state.eves, []);
+  assert.equal(p.store.state.days.length, 11);
+});
+
+test("the eve is emptied with the days when the trip comes off the phone", async () => {
+  const p = phone({ seed: DEC9 });
+  await p.store.boot();
+  assert.equal(p.store.state.eves.length, 1);
+  p.store.forgot();
+  assert.deepEqual([p.store.state.status, p.store.state.eves, p.store.state.days], ["nokey", [], []]);
 });

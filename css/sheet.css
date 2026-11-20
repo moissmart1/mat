@@ -125,9 +125,9 @@ button.set-r:active,a.set-r:active{background:var(--key-hi);transform:translateY
 /* An open Days sheet (the hotel card, the all-days list) sits a layer above
    every other sheet, so the shadow a closed sheet casts up from below the
    phone never shades its ticket stock. */
-#stay.is-open,#allDays.is-open,#stop.is-open{z-index:26}
+#stay.is-open,#allDays.is-open,#stop.is-open,#staySheet.is-open{z-index:26}
 /* While a Days sheet is open the undo bar sits at the top. */
-.phone.stay-open .ubar,.phone.days-open .ubar,.phone.stop-open .ubar{top:calc(12px + env(safe-area-inset-top, 0px));bottom:auto}
+.phone.stay-open .ubar,.phone.days-open .ubar,.phone.stop-open .ubar,.phone.staysheet-open .ubar{top:calc(12px + env(safe-area-inset-top, 0px));bottom:auto}
 
 /* ---------- the stop sheet (#stop) ----------
    A form cut from the ticket stock: each field is a blank on the ticket,

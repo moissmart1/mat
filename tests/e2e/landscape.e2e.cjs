@@ -67,7 +67,7 @@ const activeView = (page) => page.evaluate(() => document.querySelector(".view.i
 // its retry scrolls Edit into view aligned to the rail's end: the rail snaps
 // to the day before, which un-chooses the stop and leaves Edit inert.
 async function openStop(page, row) {
-  await page.click(row + " .r-b");
+  await page.dispatchEvent(row + " .r-b", "click");
   await until(
     () => page.evaluate((sel) => {
       const r = document.querySelector(sel);
@@ -204,6 +204,9 @@ for (const size of [...SIZES, TAB]) {
         await waitClosed(page, "you");
         await page.click("#ring");
         await waitOpen(page, "reg");
+        // is-open is set at the start of the slide. Measure the controls
+        // when the register has reached its final position.
+        await until(() => page.locator("#reg").evaluate(el => getComputedStyle(el).transform === "none"), "the register slide finishes");
         for (const sel of ["#regDone", "#xWhat", '#pad .key[data-k="7"]', '#pad .key[data-k="0"]', "#kGo", '#xPayer .seal[data-p="Trenton"]', '#xSplit .seal[data-p="Trenton"]', "#xUneven"]) {
           await expectReach(page, sel);
         }
@@ -449,11 +452,9 @@ cases.push({
     });
     const row = '#rail .pg[data-date="' + D12 + '"] .r[data-id="' + DINNER + '"]';
     await openStop(page, row);
-    await until(() => page.evaluate((sel) => {
-      const e = document.querySelector(sel + " .r-edit");
-      return !!e && e.getBoundingClientRect().height > 0;
-    }, row), "Edit shows");
-    await page.click(row + " .r-edit");
+    // Opening the editor is setup here. An actionability scroll on this
+    // partly visible row can snap the rail to yesterday before the click.
+    await page.dispatchEvent(row + " .r-edit", "click");
     await waitOpen(page, "stop");
     await page.evaluate(() => globalThis.__matTest.store.notify("A notice."));
     await until(() => page.evaluate(() => !document.getElementById("ubar").hidden), "the notice shows");

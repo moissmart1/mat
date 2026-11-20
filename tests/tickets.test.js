@@ -800,3 +800,56 @@ test("N4: a picture that meets a busy trip sheet says so, and does not blame the
   assert.equal(waitingSentence({ waiting: 2, busy: 1 }), "Saved on this phone. It goes up in a moment, or when there is signal.");
   assert.equal(waitingSentence({ waiting: 1, busy: 0 }), "Saved on this phone. It goes up when there is signal.");
 });
+
+// ---------- a stay's booking (S2 鍵札) ----------
+
+import { stayMark, stayPictures } from "../js/tickets.js";
+
+const S = (id, stay, extra = {}) => T(id, "", { stay, ...extra });
+
+test("stayMark: pages on a stay, the facts alone, or nothing; only the stay's own live pictures", () => {
+  const inn = { id: "inn00001" };
+  const has = () => true;
+  assert.equal(stayMark(inn, [], has), null);
+  assert.equal(stayMark(null, [], has), null);
+  assert.deepEqual(stayMark({ ...inn, tkRef: "TSB-4827-KQ" }, [], has), { kind: "ref", label: "Reference", saved: true });
+  assert.deepEqual(stayMark({ ...inn, tkRoom: "Tatami" }, [], has), { kind: "ref", label: "Reference", saved: true });
+  assert.deepEqual(stayMark({ ...inn, tkRef: "  " }, [], has), null);
+  assert.deepEqual(stayMark(inn, [S("a", "inn00001")], has), { kind: "pics", label: "1 page", saved: true });
+  assert.deepEqual(stayMark(inn, [S("a", "inn00001"), S("b", "inn00001", { page: 2 })], (id) => id === "a"), { kind: "pics", label: "2 pages", saved: false });
+  // Another stay's, a stop's, a removed one: not this stay's.
+  assert.equal(stayMark(inn, [S("x", "other001"), T("y", "inn00001"), S("z", "inn00001", { gone: true })], has), null);
+  // A stop's mark never counts a stay's picture.
+  assert.equal(ticketMark({ id: "soon0001" }, [S("a", "inn00001")], has), null);
+  // In order of person, then page.
+  assert.deepEqual(stayPictures(inn, [S("b", "inn00001", { who: "Mo", page: 2 }), S("c", "inn00001", { who: "Ajen" }), S("a", "inn00001", { who: "Mo", page: 1 })]).map((t) => t.id), ["c", "a", "b"]);
+});
+
+test("fetchOrder: a stay's pictures at its first night, 15:00; first of all while you are in it; never a removed stay's", () => {
+  const stays = [
+    { id: "inn00001", firstNight: "2026-12-12", lastNight: "2026-12-13" },
+    { id: "inn00002", firstNight: "2026-12-14", lastNight: "2026-12-15" },
+    { id: "inn00003", firstNight: "2026-12-09", lastNight: "2026-12-10" },
+    { id: "gone0001", firstNight: "2026-12-12", lastNight: "2026-12-13", deleted: true },
+  ];
+  const s = { trip: { tz: "Asia/Tokyo" }, stops: STOPS, stays, tickets: [T("t1", "soon0002"), S("y2", "inn00002"), S("y1", "inn00001"), T("t2", "late0001"), S("y3", "inn00003"), S("yg", "gone0001"), S("yn", "nowhere1")] };
+  // Dec 12, 09:00: in the first stay (its first night is today): its picture first, then by time (Dec 14 08:00 before 15:00), then the past.
+  assert.deepEqual(fetchOrder(s, NOW12).map((t) => t.id), ["y1", "t1", "t2", "y2", "y3"]);
+  // Dec 11: the morning after the third stay's last night: it is first, then the rest in time order.
+  const dec11 = Date.parse("2026-12-11T09:00:00+09:00");
+  assert.deepEqual(fetchOrder(s, dec11).map((t) => t.id), ["y3", "t1", "y1", "t2", "y2"]);
+  // Dec 14, the morning after the first stay's last night: still first; the second stay begins tonight, so first too.
+  const dec14 = Date.parse("2026-12-14T07:00:00+09:00");
+  assert.deepEqual(fetchOrder(s, dec14).map((t) => t.id), ["y1", "y2", "t2", "t1", "y3"]);
+});
+
+test("fetchOrder: today is the Days clock's day (Dec 9 in its own zone after Japan's midnight)", async () => {
+  const { dec9State, et } = await import("./fixtures/dec9.js");
+  // Two stays: the airport inn (Dec 8) and one from Dec 10. At 11:45 Eastern on Dec 9
+  // it is Dec 10 in Japan, but still Dec 9 by the Days clock: the inn is the stay you are in.
+  const s = dec9State({
+    stays: [{ id: "dec9stay0801", firstNight: "2026-12-08", lastNight: "2026-12-08" }, { id: "laterstay01", firstNight: "2026-12-10", lastNight: "2026-12-12" }],
+    tickets: [{ id: "inn", stay: "dec9stay0801" }, { id: "later", stay: "laterstay01" }, { id: "fl", stop: "dec9stop0903" }],
+  });
+  assert.deepEqual(fetchOrder(s, et("2026-12-09T11:45")).map((t) => t.id), ["inn", "fl", "later"]);
+});

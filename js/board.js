@@ -19,11 +19,12 @@
 // - anything not ready (no trip, still loading): no board.
 // l2 may be "" (a booking with no date and nobody on it): the line is left out.
 //
-// A closed board stays closed for the rest of that day in the trip's zone and
-// is there again the next: the only thing kept is the date it was closed on.
+// A closed board stays closed for the rest of that day by the Days clock (the
+// trip's zone, or a zoned day's own) and is there again the next: the only
+// thing kept is the date it was closed on.
+// On a day in its own zone (plan.js tripNow) the small label is "次 Next · 現地".
 
-import { dateIn } from "./time.js";
-import { nowIn, daysToGo, stopsFor, nextStopId, nextLine, hereLine } from "./plan.js";
+import { tripNow, daysToGo, stopsFor, nextStopId, nextLine, hereLine } from "./plan.js";
 import { homeToday, dueLine, openTodos } from "./todos.js";
 
 const str = (v) => (typeof v === "string" ? v.trim() : "");
@@ -47,8 +48,9 @@ function bookLine(t, me, today) {
 export function boardFor(s, nowMs, here = null) {
   if (!s || s.status !== "ready" || !s.trip || !s.trip.start) return null;
   const tz = s.trip.tz || "Asia/Tokyo";
-  const now = nowIn(tz, nowMs);
-  const toGo = daysToGo({ ...s.trip, tz }, nowMs);
+  // The Days clock: on a day in its own zone, that place's date and time.
+  const now = tripNow(s, nowMs);
+  const toGo = daysToGo({ ...s.trip, tz }, nowMs, now.date);
   if (toGo > 0) {
     if (s.plannerLinked !== true) return null;
     const todos = (Array.isArray(s.todos) ? s.todos : []).filter((t) => t && typeof t.id === "string" && t.id && typeof t.item === "string");
@@ -64,15 +66,15 @@ export function boardFor(s, nowMs, here = null) {
   const stop = id ? day.find((x) => x.id === id) : null;
   if (!stop) return null;
   const h = here ? hereLine(stop, now.minutes, here) : null;
-  return { kind: "trip", small: "次 Next", big: stop.time, unit: "", l1: str(stop.title) || "Next stop", l2: tidyLine(h ? h.lead : nextLine(stop, now.minutes)) };
+  return { kind: "trip", small: now.local ? "次 Next · 現地" : "次 Next", big: stop.time, unit: "", l1: str(stop.title) || "Next stop", l2: tidyLine(h ? h.lead : nextLine(stop, now.minutes)) };
 }
 
 // ---- closed until tomorrow ----
 
 export const BOARD_KEY = "mat.board";
 
-// What to keep when the board is closed now: the date in the trip's zone.
-export const closedDate = (tz, nowMs) => dateIn(tz || "Asia/Tokyo", nowMs);
+// What to keep when the board is closed now: the Days clock's date (tripNow).
+export const closedDate = (today) => (typeof today === "string" ? today : "");
 
-// Whether what was kept says the board is closed now.
-export const isClosed = (kept, tz, nowMs) => typeof kept === "string" && kept === closedDate(tz, nowMs);
+// Whether what was kept says the board is closed on `today` (the Days clock's date).
+export const isClosed = (kept, today) => typeof kept === "string" && kept !== "" && kept === closedDate(today);
