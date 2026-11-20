@@ -188,6 +188,32 @@ module.exports = [
     },
   },
   {
+    name: "a check the app's own timer started that hangs while the page goes hidden: coming back asks again at once",
+    async run({ page }) {
+      const backend = await ready(page);
+      let revs = 0;
+      const handle = backend.handle;
+      backend.handle = (body) => {
+        if (body.action !== "rev") return handle(body);
+        revs++;
+        if (revs === 1) return new Promise(() => {}); // the first never answers
+        return handle(body);
+      };
+      const hide = (hidden) =>
+        page.evaluate((h) => {
+          Object.defineProperty(document, "visibilityState", { configurable: true, get: () => (h ? "hidden" : "visible") });
+          document.dispatchEvent(new Event("visibilitychange"));
+        }, hidden);
+      await advance(page, backend, POLL_MS);
+      await until(() => revs >= 1, "the timer's check goes out and hangs");
+      await hide(true);
+      await hide(false);
+      await until(() => revs >= 2, "asks again at once, not joins the cut-off check");
+      await idle(page);
+      assert.equal(await visible(page, "#net"), false);
+    },
+  },
+  {
     name: "one check at a time: a check that never answers is not joined by more",
     async run({ page }) {
       const backend = await ready(page);

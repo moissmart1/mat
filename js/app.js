@@ -760,9 +760,11 @@ function start() {
     if (document.visibilityState === "hidden") {
       store.markSeen();
       store.pageHidden();
+      // (Each return while a check hangs starts a new one, on purpose: rev only reads.)
       inFlight = null; // a check running as the page left may be cut off: the return asks again, not joins it
       stopChecking();
     } else {
+      store.pageShown();
       look();
       startChecking();
     }

@@ -321,6 +321,34 @@ test("a request that fails while the page is visible still marks the phone offli
   assert.equal(p.store.state.online, true);
 });
 
+test("the first check after coming back is retried once before it counts: fails once then answers -> never offline", async () => {
+  const p = phone({ seed: SEED, isHidden: () => false });
+  await p.store.boot();
+  p.store.pageHidden();
+  p.store.pageShown();
+  let failsLeft = 1;
+  p.net.failing = { has: (a) => a === "rev" && failsLeft-- > 0 };
+  const seen = [];
+  p.store.subscribe(() => seen.push(p.store.state.online));
+  await p.store.checkRev();
+  assert.equal(p.store.state.online, true);
+  assert.equal(seen.includes(false), false, "never marked offline");
+  assert.ok(p.waits.includes(1500));
+});
+
+test("the first check after coming back fails twice -> No signal; later failures are not retried", async () => {
+  const p = phone({ seed: SEED, isHidden: () => false });
+  await p.store.boot();
+  p.store.pageHidden();
+  p.store.pageShown();
+  p.net.failing.add("rev");
+  await p.store.checkRev();
+  assert.equal(p.store.state.online, false);
+  p.waits.length = 0;
+  await p.store.checkRev();
+  assert.equal(p.waits.includes(1500), false, "only the first check after return retries");
+});
+
 test("with no cache and no signal, boot ends in error", async () => {
   const p = phone({ seed: SEED });
   p.net.offline = true;
