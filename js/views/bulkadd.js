@@ -11,13 +11,10 @@
 // before 入鋏. Matching is js/bulk.js. Each picture goes in through the same
 // path as one added from a stop's Edit sheet (js/views/ticketpart.js
 // upload): put in the keep, store.addTicket, then store.ticketOutcome; a PDF
-// is made into pictures of its pages here, as there. Fix round 1: every
-// picture is made and kept before any is handed over, then all are handed
-// over at once (so each is in mat.queue before the first leaves), and the
-// stop's ticket facts (only the empty ones, worked out as each is sent)
-// follow through store.updateStop, as the Edit sheet's Save does; they never
-// hold the pictures up. With no signal the pictures wait on the phone as a
-// single add does, after a reload too.
+// is made into pictures of its pages here, as there. After review the phone
+// prepares the remaining pages, then keeps and sends each picture in order.
+// The stop's still-empty ticket facts follow through store.updateStop. With
+// no signal, each handed-over picture waits on the phone across a reload.
 //
 // The list and the files never leave the phone except as those pictures and
 // facts; nothing from them is logged. Text from them goes in with
@@ -32,8 +29,8 @@
 // now: checkList({ force })), compares them with the trip's pictures by their
 // tie (js/autoadd.js) and tells You what it found (onList({ text, error })),
 // the notice "4 new tickets from the list". Its Check opens this sheet in list
-// mode (openList): only the files that need something are fetched, one at a
-// time (store.listTicketFile), read exactly as dropped files are, and sorted
+// mode (openList): only the files that need something are fetched, up to two
+// at a time (store.listTicketFile), read in list order, and sorted
 // in the same review; a changed or cancelled line is a card, never acted on
 // by itself; a stop someone filled by hand gets nothing from the list. 入鋏
 // adds them through the same path, each with its tie (`from`), and takes off
@@ -347,8 +344,19 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     return checkList();
   }
 
-  // The notice's Check (and Check the list now): this sheet in list mode,
-  // fetching only the files that need something, one at a time.
+  // Settle failures here: a prefetched response may arrive before it is wanted.
+  async function fetchListFile(file) {
+    if (file.size > LIST_FILE_MAX) return { why: "too big to fetch: add it by hand" };
+    let got;
+    try {
+      got = await store.listTicketFile(file.h);
+    } catch (err) {
+      return { why: err && err.code === "network" ? "no signal: Check the list again later" : (err && err.message) || "it couldn’t be fetched" };
+    }
+    return { got };
+  }
+
+  // The notice's Check (and Check the list now): fetch only the files needing review.
   async function openList({ force = false } = {}) {
     if (phase === "adding" || phase === "reading" || phase === "fetching" || (mode === "list" && phase === "sorted" && !force)) return open();
     reset();
@@ -368,8 +376,9 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
       return;
     }
     // A line whose stop was filled by hand is not even fetched (Mo's rule): said in the asides.
+    const rows = listData.rows;
     const stubs = plan.fresh.map((f) => ({ key: f.file.h, name: f.file.name, kind: f.file.mime, pages: 1, sig: null }));
-    const pre = sortFiles({ files: stubs, rows: listData.rows, state: store.state });
+    const pre = sortFiles({ files: stubs, rows, state: store.state });
     const handOut = byHand(pre.items, store.state.tickets).out;
     const notNeeded = new Set(handOut.filter((it) => !pre.items.some((x) => x.file.key === it.file.key && !handOut.includes(x))).map((it) => it.file.key));
     handPre = handOut.filter((it) => notNeeded.has(it.file.key)).map((it) => ({ label: it.label, stop: it.stop }));
@@ -377,25 +386,20 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
       .concat(...plan.changed.map((c) => c.add.map((a) => ({ file: a.file, tie: a.tie, card: c.key }))));
     fetching.total = want.length;
     draw();
-    for (const w of want) {
+    // Keep at most one file ahead. Decode in order, so a slow first response
+    // cannot reorder cards or let a whole folder accumulate in phone memory.
+    let next = want.length ? fetchListFile(want[0].file) : null;
+    for (const [i, w] of want.entries()) {
       if (mine !== gen) return;
-      if (w.file.size > LIST_FILE_MAX) {
-        fetching.failed.push({ label: w.file.name, why: "too big to fetch: add it by hand" });
-        fetching.done += 1;
-        continue;
-      }
-      let got = null;
-      try {
-        got = await store.listTicketFile(w.file.h);
-      } catch (err) {
-        if (mine !== gen) return;
-        fetching.failed.push({ label: w.file.name, why: err && err.code === "network" ? "no signal: Check the list again later" : (err && err.message) || "it couldn’t be fetched" });
-      }
+      const current = next;
+      next = i + 1 < want.length ? fetchListFile(want[i + 1].file) : null;
+      const { got, why } = await current;
       if (mine !== gen) return;
-      if (got && typeof got.data === "string") {
+      if (why) fetching.failed.push({ label: w.file.name, why });
+      else {
         let raw = null;
         try {
-          raw = fromB64(got.data, got.mime);
+          if (got && typeof got.data === "string") raw = fromB64(got.data, got.mime);
         } catch {
           raw = null;
         }
@@ -414,7 +418,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     }
     await hashKept();
     if (mine !== gen) return;
-    list = { rows: listData.rows, error: null, warn: [], name: "the list" };
+    list = { rows, error: null, warn: [], name: "the list" };
     phase = "sorted";
     afterChange();
     const r = sorted();
@@ -1131,9 +1135,9 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     const offBefore = [], offAfter = [];
     for (const { card, act } of done) {
       if (act === "replace" || act === "first" || act === "add") {
-        card.got.forEach((f, i) => extra.push({ key: card.key + "#" + i, file: f, label: card.label, ...placeOf(card), who: card.who, rowIds: card.rowIds, pages: Math.min(Math.max(1, f.pages || 1), LIMITS.perStop), cut: "", from: "card" }));
+        card.got.forEach((f, i) => extra.push({ key: card.key + "#" + i, cardKey: card.key, file: f, label: card.label, ...placeOf(card), who: card.who, rowIds: card.rowIds, pages: Math.min(Math.max(1, f.pages || 1), LIMITS.perStop), cut: "", from: "card" }));
       }
-      const ids = card.drop.map((t) => ({ id: t.id, label: card.label }));
+      const ids = card.drop.map((t) => ({ id: t.id, label: card.label, cardKey: card.key }));
       if (act === "first" || act === "off") offBefore.push(...ids);
       if (act === "replace") offAfter.push(...ids);
     }
@@ -1159,17 +1163,21 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     say.textContent = all.length ? "Adding " + plural(all.length, "ticket", "tickets") + "." : "Taking " + plural(offBefore.length, "picture", "pictures") + " off.";
 
     // 1. Every picture made (in memory only), nothing kept or sent yet.
+    const failedReplacements = new Set();
     const pics = []; // { it, id, pic, k }
     const hold = (it, pic, k) => {
       pics.push({ it, id: newId(), pic, k });
     };
     for (const it of adding.items) {
       if (dead()) break;
+      const firstPicture = pics.length;
       try {
-        if (it.file.kind === "application/pdf") {
+        // The review already holds the final compressed first page (or image).
+        hold(it, it.file.pic, 0);
+        if (it.file.kind === "application/pdf" && it.pages > 1) {
           let bad = false;
           await pdfPages(it.file.raw, {
-            max: it.pages,
+            max: it.pages, skipFirst: true,
             each: async (canvas, k) => {
               if (bad || dead()) return;
               try {
@@ -1180,20 +1188,24 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
               }
             },
           });
-        } else if (it.file.pic) hold(it, it.file.pic, 0);
+        }
       } catch {
         it.failed += 1;
+        pics.splice(firstPicture);
+        if (it.cardKey) failedReplacements.add(it.cardKey);
         it.message = "That PDF couldn’t be read here. Try a screenshot of the ticket instead.";
       }
+      if (dead()) return;
       adding.made += 1;
-      if (mine === gen) draw();
+      draw();
     }
     if (dead()) return;
 
     // Pictures a card said to take off, one at a time, each waited on (soft: History puts them back).
     async function takeOff(list) {
-      for (const { id, label } of list) {
+      for (const { id, label, cardKey } of list) {
         if (dead()) return;
+        if (failedReplacements.has(cardKey)) continue;
         let unsure = null;
         const noReply = new Promise((resolve) => {
           unsure = resolve;
@@ -1218,7 +1230,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     // up on it. One that is not added keeps its pictures out.
     const made = new Map(); // newStay's place key -> the stay's id, or { failed: why }
     for (const it of adding.items) {
-      if (!it.newStay || dead()) continue;
+      if (!it.newStay || it.failed || dead()) continue;
       const pk = placeKey(it);
       if (!made.has(pk)) {
         adding.step = "stay";

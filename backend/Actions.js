@@ -286,8 +286,8 @@ function rev_() {
 
 function maxLogId_() {
   var max = 0;
-  logRows_().forEach(function (r) {
-    var id = Number(r.id);
+  columnValues_("Log", "id").forEach(function (value) {
+    var id = Number(value);
     if (isFinite(id) && id > max) max = id;
   });
   return max;
@@ -827,8 +827,8 @@ function undoPicture_(entry, rows, ctx) {
 
 // The row whose key cell (an id, or a day's date) is ref. Dates go through
 // cellDate_ in case Sheets hands a date cell back as a Date.
-function findPlanRow_(plan, ref) {
-  var rows = readTable_(plan.tab);
+function findPlanRow_(plan, ref, rows) {
+  rows = rows || readTable_(plan.tab);
   for (var i = 0; i < rows.length; i++) if (cellDate_(rows[i][plan.key]) === ref) return rows[i];
   return null;
 }
@@ -2037,9 +2037,9 @@ function ticketsShown_(removedStops, removedStays) {
 }
 
 // The ids of removed stops, for the limits: their pictures do not count (minor 6).
-function removedStops_() {
+function removedStops_(rows) {
   var out = {};
-  readTable_("Stops").forEach(function (r) { if (cellText_(r.id) !== "" && cellSet_(r.deleted_at)) out[cellText_(r.id)] = true; });
+  rows.forEach(function (r) { if (cellText_(r.id) !== "" && cellSet_(r.deleted_at)) out[cellText_(r.id)] = true; });
   return out;
 }
 
@@ -2058,7 +2058,7 @@ function countedTickets_(rows, removed, removedStays) {
 }
 
 function liveTickets_() {
-  return countedTickets_(readTable_("Tickets"), removedStops_(), removedStays_());
+  return countedTickets_(readTable_("Tickets"), removedStops_(readTable_("Stops")), removedStays_());
 }
 
 // Whether one more live picture fits where t is (its stop, or its stay): the
@@ -2109,17 +2109,18 @@ function addTicket_(args, ctx) {
   if (t.from !== "" && !ctx.owner) return err_("bad_input", MSG_.listOwnerOnly.replace("{owner}", peopleNames_()[0] || "the trip’s organiser"));
   // On a stay (its booking): the Sheet needs the stay column first, and the stay has to be there.
   var placeTitle;
+  var stops = readTable_("Stops");
   if (t.stay !== "") {
     if (!hasColumn_("Tickets", "stay")) return err_("needs_migrate", MSG_.needsMigrate);
     var stayRow = findPlanRow_(planKind_("stay"), t.stay);
     if (!stayRow || cellSet_(stayRow.deleted_at)) return err_("not_found", MSG_.noStay);
     placeTitle = cellText_(stayRow.name);
   } else {
-    var stopRow = findPlanRow_(planKind_("stop"), t.stop);
+    var stopRow = findPlanRow_(planKind_("stop"), t.stop, stops);
     if (!stopRow || cellSet_(stopRow.deleted_at)) return err_("not_found", MSG_.noStop);
     placeTitle = cellText_(stopRow.title);
   }
-  var live = countedTickets_(all, removedStops_(), removedStays_());
+  var live = countedTickets_(all, removedStops_(stops), removedStays_());
   // From the list (auto-add): a second live picture of the same line, page
   // and person is refused under the lock, so two phones, or a run repeated
   // after a lost reply, never add it twice.
@@ -2141,8 +2142,7 @@ function addTicket_(args, ctx) {
   };
   if (t.from !== "") row.planner_id = t.from;
   if (t.stay !== "") row.stay = t.stay;
-  appendObj_("Tickets", row);
-  var saved = ticketFromRow(findRow_("Tickets", t.id));
+  var saved = ticketFromRow(appendObj_("Tickets", row, true));
   var after = ticketSnap_(saved, placeTitle);
   var log = appendLog_(ctx, "add", "ticket", t.id, summarize("add", "ticket", null, after), null, after);
   return ok_({ ticket: saved, logId: log.id }, bumpRev_());

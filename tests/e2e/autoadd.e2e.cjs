@@ -2,7 +2,7 @@
 // the list mode of js/views/bulkadd.js): the owner's phone looks at the list
 // and the ticket folder (listTickets), shows "N new tickets from the list" in
 // You, fetches only what needs something after he opens it (listTicketFile,
-// one at a time) and adds through the same addTicket path, each picture with
+// up to two at a time) and adds through the same addTicket path, each picture with
 // its tie, after 入鋏. Everything is made up: the list's lines, the files
 // (tests/e2e/pictures.cjs), the desk (a stand-in answering in Node), the
 // people are the test trip's own. 13:20 on Dec 12.
@@ -105,7 +105,7 @@ cases.push({
     await page.dispatchEvent("#setListNt", "click");
     await until(() => sheetUp(page, "bulk"), "the sheet opens");
     await listSorted(page);
-    // Fetched one at a time: T001, T005, T019; not T008 (its stop was filled by hand), T010 (cancelled), T030 (before the trip), receipt.png (not on the list).
+    // Requested in order: T001, T005, T019; not T008 (its stop was filled by hand), T010 (cancelled), T030 (before the trip), receipt.png (not on the list).
     assert.deepEqual(deskCalls(backend, "ticketFile").map((c) => c.h), [H(1), H(5), H(19)]);
     await expectText(page, "#bulk .sheet-top i", "from the list · 3 files");
     await expectText(page, "#bulk .ba-band", "帯2 sortedD3 · 2 stops · 1 one eachUntie ›");
@@ -140,6 +140,93 @@ cases.push({
     // The lines the phone got never held the planner's notes or file links.
     const got = await page.evaluate(async () => JSON.stringify(await globalThis.__matTest.store.listTickets({ force: false })));
     for (const never of ["never on the phone", "drive.google.com"]) assert.equal(got.includes(never), false, never);
+  },
+});
+
+cases.push({
+  name: "two file reads overlap, preserve list order, and stay bounded when the first response is late",
+  async run({ page }) {
+    const backend = tripWith({ lines: LINES.slice(0, 3), folder: FOLDER().slice(0, 3) });
+    const handle = backend.handle;
+    const started = [];
+    let release;
+    const first = new Promise((resolve) => { release = resolve; });
+    let secondDone = false;
+    backend.handle = async (body) => {
+      if (body.action !== "listTicketFile") return handle(body);
+      started.push(body.args.handle);
+      if (body.args.handle === H(1)) await first;
+      const result = await handle(body);
+      if (body.args.handle === H(5)) secondDone = true;
+      return result;
+    };
+    await ready(page, backend);
+    await openYou(page);
+    await until(() => visible(page, "#setListNt"), "the notice shows");
+    await page.dispatchEvent("#setListNt", "click");
+    try {
+      await until(() => secondDone, "the second read finishes while the first is held");
+      assert.deepEqual(started, [H(1), H(5)]);
+      assert.equal(calls(backend, "addTicket").length, 0);
+    } finally {
+      release();
+    }
+    await listSorted(page);
+    assert.deepEqual(started, [H(1), H(5), H(8)]);
+    await page.dispatchEvent("#bulkPunch", "click");
+    await added(page);
+    assert.deepEqual(calls(backend, "addTicket").map((b) => [b.args.ticket.stop, b.args.ticket.page]), [
+      [SENSO, 1], [SENSO, 2], [MEIJI, 1], [SKY, 1],
+    ]);
+  },
+});
+
+cases.push({
+  name: "a later PDF render failure keeps the first page out of the upload",
+  async run({ page }) {
+    const file = { ...FOLDER()[0], name: "T001 Sky order.pdf", mime: "application/pdf", data: b64(pdfBytes(2)) };
+    const backend = tripWith({ lines: [LINES[0]], folder: [file] });
+    await ready(page, backend);
+    await openYou(page);
+    await until(() => visible(page, "#setListNt"), "the notice shows");
+    await page.dispatchEvent("#setListNt", "click");
+    await listSorted(page);
+    await page.evaluate(() => {
+      const getContext = HTMLCanvasElement.prototype.getContext;
+      HTMLCanvasElement.prototype.getContext = function(...args) {
+        if (args[0] === "2d") throw new Error("render unavailable");
+        return getContext.apply(this, args);
+      };
+    });
+    await page.click("#bulkPunch");
+    await added(page);
+    assert.equal(calls(backend, "addTicket").length, 0);
+    assert.match(await text(page, "#bulk"), /PDF couldn’t be read/);
+  },
+});
+
+cases.push({
+  name: "a reviewed single-page PDF uploads its prepared picture without encoding it again",
+  async run({ page }) {
+    const file = { ...FOLDER()[0], name: "T001 Sky order.pdf", mime: "application/pdf", data: b64(pdfBytes(1)) };
+    const backend = tripWith({ lines: [LINES[0]], folder: [file] });
+    await ready(page, backend);
+    await openYou(page);
+    await until(() => visible(page, "#setListNt"), "the notice shows");
+    await page.dispatchEvent("#setListNt", "click");
+    await listSorted(page);
+    await page.evaluate(() => {
+      globalThis.testEncodes = 0;
+      const encode = HTMLCanvasElement.prototype.toBlob;
+      HTMLCanvasElement.prototype.toBlob = function (...args) {
+        globalThis.testEncodes += 1;
+        return encode.apply(this, args);
+      };
+    });
+    await page.dispatchEvent("#bulkPunch", "click");
+    await added(page);
+    assert.equal(calls(backend, "addTicket").length, 1);
+    assert.equal(await page.evaluate(() => globalThis.testEncodes), 0);
   },
 });
 

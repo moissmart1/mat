@@ -14,9 +14,10 @@
 //   0.9 (a PNG stays PNG only when that is smaller); when that is still over
 //   LIMITS.maxChars, lower quality, then smaller, until it fits. data is
 //   base64 (no "data:" head); blob the same bytes.
-// - pdfPages(file, { max, each }) -> { pages, total, drawn }: the first `max`
+// - pdfPages(file, { max, each, skipFirst }) -> { pages, total, drawn }: the first `max`
 //   pages drawn white-backed at about LIMITS.maxSide, one at a time; with
-//   each(canvas, i) every page is handed over and its canvas let go (pages is
+//   skipFirst, drawing starts at page two and i remains the original zero-based index.
+//   With each(canvas, i) every drawn page is handed over and its canvas let go (pages is
 //   then empty); total is how many the PDF has. pdf.js (vendor/pdfjs, Apache-2.0, 4.10.38, its LICENSE beside it)
 //   is loaded only now, the first time a PDF is picked, and is not in the
 //   offline shell: attaching needs signal anyway. shrinkCanvas(canvas) then
@@ -182,7 +183,7 @@ function loadPdf() {
   return pdfLib;
 }
 
-export async function pdfPages(file, { max = LIMITS.perStop, each = null } = {}) {
+export async function pdfPages(file, { max = LIMITS.perStop, skipFirst = false, each = null } = {}) {
   const lib = await loadPdf();
   const data = new Uint8Array(await file.arrayBuffer());
   // No eval, no scripting, no forms: the PDF is only drawn.
@@ -192,7 +193,9 @@ export async function pdfPages(file, { max = LIMITS.perStop, each = null } = {})
     const pages = [];
     // One page at a time (minor 3): drawn, handed to each(canvas, index) to be
     // shrunk, then its canvas let go, so 8 pages never sit in memory at once.
-    for (let i = 1; i <= Math.min(total, Math.max(0, max)); i++) {
+    const last = Math.min(total, Math.max(0, max));
+    const first = skipFirst ? 2 : 1;
+    for (let i = first; i <= last; i++) {
       const page = await doc.getPage(i);
       const one = page.getViewport({ scale: 1 });
       const scale = Math.min(4, LIMITS.maxSide / Math.max(one.width, one.height));
@@ -214,7 +217,7 @@ export async function pdfPages(file, { max = LIMITS.perStop, each = null } = {})
         }
       } else pages.push(canvas);
     }
-    return { pages, total, drawn: Math.min(total, Math.max(0, max)) };
+    return { pages, total, drawn: Math.max(0, last - first + 1) };
   } finally {
     doc.destroy();
   }
