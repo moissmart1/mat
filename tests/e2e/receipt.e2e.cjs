@@ -268,6 +268,22 @@ module.exports = [
     },
   },
   {
+    name: "no key on the Home Screen app: a refused link says how to fix it, and pasting a good link signs in",
+    async run({ page }) {
+      await page.addInitScript(() => Object.defineProperty(navigator, "standalone", { value: true, configurable: true }));
+      const backend = await open(page, { seed: SEED, nowMs: NOON12, key: null });
+      await until(() => visible(page, "#keyPaste"), "the paste field");
+      await page.fill("#keyPaste", "wrong-key-123");
+      await page.click("#keyGo");
+      await until(() => backend.requests.some((r) => r.action === "load"), "it tries the key");
+      await expectText(page, "#gate p", "That link no longer works here. Find the email with your own MAT link, press and hold the link, tap Copy Link, then paste it here.");
+      await page.fill("#keyPaste", ORIGIN + "/#k=test-key");
+      await page.click("#keyGo");
+      await waitRows(page, 8);
+      assert.equal(await visible(page, "#gate"), false);
+    },
+  },
+  {
     name: "no key: a bare key works too; one the trip refuses comes back to the same screen",
     async run({ page }) {
       const backend = await open(page, { seed: SEED, nowMs: NOON12, key: null });
