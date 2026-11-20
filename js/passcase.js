@@ -12,7 +12,7 @@
 // ones of their day (stopsFor) and are used only once their day is over.
 //
 // passCase(state, nowMs, { have, here }) ->
-//   { on, date, next, today, later, used, toCome, todayLeft, empty }
+//   { on, date, next, today, later, used, toCome, todayLeft, empty, hook }
 // - on: the trip's first day has begun (tripStarted): the Tickets key is in
 //   the bar in Before's place.
 // - date: today in the trip's zone.
@@ -30,10 +30,14 @@
 //   on this phone, else null.
 // - lead: the window's only: the leave line the departure board prints for
 //   today's next stop (travel minutes, or where the phone is), else null.
+// - hook: the stay shown tonight (stayShownFor, so before 04:00 last night's)
+//   when it has a booking (stayMark), as { id, name, ref, n, total, state,
+//   mark } (nightOf), else null. It changes nothing else: a stay's pictures
+//   are never in the window, a pocket or a count.
 
 import { dateIn } from "./time.js";
-import { nowIn, stopsFor, nextStopId, isPast, minutesOf, nextLine, hereLine, header } from "./plan.js";
-import { ticketMark, ticketKinds } from "./tickets.js";
+import { nowIn, stopsFor, nextStopId, isPast, minutesOf, nextLine, hereLine, header, stayShownFor, nightOf } from "./plan.js";
+import { ticketMark, ticketKinds, stayMark } from "./tickets.js";
 import { tidyLine } from "./board.js";
 
 const str = (v) => (typeof v === "string" ? v.trim() : "");
@@ -64,12 +68,21 @@ function firstPicture(pics, me, have) {
 export function passCase(s, nowMs, { have = () => false, here = null } = {}) {
   const tz = tzOf(s);
   const now = nowIn(tz, nowMs);
-  const out = { on: tripStarted(s, nowMs), date: now.date, next: null, today: [], later: [], used: [], toCome: 0, todayLeft: 0, empty: true };
+  const out = { on: tripStarted(s, nowMs), date: now.date, next: null, today: [], later: [], used: [], toCome: 0, todayLeft: 0, empty: true, hook: null };
   if (!s || s.status !== "ready" || s.ticketsReady !== true) return out;
 
   const days = list(s.days).filter((d) => d && typeof d.date === "string");
   const stops = list(s.stops).filter((x) => x && typeof x.id === "string" && x.id && typeof x.date === "string" && x.date && !x.deleted);
   const tickets = list(s.tickets).filter((t) => t && typeof t.id === "string" && t.id);
+
+  // The hook: tonight's stay, when it has a booking (before the case's own tickets, so it shows with none).
+  const clock = { today: now.date, minutes: now.minutes };
+  const stay = stayShownFor(list(s.stays).filter((x) => x && typeof x.id === "string" && x.id), now.date, clock);
+  const stayM = stay ? stayMark(stay, tickets, have) : null;
+  if (stayM) {
+    const night = nightOf(stay, clock);
+    out.hook = { id: stay.id, name: str(stay.name) || str(stay.nameJp), ref: str(stay.tkRef), n: night.n, total: night.total, state: night.state, mark: stayM };
+  }
   const dates = [...new Set(stops.map((x) => x.date))].sort();
 
   // Every ticket, in the order of the trip: by day, then the Days screen's order.
