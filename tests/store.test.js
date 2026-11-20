@@ -136,22 +136,34 @@ test("api rejects with the backend's error code, network when fetch fails, serve
   }
 });
 
-test("api gives up after its timeout: a request that never settles is a network failure", async () => {
+test("api gives up after its timeout: a request that never settles is a network failure", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   let signal = null;
   const never = (url, init) => { signal = init.signal; return new Promise(() => {}); }; // ignores the signal, never settles
   const api = createApi({ url: URL, getKey: () => "sekret-key", getActor: () => "Mo", fetchImpl: never, timeoutMs: 20 });
-  const started = Date.now();
-  const err = await api("rev").then(() => null, (e) => e);
+  const request = api("rev").then(() => null, (e) => e);
+  t.mock.timers.tick(19);
+  assert.equal(signal.aborted, false, "the request gets its full timeout");
+  t.mock.timers.tick(1);
+  const err = await request;
   assert.ok(err instanceof Error);
   assert.equal(err.code, "network");
-  assert.ok(Date.now() - started < 1000, "gave up at the timeout");
   assert.ok(signal && signal.aborted, "the request was aborted");
   assert.equal(String(err.message).includes("sekret"), false);
 
   // A body that never finishes counts the same.
-  const slowBody = async () => ({ ok: true, status: 200, text: () => new Promise(() => {}) });
-  const err2 = await createApi({ url: URL, getKey: () => KEY, getActor: () => "Mo", fetchImpl: slowBody, timeoutMs: 20 })("rev").then(() => null, (e) => e);
-  assert.equal(err2.code, "network");
+  let reading = false;
+  const slowBody = async () => ({
+    text() {
+      reading = true;
+      return new Promise(() => {});
+    },
+  });
+  const body = createApi({ url: URL, getKey: () => KEY, getActor: () => "Mo", fetchImpl: slowBody, timeoutMs: 20 })("rev").then(() => null, (e) => e);
+  await Promise.resolve(); // fetch answered, but reading its body is still pending
+  assert.equal(reading, true);
+  t.mock.timers.tick(20);
+  assert.equal((await body).code, "network");
 });
 
 test("api waits 30 seconds by default before giving up", async () => {
@@ -1270,6 +1282,26 @@ test("loadHistory({ older: true }) appends the next page", async () => {
   assert.equal(p.store.state.history.entries.length, 205);
   assert.equal(p.store.state.history.more, false);
   assert.equal(new Set(p.store.state.history.entries.map((e) => e.id)).size, 205);
+  assert.equal(p.store.state.history.firstPageError, null);
+});
+
+test("a failed first-page refresh stays marked through Show older and clears on a fresh first page", async () => {
+  const expenses = [];
+  for (let i = 0; i < 205; i++) expenses.push({ id: "bulk" + String(i).padStart(6, "0"), day: "pre", title: "Line " + i, amount: 100, currency: "JPY", paidBy: "Mo", split: ALL.slice(), addedAt: new Date(Date.UTC(2026, 10, 1) + i * 1000).toISOString() });
+  const p = phone({ seed: { expenses } });
+  await p.store.boot();
+  await p.store.loadHistory();
+  assert.equal(p.store.state.history.firstPageError, null);
+  p.net.failing.add("history");
+  await p.store.loadHistory();
+  assert.equal(p.store.state.history.entries.length, 200, "the entries already loaded are kept");
+  assert.equal(p.store.state.history.firstPageError, "network");
+  p.net.failing.delete("history");
+  await p.store.loadHistory({ older: true });
+  assert.equal(p.store.state.history.entries.length, 205);
+  assert.equal(p.store.state.history.firstPageError, "network", "an older page cannot refresh the newest entries");
+  await p.store.loadHistory();
+  assert.equal(p.store.state.history.firstPageError, null);
 });
 
 test("historyFor rejects with network when there is no signal", async () => {
@@ -3183,13 +3215,17 @@ test("wave A 3: a tick whose reply comes after the phone stopped waiting: one ti
   assert.equal(byId(p.store.state.todos, "1").tickedBy, "Mo");
 });
 
-test("wave A 3: a re-send while the first tick's reply is still out: refused as done, and the phone still ends up showing the tick", async () => {
+test("wave A 3: a re-send while the first tick's reply is still out: refused as done, and the phone still ends up showing the tick", async (t) => {
   const p = phone({ seed: bookSeed(2), timeoutMs: 40 });
   await p.store.boot();
   await p.store.syncTodos();
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const release = p.net.hold("tickTodo");
   p.store.tickTodo("1");
   p.store.tickTodo("1"); // a second tap, sent once the first has given up
+  await new Promise(setImmediate); // let the first request reach the backend and hold its reply
+  assert.equal(p.net.holds[0].used, true);
+  t.mock.timers.tick(40);
   await p.store.idle();
   release();
   assert.equal(p.fake.tables.Log.filter((r) => r.kind === "todo" && r.action === "tick").length, 1);
