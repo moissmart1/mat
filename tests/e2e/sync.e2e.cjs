@@ -207,14 +207,19 @@ module.exports = [
       await waitRows(page, 8);
       assert.equal(await page.evaluate(() => !!navigator.serviceWorker.controller), true, "controlled after one reload");
 
-      // The Google Fonts stylesheet is asked for with CORS, so the worker kept it.
+      // Ask for a real face while controlled so the worker caches both its
+      // stylesheet and its bytes before we disconnect.
+      const receiptFont = () => page.evaluate(async () => {
+        const faces = await document.fonts.load('700 16px "Zen Kaku Gothic New"', "Tokyo東京");
+        return faces.length > 0 && faces.every((face) => face.status === "loaded");
+      });
+      assert.ok(await receiptFont(), "the receipt font loaded online");
       const kept = await page.evaluate(async () => {
         const cache = await caches.open("mat-fonts");
         return (await cache.keys()).map((r) => new URL(r.url).hostname);
       });
       assert.ok(kept.includes("fonts.googleapis.com"), "the font stylesheet is kept: " + JSON.stringify(kept));
-      const marker = () => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--fonts-stand-in").trim());
-      assert.equal(await marker(), "1");
+      assert.ok(kept.includes("fonts.gstatic.com"), "the worker kept font bytes");
 
       // Nothing but the fake api (bridged, not on the network) gets through.
       await context.route("**/*", (route) => route.abort());
@@ -222,7 +227,7 @@ module.exports = [
       await waitRows(page, 8);
       assert.ok(await text(page, "#say"), "the sentence draws");
       assert.equal(await visible(page, "#ring"), true);
-      assert.equal(await marker(), "1", "the font stylesheet still applies with no network");
+      assert.ok(await receiptFont(), "the receipt font loads with no network");
     },
   },
   {

@@ -173,3 +173,80 @@ test("a blank or odd row from the Sheet does not break it", () => {
   assert.equal(c.next.id, "c");
   assert.ok(c.today.some((x) => x.id === "odd"), "an odd time is treated as no time");
 });
+
+// ---------- the hook: tonight's stay, when it has a booking (S2 鍵札) ----------
+
+const INN = { id: "inn00001", name: "Tsubame-so Guest House", nameJp: "つばめ荘", firstNight: "2026-12-11", lastNight: "2026-12-13", deleted: false, tkRef: "TSB-4827-KQ", tkName: "", tkPeople: "", tkRoom: "" };
+const stayPic = (id, o = {}) => ({ id, stop: "", stay: "inn00001", who: "", seat: "", page: 1, mime: "image/png", ...o });
+
+test("the hook: tonight's stay with its booking, its night; nothing else in the case changes", () => {
+  const plain = passCase({ ...full(), stays: [{ ...INN, tkRef: "" }] }, NOON, { have });
+  assert.equal(plain.hook, null, "a stay with no booking hangs nothing");
+  const withPics = { ...full(), stays: [INN] };
+  withPics.tickets = [...withPics.tickets, stayPic("k1"), stayPic("k2", { page: 2 })];
+  const c = passCase(withPics, NOON, { have: (id) => have(id) || id === "k1" });
+  assert.deepEqual(c.hook, { id: "inn00001", name: "Tsubame-so Guest House", ref: "TSB-4827-KQ", n: 2, total: 3, state: "on", mark: { kind: "pics", label: "2 pages", saved: false } });
+  // The same state with and without the stay's pictures: the window, pockets and counts are the same.
+  const without = passCase({ ...full(), stays: [INN] }, NOON, { have });
+  const strip = (x) => ({ ...x, hook: null });
+  assert.deepEqual(strip(c), strip(without));
+  assert.deepEqual(strip(c), strip(passCase(full(), NOON, { have })));
+  // Facts alone hang it too.
+  assert.deepEqual(without.hook.mark, { kind: "ref", label: "Reference", saved: true });
+});
+
+test("the hook shows with no stop ticket at all, on the night and at 01:00 the morning after the last, not the day after", () => {
+  const s = state({ stops: [stop("a", "2026-12-12", "09:00")], stays: [INN], tickets: [stayPic("k1")] });
+  const night2 = passCase(s, NOON, { have });
+  assert.equal(night2.empty, true);
+  assert.deepEqual([night2.hook.n, night2.hook.total, night2.hook.state], [2, 3, "on"]);
+  const late = passCase(s, at("2026-12-14T01:00:00+09:00"), { have });
+  assert.deepEqual([late.hook.id, late.hook.n, late.hook.state], ["inn00001", 3, "on"]);
+  assert.equal(passCase(s, at("2026-12-14T09:00:00+09:00"), { have }).hook, null);
+  assert.equal(passCase(s, at("2026-12-10T20:00:00+09:00"), { have }).hook, null, "not before its first night");
+  // A removed stay hangs nothing; nor before migrate.
+  assert.equal(passCase({ ...s, stays: [{ ...INN, deleted: true }] }, NOON, { have }).hook, null);
+  assert.equal(passCase({ ...s, ticketsReady: false }, NOON, { have }).hook, null);
+});
+
+// ---- a day in its own zone and the eve (Dec 9, T1 現地時刻) ----
+import { dec9State, seedState, et } from "./fixtures/dec9.js";
+
+test("Dec 9 in its own zone: a boarding pass is not Used at 10:01 Eastern (Japan's midnight has passed)", () => {
+  const c = passCase(dec9State(), et("2026-12-09T10:01"));
+  assert.equal(c.date, "2026-12-09");
+  assert.equal(c.next.id, "dec9stop0902", "the first flight is still in the window");
+  assert.deepEqual(ids(c.today), ["dec9stop0903"]);
+  assert.deepEqual(ids(c.used), ["dec9stop0801"], "only the eve's train");
+});
+
+test("Dec 9 at 11:45 Eastern: the first flight is Used, the second in the window; at 12:50 both are Used", () => {
+  const c = passCase(dec9State(), et("2026-12-09T11:45"));
+  assert.equal(c.next.id, "dec9stop0903");
+  assert.equal(c.next.lead, "In 35 min");
+  assert.deepEqual(ids(c.used), ["dec9stop0902", "dec9stop0801"]);
+  const after = passCase(dec9State(), et("2026-12-09T12:50"));
+  assert.equal(after.date, "2026-12-10");
+  assert.equal(after.next, null);
+  assert.deepEqual(ids(after.used), ["dec9stop0903", "dec9stop0902", "dec9stop0801"]);
+});
+
+test("the eve's tickets stand by date, with no day number; on the eve the train is in the window", () => {
+  const c = passCase(dec9State(), et("2026-12-08T17:00"));
+  assert.equal(c.date, "2026-12-08");
+  assert.equal(c.on, true);
+  assert.deepEqual([c.next.id, c.next.day, c.next.lead], ["dec9stop0801", 0, "In 10 min"]);
+  assert.deepEqual(ids(c.later), ["dec9stop0902", "dec9stop0903"]);
+  assert.equal(passCase(dec9State(), et("2026-12-09T07:00")).later.length, 0);
+  assert.equal(passCase(dec9State(), et("2026-12-09T07:00")).today[0].day, 1, "Dec 9 is Day 1");
+});
+
+test("tripStarted from the eve when there is one, by the Days clock; else from the first day", () => {
+  assert.equal(tripStarted(dec9State(), et("2026-12-07T23:59")), false, "Dec 8 in Japan, still Dec 7 in Eastern");
+  assert.equal(tripStarted(dec9State(), et("2026-12-08T00:00")), true, "the eve has begun");
+  assert.equal(tripStarted(dec9State({ eves: [] }), et("2026-12-08T17:00")), false, "no eve: from Dec 9");
+  assert.equal(tripStarted(dec9State({ eves: [] }), et("2026-12-09T00:00")), true);
+  // The 11-day trip, unchanged: from Dec 10 in Japan.
+  assert.equal(tripStarted(seedState(), at("2026-12-09T23:59:00+09:00")), false);
+  assert.equal(tripStarted(seedState(), at("2026-12-10T00:00:00+09:00")), true);
+});

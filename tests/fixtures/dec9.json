@@ -1,0 +1,30 @@
+{
+  "trip": { "start": "2026-12-09" },
+  "daysBefore": [
+    { "date": "2026-12-08", "tz": "America/New_York", "kind": "eve" },
+    {
+      "date": "2026-12-09",
+      "tz": "America/New_York",
+      "city": "Lakeport",
+      "title": "A shuttle, two flights, and over the date line",
+      "line_jp": "出国",
+      "line_en": "Departure",
+      "line_colour": "#28408F",
+      "from_jp": "レイクポート",
+      "from_en": "Lakeport",
+      "to_jp": "東京",
+      "to_en": "Tokyo"
+    }
+  ],
+  "stops": [
+    { "id": "dec9stop0801", "date": "2026-12-08", "time": "17:10", "title": "Evening train to Lakeport", "detail": "Arrives 21:25", "signJp": "列車", "tkSeat": "Car 4" },
+    { "id": "dec9stop0802", "date": "2026-12-08", "time": "21:40", "title": "Check in, Lakeside Airport Inn", "detail": "One night", "signJp": "宿" },
+    { "id": "dec9stop0901", "date": "2026-12-09", "time": "07:30", "title": "Hotel shuttle to the airport", "detail": "From the lobby door", "travelMin": 5, "fixed": true, "signJp": "送迎" },
+    { "id": "dec9stop0902", "date": "2026-12-09", "time": "10:00", "title": "Flight ZZ 204 to Riverton", "detail": "Lands 11:28 · 52 min to change", "signJp": "LKP", "tkSeat": "12A" },
+    { "id": "dec9stop0903", "date": "2026-12-09", "time": "12:20", "title": "Flight ZZ 7 to Tokyo", "detail": "Lands Thu Dec 10, 16:35 Japan time", "signJp": "RVT", "tkSeat": "31C" },
+    { "id": "dec9stop1001", "date": "2026-12-10", "time": "16:35", "title": "Land in Tokyo, Terminal 3", "detail": "Immigration, bags, then the train" }
+  ],
+  "stays": [
+    { "id": "dec9stay0801", "name": "Lakeside Airport Inn", "firstNight": "2026-12-08", "lastNight": "2026-12-08", "note": "Shuttle from the lobby door." }
+  ]
+}
