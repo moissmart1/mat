@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import { readFile, stat } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join, normalize, extname, sep } from "node:path";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -23,7 +23,7 @@ function send(res, status, body, type = "text/plain; charset=utf-8") {
   res.end(body);
 }
 
-createServer(async (req, res) => {
+async function serve(req, res) {
   try {
     let pathname = decodeURIComponent(new URL(req.url, "http://localhost").pathname);
     if (pathname.endsWith("/")) pathname += "index.html";
@@ -36,5 +36,20 @@ createServer(async (req, res) => {
   } catch {
     send(res, 404, "Not found");
   }
-// Loopback only: nothing else on the network can read the checkout while tests run.
-}).listen(PORT, "localhost", () => console.log(`Serving ${ROOT} at http://localhost:${PORT}`));
+}
+
+export function startServer(port) {
+  const server = createServer(serve);
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, "localhost", () => {
+      server.off("error", reject);
+      resolve(server);
+    });
+  });
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const server = await startServer(PORT);
+  console.log(`Serving ${ROOT} at http://localhost:${server.address().port}`);
+}

@@ -21,6 +21,11 @@ const waitHist = (page) =>
     "the history sheet opens",
   );
 const waitHistClosed = (page) => until(async () => !(await isOpen(page, "hist")), "the history sheet closes");
+const waitCachedHistory = (page) =>
+  until(() => page.evaluate(() => {
+    const { entries, loading } = globalThis.__matTest.store.state.history;
+    return entries.length > 0 && !loading;
+  }), "History is cached");
 const histRequests = (backend) => backend.requests.filter((r) => r.action === "history").length;
 const undoRequests = (backend) => backend.requests.filter((r) => r.action === "undo").length;
 const idle = (page) => page.evaluate(() => globalThis.__matTest.store.idle());
@@ -277,6 +282,34 @@ module.exports = [
       await waitRowsN(page, 230);
       await until(async () => !(await visible(page, "#histMore")), "Show older goes");
       assert.equal(await page.locator("#histMore").count(), 0);
+      assert.equal(await page.locator("#tape .tp-msg").count(), 0, "nothing stale, no notice");
+    },
+  },
+  {
+    name: "Show older adds the rest of a cached tape and stays stale until the first page refreshes",
+    async run({ page }) {
+      const expenses = [];
+      for (let i = 0; i < 230; i++) expenses.push(SHARED(i));
+      const backend = await open(page, { seed: { expenses, payments: [] }, nowMs: NOON12 });
+      await until(() => page.evaluate(() => document.querySelectorAll("#rc .rc-row").length > 0), "the receipt draws");
+      await waitCachedHistory(page);
+      backend.failWith = "network";
+      await openTape(page, 200);
+      const stale = "Showing the last loaded history. History needs a connection.";
+      await expectText(page, "#tape .tp-msg", stale);
+      backend.failWith = null;
+      assert.equal(await text(page, "#histMore"), "Show older");
+      await page.click("#histMore");
+      await waitRowsN(page, 230);
+      await until(async () => !(await visible(page, "#histMore")), "Show older goes");
+      assert.equal(await page.locator("#histMore").count(), 0);
+      await expectText(page, "#tape .tp-msg", stale);
+      assert.equal(await page.locator("#tape .tp-undo").count(), 0);
+      await page.click("#histDone");
+      await waitHistClosed(page);
+      await openTape(page, 200);
+      await until(async () => (await page.locator("#tape .tp-undo").count()) > 0, "Undo returns after a fresh first page");
+      assert.equal(await page.locator("#tape .tp-msg").count(), 0);
     },
   },
   {
@@ -294,30 +327,67 @@ module.exports = [
     },
   },
   {
-    name: "with no signal the tape says it needs a connection; opening again with signal loads it",
+    name: "with no signal the tape keeps its last loaded entries; opening again refreshes them",
     async run({ page }) {
       const backend = await ready(page);
+      await waitCachedHistory(page);
       backend.failWith = "network";
       await page.click("#histBtn");
       await waitHist(page);
-      await expectText(page, "#tape", "History needs a connection.");
-      assert.equal(await page.locator("#tape .tp-row").count(), 0);
+      await expectText(page, "#tape .tp-msg", "Showing the last loaded history. History needs a connection.");
+      assert.equal(await page.locator("#tape .tp-row").count(), 10);
+      assert.equal(await page.locator("#tape .tp-undo").count(), 0);
       await page.click("#histDone");
       await waitHistClosed(page);
 
       backend.failWith = null;
       await openTape(page, 10);
+      await until(async () => (await page.locator("#tape .tp-msg").count()) === 0, "the stale notice clears");
       assert.equal(histRequests(backend), 2, "the one after starting and this one: the failed one never reached the backend");
+    },
+  },
+  {
+    name: "History never loaded and no signal: the tape says it needs a connection, with no entries",
+    async run({ page }) {
+      // Every History fetch fails from before the app starts, so nothing was ever loaded.
+      const backend = makeBackend(SEED, { now: NOON12 });
+      const orig = backend.handle;
+      let tries = 0;
+      backend.handle = async function (body) {
+        if (body.action === "history") {
+          tries++;
+          throw new Error("network");
+        }
+        return orig.call(backend, body);
+      };
+      await ready(page, { backend, bootHistory: false });
+      await until(() => page.evaluate(() => { const h = globalThis.__matTest.store.state.history; return !!h.error && !h.loading; }), "the quiet History fetch after starting fails");
+      assert.equal(await page.evaluate(() => globalThis.__matTest.store.state.history.entries.length), 0);
+      const before = tries;
+      await page.click("#histBtn");
+      await waitHist(page);
+      await until(() => tries > before, "opening History tries again");
+      await expectText(page, "#tape", "History needs a connection.");
+      assert.equal(await page.locator("#tape .tp-row").count(), 0);
+      assert.equal(await page.locator("#tape .tp-undo").count(), 0);
+      assert.equal((await text(page, "#tape")).includes("Showing the last loaded history."), false, "nothing was loaded, so nothing is called stale");
+      await page.click("#histDone");
+      await waitHistClosed(page);
+
+      backend.handle = orig;
+      await openTape(page, 10);
+      assert.equal(await page.locator("#tape .tp-msg").count(), 0, "a good load clears the message");
     },
   },
   {
     name: "any other trouble loading says so, not that there is no connection",
     async run({ page }) {
       const backend = await ready(page);
+      await waitCachedHistory(page);
       backend.failWith = "server";
       await page.click("#histBtn");
       await waitHist(page);
-      await expectText(page, "#tape", "Couldn’t load the history.");
+      await expectText(page, "#tape .tp-msg", "Showing the last loaded history. Couldn’t load the history.");
     },
   },
   {
