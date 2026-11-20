@@ -28,8 +28,10 @@ import { createUpdater, otherVersionIn } from "./update.js";
 import { APP_VERSION } from "./config.js";
 import { isWide, onWide } from "./shape.js";
 import { createWhere } from "./where.js";
-import { createKeep, fetchMissing, toBase64, ticketMark, fetchesAll, pruneKeep } from "./tickets.js";
+import { createKeep, fetchMissing, toBase64, ticketMark, stayMark, fetchesAll, pruneKeep } from "./tickets.js";
 import { mountStub } from "./views/stub.js";
+import { mountStaySheet } from "./views/staysheet.js";
+import { nowIn } from "./plan.js";
 import { mountBulkAdd } from "./views/bulkadd.js";
 import { clearTrip, forgetPhone } from "./forget.js";
 
@@ -302,18 +304,32 @@ function start() {
   // One sheet at a time: opening one closes the others.
   const history = mountHistory(phone, store);
   // The Days sheets: the hotel card, the list of every day and the stop sheet.
-  const stayCard = mountStayCard(phone, store, { where });
+  // The hotel card's Edit opens Edit stay (js/views/staysheet.js); its Done or a
+  // finished Save opens the card again. Show booking holds the booking up.
+  const stayCard = mountStayCard(phone, store, {
+    where,
+    keep,
+    clock,
+    onEdit: (id) => {
+      stayCard.close(false);
+      staySheet.open(id);
+    },
+    onBooking: (id, button) => stub.openStay(id, button),
+  });
   const allDays = mountAllDays(phone, store, { clock, onPick: (i) => days.goDay(i) });
   const stopSheet = mountStopSheet(phone, store, { keep });
+  const staySheet = mountStaySheet(phone, store, keep, { onClose: (id) => stayCard.open(id) });
   // The stamp book, a panel like History, opened from the Days bar or today's ticket.
   const book = mountStampBook(phone, store, { where });
-  // The real ticket, torn off the day's ticket (js/views/stub.js).
-  const stub = mountStub(phone, store, keep);
+  // The real ticket, torn off the day's ticket (js/views/stub.js); a stay's
+  // booking off its hook, its night by the trip's clock.
+  const stub = mountStub(phone, store, keep, { clock: () => nowIn((store.state.trip && store.state.trip.tz) || "Asia/Tokyo", clock.now()) });
   const closeDaySheets = () => {
     stub.close(false);
     stayCard.close(false);
     allDays.close(false);
     stopSheet.close(false);
+    staySheet.close(false);
     book.close(false);
   };
   // A tab switch closes them (they belong to Days).
@@ -598,6 +614,11 @@ function start() {
       closeForDays();
       stub.open(id, button);
     },
+    // The hook's Show booking: the same booking the hotel card shows.
+    onStay: (id, button) => {
+      closeForDays();
+      stub.openStay(id, button);
+    },
     onBefore: (button) => openBeforeSheet(button),
     onState: (st) => {
       caseState = st;
@@ -634,8 +655,12 @@ function start() {
       stopSheet.edit(id);
     },
     // A stop being added or changed is being looked at: the rail stays put.
-    held: () => stopSheet.isOpen() || stub.isOpen(),
-    tickets: { mark: (stop, s) => (s.ticketsReady ? ticketMark(stop, s.tickets, keep.have) : null), subscribe: (fn) => keep.subscribe(fn) },
+    held: () => stopSheet.isOpen() || staySheet.isOpen() || stub.isOpen(),
+    tickets: {
+      mark: (stop, s) => (s.ticketsReady ? ticketMark(stop, s.tickets, keep.have) : null),
+      stayMark: (stay, s) => (s.ticketsReady ? stayMark(stay, s.tickets, keep.have) : null),
+      subscribe: (fn) => keep.subscribe(fn),
+    },
     onTicket: (id, button) => {
       closeForDays();
       stub.open(id, button);

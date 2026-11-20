@@ -138,6 +138,99 @@
 .tkp .file-for button.is-on .mini.has-pic{border-color:#fff}
 .tkp .file-seat{grid-column:2 / span 2;grid-row:3}
 
+/* ---------- a stay's booking: S2 鍵札, the key tag on the hook ----------
+   A ryokan's wooden room tag on a red cord (js/views/keytag.js): small on the
+   hotel card and the pass case's hook, big on the booking held up, a chip on
+   the day's 宿泊 line. Rules from the stay-ticket mock-up's S2 block. */
+:root{--burn:#2E1A0C; --tag:#FBFAF5}
+.kt-wrap{position:relative;filter:drop-shadow(0 6px 8px rgba(0,0,0,.55)) drop-shadow(0 1px 0 rgba(0,0,0,.6))}
+.kt{position:relative;color:var(--burn);font-weight:900;text-align:center;
+  clip-path:polygon(22% 0,78% 0,100% 15%,100% 100%,0 100%,0 15%);
+  background:repeating-linear-gradient(91deg, rgba(70,38,14,.2) 0 1px, transparent 1px 6px), repeating-linear-gradient(87deg, rgba(255,225,170,.12) 0 2px, transparent 2px 13px), radial-gradient(60% 30% at 60% 55%, rgba(110,60,20,.28), transparent 70%), linear-gradient(180deg,#CFA066,#B98749 55%,#A27136)}
+.kt::after{content:"";position:absolute;inset:0;box-shadow:inset 0 2px 0 rgba(255,235,200,.45), inset 0 -3px 0 rgba(60,30,8,.4), inset 2px 0 0 rgba(255,235,200,.18), inset -2px 0 0 rgba(60,30,8,.25);pointer-events:none}
+.kt-hole{position:absolute;left:50%;top:9px;width:17px;height:17px;margin-left:-8.5px;border-radius:50%;background:#120d0a;box-shadow:0 0 0 2.5px #C9A66B, 0 0 0 3.5px rgba(60,30,8,.6), inset 0 2px 3px #000}
+.kt-burn{text-shadow:0 1px 0 rgba(255,225,170,.4)}
+.kt-yado{font-family:var(--seal);font-weight:400;line-height:1}
+.kt-cord{position:absolute;pointer-events:none;overflow:visible}
+.kt-notch{display:flex;justify-content:center;gap:5px}
+.kt-notch i{width:11px;height:11px;border-radius:50%;border:2px solid var(--burn)}
+.kt-notch i.is-on{background:var(--burn)}
+/* The big tag on the booking held up. */
+.kt.big{width:170px;padding:38px 12px 14px;margin:0 auto}
+.kt.big .kt-yado{font-size:46px}
+.kt.big .kt-nm{font-size:22px;line-height:1.15;margin-top:4px;letter-spacing:.06em;overflow-wrap:anywhere}
+.kt.big .kt-nm.is-long{font-size:17px}
+.kt.big .kt-nights{font-size:12.5px;margin-top:9px}
+.kt.big .kt-notch{margin-top:5px}
+/* The small tag, hung on the hotel card and on the case's hook. */
+.kt.sm{width:92px;padding:30px 6px 9px}
+.kt.sm .kt-yado{font-size:27px}
+.kt.sm .kt-ref{margin-top:4px;padding:3px 2px 4px;background:var(--tag);color:var(--print);border-radius:1px;font-size:11.5px;line-height:1.15;letter-spacing:.01em;box-shadow:0 1px 1px rgba(0,0,0,.4)}
+.kt.sm .kt-ref small{display:block;font-size:9px;font-weight:900}
+.kt.sm .kt-ref span{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;line-clamp:3;overflow:hidden;overflow-wrap:anywhere}
+.kt.sm .kt-notch{margin-top:6px}
+.kt.sm .kt-notch i{width:9px;height:9px;border-width:1.7px}
+.kt.sm .kt-nights{font-size:10.5px;margin-top:3px}
+/* On the hotel card: the tag hangs beside the name. */
+.sy-nm{position:relative}
+.sy-hang{position:absolute;right:18px;top:-6px;z-index:3;transform:rotate(4deg);transform-origin:50% 0}
+.sy.has-tag .sy-nm{min-height:138px;padding-right:112px}
+.kt-line{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;min-height:56px;margin:8px 0 2px;padding:0 16px 0 12px;border:0;border-radius:6px;text-align:left;color:var(--burn);font-weight:900;
+  background:repeating-linear-gradient(91deg, rgba(70,38,14,.2) 0 1px, transparent 1px 6px), linear-gradient(180deg,#CFA066,#B98749 55%,#A27136);box-shadow:inset 0 2px 0 rgba(255,235,200,.45), inset 0 -3px 0 rgba(60,30,8,.4), 0 2px 3px rgba(0,0,0,.5);
+  transition:transform .12s ease-out}
+.kt-line:active{transform:scale(.99)}
+.kt-line span{min-width:0;font-size:16.5px;text-shadow:0 1px 0 rgba(255,225,170,.4);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kt-line span b{font-family:var(--seal);font-weight:400;font-size:18px;margin-right:9px}
+.kt-line i{flex:none;font-size:13px;white-space:nowrap}
+.stay .kt-line:focus-visible{outline-color:var(--print)}
+@media (max-width:350px){ .kt-line{padding:0 12px 0 10px;gap:6px} .kt-line span{font-size:15px} .kt-line span b{margin-right:6px} }
+.sy-tkline{display:flex;align-items:center;gap:6px;margin:8px 0 0;font-size:12.5px;font-weight:700}
+.sy-tkline b{border:1.5px solid var(--print);border-radius:2px;padding:0 4px 1px;font-weight:900}
+.sy-tkline b.is-dash{border-style:dashed}
+/* The day's 宿泊 line with a booking: the name, 券 under it, the chip on the right. */
+.tk-stay.has-tag{grid-template-columns:3.7em minmax(0,1fr) auto}
+.tk-stay.has-tag .tk-stay-n{display:block}
+.tk-stay .r-fx{white-space:normal}
+.tk-stay .r-fx b.is-dash{border-style:dashed}
+.tk-stay .kt-chip{display:grid;justify-items:center;gap:2px;padding:9px 7px 4px;min-width:44px;border-radius:3px;color:var(--burn);font-size:12px;font-weight:900;line-height:1.1;
+  clip-path:polygon(24% 0,76% 0,100% 20%,100% 100%,0 100%,0 20%);background:repeating-linear-gradient(91deg, rgba(70,38,14,.2) 0 1px, transparent 1px 5px), linear-gradient(180deg,#CFA066,#A9793D)}
+.kt-chip::before{content:"";width:6px;height:6px;border-radius:50%;background:#1a120c;box-shadow:0 0 0 1.2px #C9A66B}
+.kt-chip b{font-size:17px}
+/* The hook at the top of the pass case. */
+.pc-hook{position:relative;display:grid;grid-template-columns:auto minmax(0,1fr);gap:14px;align-items:center;margin:0 4px 14px;padding:0 0 12px;border-bottom:1.5px dashed rgba(201,166,107,.32)}
+.pc-hook .kt-wrap{margin-top:14px;transform:rotate(-3deg);transform-origin:50% 0}
+.pc-peg{position:absolute;left:38px;top:2px;width:16px;height:16px;border-radius:50%;background:radial-gradient(circle at 35% 30%, #F0D49A, #C9A66B 45%, #7A5A2A);box-shadow:0 2px 3px rgba(0,0,0,.7);z-index:2}
+.pc-hk{min-width:0;color:var(--text)}
+.pc-hk small{display:block;color:var(--foil);font-size:12.5px;font-weight:900;letter-spacing:.04em}
+.pc-hk b{display:block;font-size:19px;font-weight:900;line-height:1.2;margin-top:3px;overflow-wrap:anywhere}
+.pc-hk span{display:block;font-size:13px;font-weight:700;color:var(--dim);margin-top:3px}
+.pc-hkb{display:inline-flex;align-items:center;min-height:44px;margin-top:8px;padding:8px 13px;border:0;border-radius:3px;background:var(--paper);color:var(--print);font-size:14px;font-weight:900;
+  box-shadow:var(--paper-edge);transition:transform .12s ease-out}
+.pc-hkb b{display:inline;margin:0 6px 0 0;font-size:14px;color:inherit}
+.pc-hkb:active{transform:translateY(1.5px);box-shadow:var(--paper-down)}
+/* The booking held up: the big tag, the paper label tied to it. */
+#tix .kt-hang{position:relative;max-width:480px;margin:0 auto;padding-top:26px}
+#tix .kt-wrap.is-big{width:170px;margin:0 auto;z-index:2;transform:rotate(-2deg)}
+#tix .kt-label{position:relative;margin-top:-8px;background:var(--grain),var(--tag);color:var(--print);border-radius:3px;box-shadow:0 30px 50px -18px #000;transform:rotate(.5deg);font-weight:700}
+#tix .kt-label::before{content:"";position:absolute;left:50%;top:10px;width:12px;height:12px;margin-left:-6px;border-radius:50%;background:#0F0C0B;box-shadow:0 0 0 2px #C9A66B}
+#tix .kt-label .stub-p{padding:30px 14px 0}
+#tix .kt-label .ref-big b{font-size:44px}
+#tix .kt-label .facts{margin-top:10px}
+#tix .pg-cap{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin:12px 0 0;font-size:12.5px;font-weight:900}
+#tix .pg-cap span{font-weight:700}
+#tix .pages{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:10px 0 2px;align-items:start}
+#tix .pages.is-one{grid-template-columns:1fr}
+#tix .pages .stub-code.is-page{width:100%;margin:0}
+#tix .pages.is-one .stub-code.is-page{width:min(100%,300px);margin:0 auto}
+@media (max-width:350px){ #tix .kt-label .ref-big b{font-size:36px} #tix .kt-label .ref-big p{font-size:17px} }
+/* The Edit stay sheet (js/views/staysheet.js): the stop sheet's form. */
+#staySheet .sheet-top i{color:var(--print);opacity:.6}
+#staySheet .st-say{margin:0;font-size:13px;font-weight:700;line-height:1.35}
+#staySheet .st-day{flex-wrap:wrap;gap:2px 8px}
+.st-save{flex:1;border:0;background:var(--print);color:var(--stock)}
+#staySheet.is-saving .st-save:disabled{opacity:.6}
+#staySheet .sheet-top button:disabled{opacity:.3}
+
 /* Held sideways, the bar is a rail on the right: the stub leaves it be. */
 @media (orientation:landscape) and (max-height:520px){
   #tix{right:var(--rail)}

@@ -168,3 +168,7 @@
 #setListNt .nt-t{min-width:0;overflow-wrap:anywhere}
 #setListNt u{margin-left:auto;flex:none;text-decoration:none;border-bottom:1.5px dotted var(--print);white-space:nowrap}
 #setListNt.is-warn .nt-k{border-color:var(--print);color:var(--print)}
+
+/* A stay's booking (S2 鍵札): the 宿 mark in the untied list, and 宿 on the card's choice. */
+.ba-seal.yado{width:24px;height:24px;background:none;border:1.7px solid var(--print);color:var(--print);border-radius:3px;font-family:var(--seal);font-weight:400;font-size:14px}
+.ba-opts>button.is-yado b{font-family:var(--seal);font-weight:400;font-size:18px}

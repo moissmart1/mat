@@ -215,11 +215,14 @@ test("a date outside the trip's days: odd, 'not in the trip's days'", () => {
   assert.equal(out.cards[0].ask, "Not in the trip’s days.");
 });
 
-test("lodging: odd, offering the stop that starts the stay", () => {
-  const out = sortFiles({ files: [png("f", "T030 x.pdf")], rows: [R({ ticket_id: "T030", type: "lodging", start_date: "2026-12-13", start_time: "15:00", title: "Mizuumi lodge" })], state: state() });
+test("lodging: a line with no stay starting that night offers to add the stay (never a stop)", () => {
+  const out = sortFiles({ files: [png("f", "T030 x.pdf")], rows: [R({ ticket_id: "T030", type: "lodging", start_date: "2026-12-13", end_date: "2026-12-16", start_time: "15:00", title: "Mizuumi lodge" })], state: state() });
   assert.equal(out.items.length, 0);
-  assert.equal(out.cards[0].kind, "lodging");
-  assert.deepEqual(out.cards[0].choices.map((c) => c.stop), ["s-ck"]);
+  assert.equal(out.cards[0].kind, "newstay");
+  assert.equal(out.cards[0].ask, "A stay with no card yet: add it?");
+  assert.equal(out.cards[0].hint, "The list dates it Dec 13, 3 nights. No stay in MAT has that night.");
+  assert.deepEqual(out.cards[0].choices.map((c) => c.newStay), [{ name: "Mizuumi lodge", firstNight: "2026-12-13", lastNight: "2026-12-15" }]);
+  assert.equal(out.cards[0].choices[0].stop, undefined);
 });
 
 test("a status other than active (or empty) is left out and listed", () => {
@@ -437,4 +440,87 @@ test("M9: a cut PDF carries which limit cut it", () => {
 
 test("stopLabel: day number, weekday and time, title", () => {
   assert.deepEqual(stopLabel(STOPS[1], DAYS), { d: "D5", when: "Mon 11:00", title: "Hoshizora Ropeway, up" });
+});
+
+// ---------- a stay's booking (S2 鍵札) ----------
+
+import { stayFactsFor, newStayFrom, spanOf, placeKey } from "../js/bulk.js";
+
+const STAYS = [
+  { id: "y-tsb", name: "Tsubame-so Guest House", nameJp: "つばめ荘", firstNight: "2026-12-10", lastNight: "2026-12-12" },
+  { id: "y-riv", name: "Ryokan by the river", firstNight: "2026-12-13", lastNight: "2026-12-14" },
+  { id: "y-gone", name: "Removed inn", firstNight: "2026-12-15", lastNight: "2026-12-15", deleted: true },
+];
+const L = (o) => R({ type: "lodging", ...o });
+
+test("lodging: the one live stay starting that night is sure, on the stay; its order is the first night, 15:00", () => {
+  const rows = [L({ ticket_id: "T014", start_date: "2026-12-10", end_date: "2026-12-13", title: "Something else", provider: "Agency" }), R({ ticket_id: "T001", start_date: "2026-12-10", start_time: "08:00", title: "Flight out" })];
+  const out = sortFiles({ files: [pdf("f", "T014 Confirmation.pdf", 2), png("g", "T001 boarding.png")], rows, state: state({ stays: STAYS }) });
+  assert.deepEqual(out.cards, []);
+  assert.deepEqual(out.items.map((i) => [i.stay, i.stop, i.pages]), [[undefined, "s-fl", 1], ["y-tsb", undefined, 2]]);
+  assert.equal(placeKey(out.items[1]), "stay:y-tsb");
+});
+
+test("lodging: two stays start that night; the name settles it, else a card offering both", () => {
+  const two = [...STAYS, { id: "y-two", name: "Hilltop hostel", firstNight: "2026-12-10", lastNight: "2026-12-10" }];
+  const named = sortFiles({ files: [png("f", "T014 x.png")], rows: [L({ ticket_id: "T014", start_date: "2026-12-10", title: "Hilltop hostel booking" })], state: state({ stays: two }) });
+  assert.deepEqual(named.items.map((i) => i.stay), ["y-two"]);
+  const odd = sortFiles({ files: [png("f", "T014 x.png")], rows: [L({ ticket_id: "T014", start_date: "2026-12-10", title: "Somewhere" })], state: state({ stays: two }) });
+  assert.equal(odd.cards[0].kind, "stays");
+  assert.equal(odd.cards[0].ask, "Two stays start that night.");
+  assert.deepEqual(odd.cards[0].choices.map((c) => c.stay), ["y-tsb", "y-two"]);
+  // Answered: it goes in on the chosen stay.
+  const answered = sortFiles({ files: [png("f", "T014 x.png")], rows: [L({ ticket_id: "T014", start_date: "2026-12-10", title: "Somewhere" })], state: state({ stays: two }), answers: new Map([["f#0", { stay: "y-two", who: "", rowIds: ["T014"] }]]) });
+  assert.deepEqual(answered.items.map((i) => [i.stay, i.from]), [["y-two", "card"]]);
+});
+
+test("lodging outside the trip's days and a removed stay: the add-it card, one night; no name or date offers nothing", () => {
+  const out = sortFiles({ files: [png("f", "T030 airport-inn.pdf")], rows: [L({ ticket_id: "T030", start_date: "2026-12-08", end_date: "2026-12-09", title: "Lakeside Airport Inn" })], state: state({ stays: STAYS }) });
+  assert.equal(out.cards[0].kind, "newstay");
+  assert.equal(out.cards[0].hint, "The list dates it Dec 8, one night. No stay in MAT has that night.");
+  assert.deepEqual(out.cards[0].choices[0].newStay, { name: "Lakeside Airport Inn", firstNight: "2026-12-08", lastNight: "2026-12-08" });
+  const removed = sortFiles({ files: [png("f", "T031 x.png")], rows: [L({ ticket_id: "T031", start_date: "2026-12-15", title: "Removed inn" })], state: state({ stays: STAYS }) });
+  assert.equal(removed.cards[0].kind, "newstay", "a removed stay is never matched");
+  const noName = sortFiles({ files: [png("f", "T032 x.png")], rows: [L({ ticket_id: "T032", start_date: "2026-12-08" })], state: state({ stays: STAYS }) });
+  assert.deepEqual(noName.cards[0].choices, []);
+  // Answered with the new stay: it goes in as newStay, ordered by its first night.
+  const add = sortFiles({ files: [png("f", "T030 airport-inn.pdf")], rows: [L({ ticket_id: "T030", start_date: "2026-12-08", title: "Lakeside Airport Inn" })], state: state({ stays: STAYS }), answers: new Map([["f#0", { newStay: { name: "Lakeside Airport Inn", firstNight: "2026-12-08", lastNight: "2026-12-08" }, who: "", rowIds: ["T030"] }]]) });
+  assert.equal(add.items[0].newStay.name, "Lakeside Airport Inn");
+  assert.equal(add.items[0].stop, undefined);
+});
+
+test("newStayFrom and spanOf: the name (80 letters), first and last night; the dates in short", () => {
+  assert.deepEqual(newStayFrom({ provider: "Inn Co", start_date: "2026-12-13", end_date: "2026-12-16" }), { name: "Inn Co", firstNight: "2026-12-13", lastNight: "2026-12-15" });
+  assert.equal(newStayFrom({ title: "x".repeat(90), start_date: "2026-12-13" }).name.length, 80);
+  assert.deepEqual(newStayFrom({ title: "Inn", start_date: "2026-12-13", end_date: "2026-12-13" }), { name: "Inn", firstNight: "2026-12-13", lastNight: "2026-12-13" });
+  assert.equal(newStayFrom({ title: "Inn", start_date: "soon" }), null);
+  assert.equal(newStayFrom({ start_date: "2026-12-13" }), null);
+  assert.equal(spanOf({ firstNight: "2026-12-13", lastNight: "2026-12-14" }), "Dec 13 to 15");
+  assert.equal(spanOf({ firstNight: "2026-12-30", lastNight: "2027-01-01" }), "Dec 30 to Jan 2");
+});
+
+test("a stay's limit: 8 pictures per stay; the trip's 120 shared; already there on the stay", () => {
+  const tickets = Array.from({ length: 7 }, (_, i) => ({ id: "k" + i, stop: "", stay: "y-tsb", who: "", mime: "image/png", w: 1, h: 1, size: 1 }));
+  const out = sortFiles({ files: [pdf("f", "T014 Confirmation.pdf", 3)], rows: [L({ ticket_id: "T014", start_date: "2026-12-10", title: "Tsubame" })], state: state({ stays: STAYS, tickets }) });
+  assert.equal(out.cards[0].kind, "limit");
+  assert.equal(out.cards[0].hint, "A stay holds 8 pictures; Tsubame-so Guest House has 7.");
+  assert.deepEqual(out.cards[0].choices.map((c) => [c.stay, c.pages, c.cut]), [["y-tsb", 1, "stay"]]);
+  // A stop's 8 are its own: the stay's pictures never count on a stop.
+  const stopOut = sortFiles({ files: [png("g", "T001 x.png")], rows: [R({ ticket_id: "T001", start_date: "2026-12-10", start_time: "08:00", title: "Flight out" })], state: state({ stays: STAYS, tickets }) });
+  assert.equal(stopOut.items.length, 1);
+  // isThere is asked with the stay as the place.
+  const asked = [];
+  const there = sortFiles({ files: [png("f", "T014 x.png")], rows: [L({ ticket_id: "T014", start_date: "2026-12-10", title: "Tsubame" })], state: state({ stays: STAYS }), isThere: (k, stopId, who, place) => { asked.push([k, stopId, who, place]); return true; } });
+  assert.deepEqual(asked, [["f", "", "", { stay: "y-tsb" }]]);
+  assert.deepEqual(there.out.map((o) => [o.kind, o.stay]), [["there", "y-tsb"]]);
+});
+
+test("stayFactsFor: tkRef from the confirmation else ticket_ref, tkName from the holder, only where the stay's is empty", () => {
+  const rows = [L({ ticket_id: "T014", confirmation: "TSB-4827-KQ", holder: "M. EXAMPLE" }), L({ ticket_id: "T021", ticket_ref: "RIV-1", holder: "" })];
+  const items = [{ stay: "y-tsb", rowIds: ["T014"] }, { stay: "y-riv", rowIds: ["T021"] }, { stop: "s-fl", rowIds: ["T014"] }];
+  assert.deepEqual(stayFactsFor(items, rows, STAYS), { "y-tsb": { tkRef: "TSB-4827-KQ", tkName: "M. EXAMPLE" }, "y-riv": { tkRef: "RIV-1" } });
+  const filled = STAYS.map((x) => (x.id === "y-tsb" ? { ...x, tkRef: "MINE" } : x));
+  assert.deepEqual(stayFactsFor(items, rows, filled)["y-tsb"], { tkName: "M. EXAMPLE" });
+  // The stops' facts never take a stay's line.
+  assert.deepEqual(factsFor([{ stay: "y-tsb", rowIds: ["T014"] }], rows, STOPS), {});
 });

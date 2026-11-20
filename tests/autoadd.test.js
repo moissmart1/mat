@@ -148,3 +148,22 @@ test("a tie on a picture the owner did not add is not trusted (fix round 1, I1):
   // A tie for a line that is not on the list, from someone else: no "gone" card either.
   assert.deepEqual(listPlan({ rows: ROWS, files: FILES, state: state([tk("g1", "s-mu", "T099:111111111111", { by: "C" })]) }).cancelled, []);
 });
+
+// ---------- a stay's booking (S2 鍵札) ----------
+
+const LL = (o) => R({ type: "lodging", ...o });
+test("listPlan: a lodging line is never counted outside the trip's days; a changed line carries its stay. byHand looks at the stay", () => {
+  const rows = [LL({ ticket_id: "T030", start_date: "2026-12-08", title: "Lakeside Airport Inn" }), R({ ticket_id: "T031", start_date: "2026-12-05", title: "Before" })];
+  const files = [{ name: "T030 airport-inn.pdf", mime: "application/pdf", h: "h1", print: "aaaa" }, { name: "T031 x.png", mime: "image/png", h: "h2", print: "bbbb" }];
+  const plan = listPlan({ rows, files, state: { days: DAYS, people: [{ name: "Mo" }], tickets: [] } });
+  assert.deepEqual(plan.fresh.map((f) => f.tid), ["T030"]);
+  assert.equal(plan.quiet.outside, 1);
+  const tickets = [{ id: "k1", stop: "", stay: "y-tsb", who: "", from: "T014:aaaa", by: "Mo" }];
+  const changed = listPlan({ rows: [LL({ ticket_id: "T014", start_date: "2026-12-10" })], files: [{ name: "T014 new.pdf", mime: "application/pdf", h: "h3", print: "cccc" }], state: { days: DAYS, people: [{ name: "Mo" }], tickets } });
+  assert.equal(changed.changed[0].stay, "y-tsb");
+  const hand = byHand([{ stay: "y-tsb", who: "" }, { stay: "y-riv", who: "" }, { newStay: { name: "x" }, who: "" }], [{ id: "h", stop: "", stay: "y-tsb", who: "" }]);
+  assert.deepEqual(hand.out.map((i) => i.stay), ["y-tsb"]);
+  assert.equal(hand.keep.length, 2);
+  // A stop filled by hand is not a stay's.
+  assert.equal(byHand([{ stop: "s-fl", who: "" }], [{ id: "h", stop: "", stay: "y-tsb", who: "" }]).keep.length, 1);
+});

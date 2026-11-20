@@ -39,6 +39,10 @@
 // Every row is drawn closed: the Days view opens one (.is-open on the .r, and
 // aria-expanded on its [role=button], and un-inerts its .r-more).
 // A used day's gate stamp is made once per day, place and mark, and reused.
+// - stayTag: { kind, label, saved, n, total, state } (js/tickets.js stayMark
+//   and js/plan.js nightOf for that ticket's night) when the night's stay has
+//   a booking: the 宿泊 line carries 券 and the key-tag chip. Absent, the line
+//   reads exactly as it did.
 // - tix: { [stopId]: { kind, label, saved } } (js/tickets.js ticketMark) for
 //   the stops that have a ticket: the 券 box under the name (solid when every
 //   picture is on this phone, dashed when one still needs signal) and, when
@@ -308,7 +312,10 @@ function askLine() {
 }
 
 // 宿泊 Tonight and the stay's name: a button that opens the hotel card.
-function stayRow(stay) {
+// tag: { kind, label, saved, n, total, state } when the stay has a booking
+// (S2 鍵札): 券 and how it stands under the name, and the key-tag chip with
+// the night on the right. Without it the row is as it always was.
+function stayRow(stay, tag = null) {
   const b = el("button", "tk-stay");
   b.type = "button";
   b.dataset.stay = stay.id;
@@ -316,7 +323,24 @@ function stayRow(stay) {
   label.append(el("b", "", "宿泊"), el("span", "", "Tonight"));
   b.append(label);
   const name = str(stay.name) || str(stay.nameJp);
-  if (name) b.append(el("span", "tk-stay-n", name));
+  if (!tag) {
+    if (name) b.append(el("span", "tk-stay-n", name));
+    return b;
+  }
+  b.classList.add("has-tag");
+  const mid = el("span");
+  if (name) mid.append(el("span", "tk-stay-n", name));
+  const fx = el("span", "r-fx");
+  const pics = tag.kind === "pics";
+  fx.append(el("b", pics && !tag.saved ? "is-dash" : "", "券"), el("span", "", !pics ? "Reference only" : "Booking · " + (tag.saved ? "on this phone" : "needs signal once")));
+  mid.append(fx);
+  const chip = el("span", "kt-chip");
+  chip.setAttribute("aria-hidden", "true");
+  if (tag.state === "on") chip.append(el("b", "", String(tag.n)), "/ " + tag.total + "泊");
+  else chip.append(el("b", "", String(tag.total)), "泊");
+  b.append(mid, chip);
+  const nights = tag.state === "on" ? "night " + tag.n + " of " + tag.total : tag.total + (tag.total === 1 ? " night" : " nights");
+  b.setAttribute("aria-label", "Tonight: " + name + ". Booking, " + nights + ".");
   return b;
 }
 
@@ -365,7 +389,7 @@ export function ticketEl(model) {
   add.type = "button";
   add.dataset.date = date;
   tk.append(add);
-  if (stay && typeof stay.id === "string" && stay.id) tk.append(stayRow(stay));
+  if (stay && typeof stay.id === "string" && stay.id) tk.append(stayRow(stay, model.stayTag || null));
   tk.append(foot);
   return tk;
 }
