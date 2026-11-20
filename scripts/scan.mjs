@@ -12,6 +12,7 @@
 //
 // It never prints what it found, only where.
 
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -71,6 +72,36 @@ export function scanTree(root = ROOT, { patternsOnly = false } = {}) {
     for (const f of findings(text, { deployId, words })) out.push({ file, ...f });
   }
   return out;
+}
+
+// Scan Git objects, including intermediate versions no longer in the checkout.
+// A blob shared by many commits needs only one content scan.
+export function scanOutgoing(root, localSha, remoteSha) {
+  const read = (...args) => execFileSync("git", ["--no-replace-objects", ...args], {
+    cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024,
+  });
+  if (read("rev-parse", "--is-shallow-repository").trim() !== "false") throw new Error("Incomplete history");
+  const words = privateWords();
+  if (words === null) throw new Error("Missing private list");
+  const rules = { words, deployId: readConfig(root).deployId };
+  const exclude = /^0+$/.test(remoteSha)
+    ? read("for-each-ref", "--format=%(objectname)", "refs/remotes/origin/dev", "refs/remotes/origin/main").trim().split(/\s+/).filter(Boolean)
+    : [remoteSha];
+  const commits = read("rev-list", localSha, "--not", ...exclude).trim().split(/\s+/).filter(Boolean);
+  const seen = new Set();
+  for (const commit of commits) {
+    if (findings(read("show", "-s", "--format=%B", commit), rules).length) return 1;
+    for (const entry of read("ls-tree", "-rz", commit).split("\0").filter(Boolean)) {
+      const tab = entry.indexOf("\t");
+      const [, type, oid] = entry.slice(0, tab).split(" ");
+      const path = entry.slice(tab + 1);
+      if (findings(path, rules).length) return 1;
+      if (type !== "blob" || BINARY.test(path) || seen.has(oid)) continue;
+      if (findings(read("cat-file", "blob", oid), rules).length) return 1;
+      seen.add(oid);
+    }
+  }
+  return 0;
 }
 
 function main() {

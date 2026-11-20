@@ -38,10 +38,9 @@ test("backend/Stamp.js matches the backend files (run npm run stamp)", () => {
   assert.ok(backendFiles().includes("appsscript.json"));
 });
 
-test("a push goes out only as main, with a receipt, behind its own backend", () => {
+test("release branches require a receipt and their own live backend", () => {
   assert.equal(push({}), null);
   assert.match(push({ remoteRef: "refs/original/refs/heads/main" }), /refs\/original/);
-  assert.match(push({ remoteRef: "refs/heads/ticks-build" }), /Only main and dev/);
   // dev (reviewed work waiting for a release) goes out under the same checks.
   assert.equal(push({ remoteRef: "refs/heads/dev" }), null);
   assert.match(push({ remoteRef: "refs/heads/dev", receipt: null }), /npm run gate/);
@@ -52,17 +51,28 @@ test("a push goes out only as main, with a receipt, behind its own backend", () 
   assert.match(push({ receipt: { unit: { pass: 9, fail: 0 }, e2e: { pass: 5, fail: 2 } } }), /failing tests/);
   assert.match(push({ live: "old" }), /backend goes first/);
   assert.match(push({ live: "" }), /backend goes first/);
-  // ci/<name> only tries the checks on GitHub: no receipt, but the scan must be clean on exactly that commit.
-  const ci = (over) => judgePush({ remoteRef: "refs/heads/ci/browser-tests", localSha: "a".repeat(40), ci: { atHead: true, clean: true, found: 0, ...over } });
-  assert.equal(ci({}), null);
-  assert.match(ci({ found: 2 }), /private-data scan found 2/);
-  assert.match(ci({ clean: false }), /clean checkout/);
-  assert.match(ci({ atHead: false }), /clean checkout/);
-  assert.match(judgePush({ remoteRef: "refs/heads/ci/x", localSha: "a".repeat(40) }), /clean checkout/);
-  assert.match(push({ remoteRef: "refs/heads/ci/a/b" }), /Only main and dev/);
-  assert.match(push({ remoteRef: "refs/heads/cicada" }), /Only main and dev/);
   // A commit from before the stamp existed has nothing to compare.
   assert.equal(push({ commitStamp: "", live: "" }), null);
+});
+
+test("CI and feature branches require a full clean scan at the outgoing commit", () => {
+  const localSha = "a".repeat(40);
+  for (const name of ["ci/browser-tests", "ticks-build", "codex/issue-19", "team/fix/sidebar"]) {
+    const remoteRef = "refs/heads/" + name;
+    const scan = { atHead: true, clean: true, found: 0 };
+    const check = (changes) => judgePush({ remoteRef, localSha, scan: { ...scan, ...changes } });
+    assert.equal(check({}), null);
+    assert.match(check({ found: 2 }), /private-data scan found 2/);
+    assert.match(check({ clean: false }), /clean checkout/);
+    assert.match(check({ atHead: false }), /clean checkout/);
+    assert.match(judgePush({ remoteRef, localSha }), /clean checkout/);
+  }
+  const deleted = "0".repeat(40);
+  assert.equal(judgePush({ remoteRef: "refs/heads/ci/check", localSha: deleted }), null);
+  assert.match(judgePush({ remoteRef: "refs/heads/topic", localSha: deleted }), /deletion/);
+  for (const remoteRef of ["refs/tags/v1", "refs/heads/ci/a/b", "refs/notes/x", "refs/original/refs/heads/x"]) {
+    assert.ok(judgePush({ remoteRef, localSha, scan: { atHead: true, clean: true, found: 0 } }));
+  }
 });
 
 test("a change to what the phones run owes a new version number", () => {
