@@ -123,9 +123,15 @@ async function open(page, { seed = SEED, key = "test-key", me = "Mo", how = "1",
     }
   }, [entries, mark]);
 
-  await page.clock.install({ time: nowMs });
+  // Install a minute early, then pause at nowMs: install starts the clock
+  // running in real time, so installing at nowMs itself lets a slow machine
+  // tick past nowMs before pauseAt and Playwright throws "Cannot fast-forward
+  // to the past". The margin makes the order impossible to reverse.
+  await page.clock.install({ time: nowMs - 60000 });
   await page.clock.pauseAt(nowMs);
   await page.goto(ORIGIN + "/" + hash);
+  // Initial geometry is measured with the faces the page has requested.
+  await page.evaluate(() => document.fonts.ready.then(() => true));
   return be;
 }
 

@@ -11,6 +11,9 @@
 // plannerId: PLANNER_ID in Script Properties; paymentProblems: { at, list, more }, kept as PAYMENT_PROBLEMS; todoProblems: the same, kept as TODO_PROBLEMS; missingColumns: ["Tab.column", ...]
 // an older Sheet lacks until migrate (ensureColumns_) adds them; missingTabs:
 // ["Tab", ...] an older Sheet lacks altogether until migrate adds them;
+// trip: { key: value } patches to the Trip tab (start: "2026-12-09"); daysBefore:
+// Days rows in the Sheet's column names put above the seeded days, in order
+// (the 12-day trip of tests/fixtures/dec9.json);
 // plannerTabs: { "Book Now": rows, "Change Log": rows } the planner's other
 // tabs, as Sheets hands them back from A1 (a tab left out is not there).
 // stops and stays are arrays in API shape (deleted: true marks
@@ -511,7 +514,10 @@ function createFakeBackend(seed, { clock, lockFails, keepsApostrophe = false } =
 // but every row goes through the same converters and sheet helpers.
 function seedWorld(P, prim, tables, props, seed, now) {
   const rows = P.setupSeedRows();
+  // daysBefore: Days rows (the Sheet's column names) above the seeded Dec 10 row, in order.
+  for (const o of seed.daysBefore || []) prim.appendObj_("Days", o);
   for (const tab of ["Trip", "People", "Days"]) for (const o of rows[tab]) prim.appendObj_(tab, o);
+  for (const [key, value] of Object.entries(seed.trip || {})) prim.updateWhere_("Trip", "key", key, { value });
   for (const [name, patch] of Object.entries(seed.people || {})) prim.updateWhere_("People", "name", name, patch);
   for (const [date, patch] of Object.entries(seed.days || {})) prim.updateWhere_("Days", "date", date, patch);
 

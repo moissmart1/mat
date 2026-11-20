@@ -11,6 +11,7 @@
 // storage is only used to clear the old mat.cur memory once.
 
 import { defaultRingDay, newId } from "../time.js";
+import { tripNow } from "../plan.js";
 import { yen, dollars, pt, dayShort } from "../format.js";
 import { mountUneven, splitOf, toUnits, fromUnits } from "./uneven.js";
 import { isWide } from "../shape.js";
@@ -144,7 +145,13 @@ export function mountRegister(root, store, { now = () => Date.now(), storage = d
 
   const names = () => store.state.people.map((p) => p.name);
   const me = () => store.state.me || names()[0] || "";
-  const today = () => (store.state.trip && store.state.trip.start ? defaultRingDay(store.state.trip, now()) : "pre");
+  // Today by the Days clock (a day in its own zone is that place's; the eve is before the trip).
+  const today = () => {
+    const s = store.state;
+    if (!s.trip || !s.trip.start) return "pre";
+    const t = now();
+    return defaultRingDay(s.trip, t, tripNow(s, t).date);
+  };
 
   // tagged: the label whose kind the line carries while its title still reads so.
   const blank = () => ({ amt: "", tagged: null, split: names(), mode: null, parts: {}, exact: {} });

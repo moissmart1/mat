@@ -19,12 +19,18 @@
 //   bar (the trip's first day has begun, by the Days clock) and its badge.
 // - setBefore(open): how many Before items are still open (the slip's count;
 //   no slip at 0).
+// - The hook (S2 鍵札): when tonight's stay has a booking (passCase's hook), a
+//   brass peg at the top of the case with the small key tag on it, tonight's
+//   stay and its night, and 鍵札 Show booking (onStay(stayId, button): the app
+//   holds the booking up, js/views/stub.js). It shows even with no stop
+//   ticket at all.
 // - A ticket's first picture, small in the window, comes from the keep (the
 //   pictures already on this phone, js/tickets.js); nothing is fetched here.
 // Every title, detail, seat and reference goes in with textContent.
 
 import { passCase } from "../passcase.js";
 import { dayHead } from "../format.js";
+import { tagSmall } from "./keytag.js";
 
 // How often the case looks again while the app is on screen: a ticket's time
 // passing moves it to the back pocket, and midnight on Day 1 brings the key.
@@ -71,7 +77,7 @@ function seatEl(seat) {
   return n;
 }
 
-export function mountPassCase(root, store, { clock, keep, where = null, onTicket = () => {}, onBefore = () => {}, onState = () => {} } = {}) {
+export function mountPassCase(root, store, { clock, keep, where = null, onTicket = () => {}, onStay = () => {}, onBefore = () => {}, onState = () => {} } = {}) {
   const section = el("section", "pc");
   section.setAttribute("aria-labelledby", "pcTitle");
   root.replaceChildren(section);
@@ -182,6 +188,23 @@ export function mountPassCase(root, store, { clock, keep, where = null, onTicket
     return wrap;
   }
 
+  // Tonight's stay on its hook: the peg, the small tag, the words, Show booking.
+  function hookEl(k) {
+    const box = el("div", "pc-hook");
+    box.append(deco("span", "pc-peg", ""), tagSmall(k.ref, k));
+    const words = el("div", "pc-hk");
+    const night = k.state === "on" ? "Night " + k.n + " of " + k.total + "." : k.total + (k.total === 1 ? " night." : " nights.");
+    words.append(el("small", "", "今夜の宿 Tonight’s stay"), el("b", "", k.name), el("span", "", "On the hook every night you sleep there. " + night));
+    const show = button("pc-hkb");
+    show.dataset.act = "stay";
+    show.dataset.stay = k.id;
+    show.append(deco("b", "", "鍵札"), " Show booking");
+    show.setAttribute("aria-label", "Show booking: " + k.name);
+    words.append(show);
+    box.append(words);
+    return box;
+  }
+
   function foil(jp, en, right) {
     const f = el("div", "pc-foil");
     const l = el("span");
@@ -219,6 +242,7 @@ export function mountPassCase(root, store, { clock, keep, where = null, onTicket
     }
 
     const box = el("div", "pc-case");
+    if (c.hook) box.append(hookEl(c.hook));
     const top = foil("次", "Next", "");
     top.lastChild.append(deco("span", "", "本日 "), c.empty ? "Today" : "Today · " + c.todayLeft + " left");
     box.append(top);
@@ -266,6 +290,7 @@ export function mountPassCase(root, store, { clock, keep, where = null, onTicket
     if (spot) {
       let target = null;
       if (spot.act === "before") target = section.querySelector("#pcSlip");
+      else if (spot.act === "stay") target = section.querySelector('[data-act="stay"]');
       else if (spot.id) target = section.querySelector('[data-act="' + spot.act + '"][data-id="' + CSS.escape(spot.id) + '"]') || section.querySelector('[data-id="' + CSS.escape(spot.id) + '"]');
       if (!target) target = section.querySelector("#pcShow") || document.getElementById("ticketsBtn");
       if (target) target.focus({ preventScroll: true });
@@ -309,6 +334,7 @@ export function mountPassCase(root, store, { clock, keep, where = null, onTicket
     const b = ev.target.closest("[data-act]");
     if (!b || !section.contains(b)) return;
     if (b.dataset.act === "before") onBefore(b);
+    else if (b.dataset.act === "stay") onStay(b.dataset.stay, b);
     else if (b.dataset.id) onTicket(b.dataset.id, b);
   });
   // iPhone Safari draws a pressed look (:active) on touch only when something listens.

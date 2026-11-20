@@ -6,7 +6,7 @@ import { API_URL } from "./config.js";
 import { createApi } from "./api.js";
 import { createStore } from "./store.js";
 import { createClock } from "./clock.js";
-import { dateIn, defaultRingDay, tripDay } from "./time.js";
+import { defaultRingDay, tripDay } from "./time.js";
 import { mountDays } from "./views/days.js";
 import { mountMoney } from "./views/money.js";
 import { mountFirst } from "./views/first.js";
@@ -28,8 +28,10 @@ import { createUpdater, otherVersionIn } from "./update.js";
 import { APP_VERSION } from "./config.js";
 import { isWide, onWide } from "./shape.js";
 import { createWhere } from "./where.js";
-import { createKeep, fetchMissing, toBase64, ticketMark, fetchesAll, pruneKeep } from "./tickets.js";
+import { createKeep, fetchMissing, toBase64, ticketMark, stayMark, fetchesAll, pruneKeep } from "./tickets.js";
 import { mountStub } from "./views/stub.js";
+import { mountStaySheet } from "./views/staysheet.js";
+import { tripNow, zoneOf, daySpan } from "./plan.js";
 import { mountBulkAdd } from "./views/bulkadd.js";
 import { clearTrip, forgetPhone } from "./forget.js";
 
@@ -184,7 +186,7 @@ function mountTabs(store, storage) {
     const trip = store.state.trip;
     try {
       storage.setItem("mat.tab", t);
-      storage.setItem("mat.tabDay", dateIn((trip && trip.tz) || "Asia/Tokyo", Date.now()));
+      storage.setItem("mat.tabDay", tripNow(store.state, Date.now()).date);
     } catch {
       // private mode: it opens on Days next time
     }
@@ -195,7 +197,8 @@ function mountTabs(store, storage) {
   function opening(trip) {
     if (!keptTab) return "days";
     if (trip && trip.start) {
-      const today = tripDay({ ...trip, tz: trip.tz || "Asia/Tokyo" }, Date.now());
+      const at = Date.now();
+      const today = tripDay({ ...trip, tz: trip.tz || "Asia/Tokyo" }, at, tripNow(store.state, at).date);
       if (today !== "pre" && today !== "post" && keptDay !== today) return "days";
     }
     return keptTab;
@@ -259,6 +262,7 @@ function start() {
   store = createStore({
     api,
     storage,
+    isHidden: () => document.visibilityState === "hidden",
     clear: (queue) => {
       keyHere = null;
       clearTrip(raw, { queue });
@@ -282,8 +286,13 @@ function start() {
   const where = createWhere({ storage: raw, geolocation: navigator.geolocation, permissions: navigator.permissions });
   where.start();
 
-  // The one clock the Days screen reads, in the trip's time zone.
-  const clock = createClock({ getTz: () => (store.state.trip && store.state.trip.tz) || "Asia/Tokyo" });
+  // The one clock the Days screen reads. A demo of a day runs in that day's
+  // zone (its own, Days.tz, else the trip's) and holds before its day ends.
+  const rowOn = (date) => (store.state.eves || []).concat(store.state.days || []).find((d) => d && d.date === date) || null;
+  const clock = createClock({
+    getTz: (date) => zoneOf(store.state.trip, rowOn(date)),
+    getSpan: (date) => daySpan(store.state, date),
+  });
   const tabs = mountTabs(store, raw);
 
   const phone = document.getElementById("phone");
@@ -302,18 +311,32 @@ function start() {
   // One sheet at a time: opening one closes the others.
   const history = mountHistory(phone, store);
   // The Days sheets: the hotel card, the list of every day and the stop sheet.
-  const stayCard = mountStayCard(phone, store, { where });
+  // The hotel card's Edit opens Edit stay (js/views/staysheet.js); its Done or a
+  // finished Save opens the card again. Show booking holds the booking up.
+  const stayCard = mountStayCard(phone, store, {
+    where,
+    keep,
+    clock,
+    onEdit: (id) => {
+      stayCard.close(false);
+      staySheet.open(id);
+    },
+    onBooking: (id, button) => stub.openStay(id, button),
+  });
   const allDays = mountAllDays(phone, store, { clock, onPick: (i) => days.goDay(i) });
   const stopSheet = mountStopSheet(phone, store, { keep });
+  const staySheet = mountStaySheet(phone, store, keep, { onClose: (id) => stayCard.open(id) });
   // The stamp book, a panel like History, opened from the Days bar or today's ticket.
   const book = mountStampBook(phone, store, { where });
-  // The real ticket, torn off the day's ticket (js/views/stub.js).
-  const stub = mountStub(phone, store, keep);
+  // The real ticket, torn off the day's ticket (js/views/stub.js); a stay's
+  // booking off its hook, its night by the trip's clock.
+  const stub = mountStub(phone, store, keep, { clock: () => tripNow(store.state, clock.now()) });
   const closeDaySheets = () => {
     stub.close(false);
     stayCard.close(false);
     allDays.close(false);
     stopSheet.close(false);
+    staySheet.close(false);
     book.close(false);
   };
   // A tab switch closes them (they belong to Days).
@@ -326,7 +349,7 @@ function start() {
   // A phone is never left pretending unseen (R34): the demo ends by itself
   // when the app comes back after more than 10 minutes away, or on another
   // real trip-zone day than the one it started on. Real time, not the demo's.
-  const realToday = () => dateIn((store.state.trip && store.state.trip.tz) || "Asia/Tokyo", Date.now());
+  const realToday = () => tripNow(store.state, Date.now()).date;
   let demoOn = null; // the real trip-zone day the demo was started on
   let hiddenAt = null;
   // The one rule: a running demo ends when it was left more than 10 minutes
@@ -598,6 +621,11 @@ function start() {
       closeForDays();
       stub.open(id, button);
     },
+    // The hook's Show booking: the same booking the hotel card shows.
+    onStay: (id, button) => {
+      closeForDays();
+      stub.openStay(id, button);
+    },
     onBefore: (button) => openBeforeSheet(button),
     onState: (st) => {
       caseState = st;
@@ -634,8 +662,12 @@ function start() {
       stopSheet.edit(id);
     },
     // A stop being added or changed is being looked at: the rail stays put.
-    held: () => stopSheet.isOpen() || stub.isOpen(),
-    tickets: { mark: (stop, s) => (s.ticketsReady ? ticketMark(stop, s.tickets, keep.have) : null), subscribe: (fn) => keep.subscribe(fn) },
+    held: () => stopSheet.isOpen() || staySheet.isOpen() || stub.isOpen(),
+    tickets: {
+      mark: (stop, s) => (s.ticketsReady ? ticketMark(stop, s.tickets, keep.have) : null),
+      stayMark: (stay, s) => (s.ticketsReady ? stayMark(stay, s.tickets, keep.have) : null),
+      subscribe: (fn) => keep.subscribe(fn),
+    },
     onTicket: (id, button) => {
       closeForDays();
       stub.open(id, button);
@@ -677,7 +709,10 @@ function start() {
   });
 
   document.getElementById("ring").addEventListener("click", () => {
-    if (store.state.trip && store.state.trip.start) ring(defaultRingDay(store.state.trip, Date.now()));
+    if (store.state.trip && store.state.trip.start) {
+      const at = Date.now();
+      ring(defaultRingDay(store.state.trip, at, tripNow(store.state, at).date));
+    }
   });
   // Click-through tests reach the register and the store here; only when the
   // fake backend is in the page, never in the real app.
@@ -701,10 +736,11 @@ function start() {
     if (inFlight) return inFlight;
     const st = store.state.status;
     if (st !== "ready" && st !== "error") return Promise.resolve();
-    inFlight = store.checkRev().finally(() => {
-      inFlight = null;
+    const mine = store.checkRev().finally(() => {
+      if (inFlight === mine) inFlight = null;
     });
-    return inFlight;
+    inFlight = mine;
+    return mine;
   };
   // Each look also asks for the planner's payments, at most every 10 minutes (store.autoPayments).
   // And, on the owner's phone, at the planner's ticket list (auto-add), at most every 10 minutes.
@@ -723,8 +759,12 @@ function start() {
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") {
       store.markSeen();
+      store.pageHidden();
+      // (Each return while a check hangs starts a new one, on purpose: rev only reads.)
+      inFlight = null; // a check running as the page left may be cut off: the return asks again, not joins it
       stopChecking();
     } else {
+      store.pageShown();
       look();
       startChecking();
     }

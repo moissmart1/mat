@@ -39,6 +39,22 @@
 // Every row is drawn closed: the Days view opens one (.is-open on the .r, and
 // aria-expanded on its [role=button], and un-inerts its .r-more).
 // A used day's gate stamp is made once per day, place and mark, and reused.
+// - stayTag: { kind, label, saved, n, total, state } (js/tickets.js stayMark
+//   and js/plan.js nightOf for that ticket's night) when the night's stay has
+//   a booking: the 宿泊 line carries 券 and the key-tag chip. Absent, the line
+//   reads exactly as it did.
+// - zone: on a day whose zone is not the trip's (T1 現地時刻), { word,
+//   clocks } where word names the zone ("Eastern") and clocks, only while the
+//   day is today, is { local, japan, japanDate } (js/plan.js zoneClocks): the
+//   two clocks over a hotel desk, 現地 and 日本, at the end of .tk-head
+//   (.zs > .zc ×2), then the line .zs-say "Times on this ticket are local,
+//   Eastern." On any other day only that line. null on a day in the trip's
+//   zone: the ticket is then node for node as it was.
+// - eve: the evening before this day (前夜, a Days row of kind "eve"), when it
+//   has stops: { date, local, stops, state, minutes, nextId, hereNext? }, a
+//   strip between the band and .tk-head (.eve > .eve-h, .rows) whose rows are
+//   drawn as any stop's, judged by its own state and minutes; local: its zone
+//   is not the trip's (現地 on the right). No ＋ Add a stop for it.
 // - tix: { [stopId]: { kind, label, saved } } (js/tickets.js ticketMark) for
 //   the stops that have a ticket: the 券 box under the name (solid when every
 //   picture is on this phone, dashed when one still needs signal) and, when
@@ -46,7 +62,7 @@
 //   exactly as it did.
 
 import { minutesOf, issueLine, isPast, nextLine, mapsUrl, safeHref, gateDate } from "../plan.js";
-import { dayHead, yen } from "../format.js";
+import { dayHead, yen, weekdayOf } from "../format.js";
 import { rng, gateStampSVG } from "../stamp.js";
 
 const SVG = "http://www.w3.org/2000/svg";
@@ -308,7 +324,10 @@ function askLine() {
 }
 
 // 宿泊 Tonight and the stay's name: a button that opens the hotel card.
-function stayRow(stay) {
+// tag: { kind, label, saved, n, total, state } when the stay has a booking
+// (S2 鍵札): 券 and how it stands under the name, and the key-tag chip with
+// the night on the right. Without it the row is as it always was.
+function stayRow(stay, tag = null) {
   const b = el("button", "tk-stay");
   b.type = "button";
   b.dataset.stay = stay.id;
@@ -316,8 +335,87 @@ function stayRow(stay) {
   label.append(el("b", "", "宿泊"), el("span", "", "Tonight"));
   b.append(label);
   const name = str(stay.name) || str(stay.nameJp);
-  if (name) b.append(el("span", "tk-stay-n", name));
+  if (!tag) {
+    if (name) b.append(el("span", "tk-stay-n", name));
+    return b;
+  }
+  b.classList.add("has-tag");
+  const mid = el("span");
+  if (name) mid.append(el("span", "tk-stay-n", name));
+  const fx = el("span", "r-fx");
+  const pics = tag.kind === "pics";
+  fx.append(el("b", pics && !tag.saved ? "is-dash" : "", "券"), el("span", "", !pics ? "Reference only" : "Booking · " + (tag.saved ? "on this phone" : "needs signal once")));
+  mid.append(fx);
+  const chip = el("span", "kt-chip");
+  chip.setAttribute("aria-hidden", "true");
+  if (tag.state === "on") chip.append(el("b", "", String(tag.n)), "/ " + tag.total + "泊");
+  else chip.append(el("b", "", String(tag.total)), "泊");
+  b.append(mid, chip);
+  const nights = tag.state === "on" ? "night " + tag.n + " of " + tag.total : tag.total + (tag.total === 1 ? " night" : " nights");
+  b.setAttribute("aria-label", "Tonight: " + name + ". Booking, " + nights + ".");
   return b;
+}
+
+const hhmm = (n) => String(Math.floor(n / 60)).padStart(2, "0") + ":" + String(n % 60).padStart(2, "0");
+
+// A clock face at this many minutes past midnight (numbers only, no text).
+function clockFace(minutes) {
+  const hh = Math.floor(minutes / 60);
+  const mm = minutes % 60;
+  const ha = ((hh % 12) + mm / 60) * 30;
+  const ma = mm * 6;
+  let ticks = "";
+  for (let i = 0; i < 12; i++) ticks += '<path d="M22 4.5v' + (i % 3 ? 2.2 : 4) + '" transform="rotate(' + i * 30 + ' 22 22)"/>';
+  const wrap = el("span", "zc-face");
+  wrap.innerHTML = '<svg viewBox="0 0 44 44" aria-hidden="true" focusable="false"><circle cx="22" cy="22" r="20" fill="#fff" stroke="#15120F" stroke-width="2.4"/><g stroke="#15120F" stroke-width="1.5">' + ticks +
+    '</g><path d="M22 22V11.5" stroke="#15120F" stroke-width="3" stroke-linecap="round" transform="rotate(' + ha + ' 22 22)"/><path d="M22 22V6.5" stroke="#15120F" stroke-width="1.8" stroke-linecap="round" transform="rotate(' + ma + ' 22 22)"/><circle cx="22" cy="22" r="2.2" fill="#D63C1E"/></svg>';
+  return wrap.firstChild;
+}
+
+// One clock and its words: 現地 Eastern 07:00, or 日本 Japan 21:00 水 Wed.
+function zoneClock(jp, en, minutes, wd, dim) {
+  const c = el("div", dim ? "zc is-dim" : "zc");
+  c.setAttribute("aria-hidden", "true");
+  const words = el("div");
+  const small = el("small", "", jp);
+  small.append(el("i", "", en));
+  const b = el("b", "", hhmm(minutes));
+  if (wd) b.append(el("em", "", wd));
+  words.append(small, b);
+  c.append(clockFace(minutes), words);
+  return c;
+}
+
+// T1 現地時刻: the two clocks (only while the day is today) and the line.
+function zoneStrip(zone) {
+  const zs = el("div", "zs");
+  const c = zone.clocks;
+  if (c) {
+    const wd = weekdayOf(c.japanDate);
+    zs.append(zoneClock("現地", zone.word, c.local, "", false), zoneClock("日本", "Japan", c.japan, wd.jp + " " + wd.en, true));
+    zs.append(el("span", "zs-vh", "Local time " + hhmm(c.local) + ", " + zone.word + ". Japan " + hhmm(c.japan) + ", " + wd.long + "."));
+  } else {
+    zs.classList.add("is-say");
+  }
+  const say = el("p", "zs-say");
+  say.append(el("b", "", "現地"), "Times on this ticket are local, " + zone.word + ".");
+  zs.append(say);
+  return zs;
+}
+
+// 前夜: the evening before, a strip at the head of the day after it.
+function eveStrip(eve, model) {
+  const d = el("div", "eve");
+  const h = el("div", "eve-h");
+  const left = el("span");
+  left.append(el("b", "", "前夜"), "The evening before · " + dayHead(eve.date).en);
+  h.append(left);
+  if (eve.local) h.append(el("span", "", "現地"));
+  const rows = el("div", "rows");
+  const judged = { state: eve.state, minutes: eve.minutes, nextId: eve.nextId, tix: model.tix, hereNext: eve.hereNext || null };
+  rows.append(...eve.stops.map((stop) => row(stop, judged)));
+  d.append(h, rows);
+  return d;
 }
 
 export function ticketEl(model) {
@@ -345,6 +443,7 @@ export function ticketEl(model) {
   head.append(dateRow);
   if (model.ask) head.append(askLine());
   if (model.stampOpen) head.append(stampLine());
+  if (model.zone) head.append(zoneStrip(model.zone));
   if (state === "used") head.append(gate(day, h, mark));
 
   const rows = el("div", "rows");
@@ -357,7 +456,9 @@ export function ticketEl(model) {
   // A used day is punched on the perforation, clear of the print.
   const perf = el("div", "tk-perf");
   if (state === "used") perf.append(el("span", "punch"));
-  tk.append(band(h, number), head, perf, rows);
+  tk.append(band(h, number));
+  if (model.eve && model.eve.stops.length) tk.append(eveStrip(model.eve, model));
+  tk.append(head, perf, rows);
   // A stay typed into the Sheet by hand with no id cannot be opened: no row.
   const stay = model.stay;
   // ＋ Add a stop: after the day's stops, before the night's stay.
@@ -365,7 +466,7 @@ export function ticketEl(model) {
   add.type = "button";
   add.dataset.date = date;
   tk.append(add);
-  if (stay && typeof stay.id === "string" && stay.id) tk.append(stayRow(stay));
+  if (stay && typeof stay.id === "string" && stay.id) tk.append(stayRow(stay, model.stayTag || null));
   tk.append(foot);
   return tk;
 }

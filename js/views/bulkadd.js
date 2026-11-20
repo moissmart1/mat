@@ -37,9 +37,15 @@
 // the old pictures a card said to (store.removeTicket: soft, undoable). What
 // the list brings is held in memory only and wiped with the rest. A line
 // left out is remembered on this phone (mat.listSkip: ties only).
+//
+// A stay's booking (S2 鍵札): a lodging line goes on its stay (js/bulk.js);
+// sorted, the stays come first in the untied list under 宿泊, each with the
+// 宿 mark; a card may offer to add the stay the line names (store.addStay,
+// waited for, before its pictures go up with `stay`); the stays' booking
+// facts follow through store.saveStay, only where empty.
 
 import { LIMITS, sniff, shrink, shrinkCanvas, pdfPages } from "../tickets.js";
-import { parseList, sortFiles, factsFor, seatFor, stopLabel } from "../bulk.js";
+import { parseList, sortFiles, factsFor, stayFactsFor, seatFor, stopLabel, placeKey, placeOf, spanOf, monthDay, nightsOf } from "../bulk.js";
 import { newId } from "../time.js";
 import { minutesOf } from "../plan.js";
 import { listPlan, byHand, noticeText, readSkip, writeSkip } from "../autoadd.js";
@@ -181,10 +187,11 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
   // ---- matching ----
 
   const liveTickets = () => (store.state.tickets || []).filter((t) => t && !t.gone);
-  function isThere(fileKey, stopId, who = "") {
+  function isThere(fileKey, stopId, who = "", place = null) {
     const f = files.find((x) => x.key === fileKey);
     if (!f || !f.sig) return false;
-    return liveTickets().some((t) => t.stop === stopId && (t.who || "") === (who || "") && t.mime === f.sig.mime && Number(t.w) === f.sig.w && Number(t.h) === f.sig.h && Number(t.size) === f.sig.size && (!hashes.has(t.id) || !f.sig.hash || hashes.get(t.id) === f.sig.hash));
+    const here = place && place.stay ? (t) => t.stay === place.stay : (t) => !t.stay && t.stop === stopId;
+    return liveTickets().some((t) => here(t) && (t.who || "") === (who || "") && t.mime === f.sig.mime && Number(t.w) === f.sig.w && Number(t.h) === f.sig.h && Number(t.size) === f.sig.size && (!hashes.has(t.id) || !f.sig.hash || hashes.get(t.id) === f.sig.hash));
   }
   // The bytes of every kept picture that could be the same as a dropped one, hashed once.
   async function hashKept() {
@@ -203,7 +210,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     const r = sortedFiles();
     if (mode !== "list") return r;
     const hand = byHand(r.items, store.state.tickets);
-    for (const it of hand.out) r.out.push({ kind: "hand", file: it.file, label: it.label, key: it.key, stop: it.stop, why: "filled by hand" });
+    for (const it of hand.out) r.out.push({ kind: "hand", file: it.file, label: it.label, key: it.key, ...placeOf(it), why: "filled by hand" });
     r.items = hand.keep;
     r.quiet = 0;
     const cards = listCards();
@@ -221,11 +228,14 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
   // ---- tickets from the list (auto-add) ----
 
   const stopOf_ = (id) => (store.state.stops || []).find((s) => s && s.id === id && !s.deleted);
+  const stayOf_ = (id) => (store.state.stays || []).find((s) => s && s.id === id && !s.deleted);
   const onStopNow = (id) => (store.state.tickets || []).filter((t) => t && !t.gone && t.stop === id).length;
-  const where = (stopId) => {
-    const st = stopOf_(stopId);
-    if (!st) return "its stop";
-    const lab = stopLabel(st, store.state.days || []);
+  // A place's pictures now: a stop's, or a stay's.
+  const onPlaceNow = (p) => (p.stay ? (store.state.tickets || []).filter((t) => t && !t.gone && t.stay === p.stay).length : onStopNow(p.stop));
+  const placeGone = (p) => (p.stay ? !stayOf_(p.stay) : !stopOf_(p.stop));
+  const where = (p) => {
+    const lab = placeLabel(typeof p === "string" ? { stop: p } : p);
+    if (!lab.there) return p && p.stay ? "its stay" : "its stop";
     return [lab.d, lab.title].filter(Boolean).join(" · ");
   };
   const lineTitle = (row) => (row ? String(row.title || row.provider || "").trim() : "");
@@ -238,31 +248,39 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
       const got = chgFiles.get(c.key) || [];
       const label = [c.tid, lineTitle(c.row)].filter(Boolean).join(" · ");
       const newPages = got.reduce((n, f) => n + Math.max(1, f.pages || 1), 0);
-      const stopGone = !stopOf_(c.stop);
+      // Where the line's pictures are: a stop, or a stay.
+      const at = c.stay ? { stay: c.stay } : { stop: c.stop };
+      const word = c.stay ? "stay" : "stop";
+      const stopGone = placeGone(at);
       if (c.add.length && !got.length && !c.drop.length) continue; // its file could not be fetched: said in the asides
-      const base = { kind: "changed", key: c.key, label, file: got[0] || null, onList: true, rowIds: [c.tid], who: c.who, stop: c.stop, drop: c.drop, got, newPages, choices: [] };
+      const base = { kind: "changed", key: c.key, label, file: got[0] || null, onList: true, rowIds: [c.tid], who: c.who, ...at, drop: c.drop, got, newPages, choices: [] };
       if (stopGone) {
-        out.push({ ...base, ask: c.tid + "’s stop is no longer on the trip.", hint: "Add its new file from Add tickets by hand.", short: "its stop was removed", lchoices: [{ act: "keep", label: "Leave it", sub: "nothing changes" }] });
+        out.push({ ...base, ask: c.tid + "’s " + word + " is no longer on the trip.", hint: "Add its new file from Add tickets by hand.", short: "its " + word + " was removed", lchoices: [{ act: "keep", label: "Leave it", sub: "nothing changes" }] });
         continue;
       }
       if (got.length && c.drop.length) {
-        const fits = onStopNow(c.stop) + newPages <= LIMITS.perStop;
+        const fits = onPlaceNow(at) + newPages <= LIMITS.perStop;
         const pics = c.drop.length === 1 ? "its picture" : "its " + c.drop.length + " pictures";
-        out.push({ ...base, ask: c.tid + "’s file changed in the list: replace " + pics + " on " + where(c.stop) + "?", hint: fits ? "The old ones come off afterwards and can be put back from History." : "Adding first would pass " + LIMITS.perStop + " pictures on the stop.", short: "file changed", lchoices: [fits ? { act: "replace", label: "Replace them", sub: plural(newPages, "new page", "new pages") + " in, then the old off" } : { act: "first", label: "Take the old ones off first", sub: "then add the new " + plural(newPages, "page", "pages") }, { act: "keep", label: "Keep the old ones", sub: "the new file stays out" }] });
+        out.push({ ...base, ask: c.tid + "’s file changed in the list: replace " + pics + " on " + where(at) + "?", hint: fits ? "The old ones come off afterwards and can be put back from History." : "Adding first would pass " + LIMITS.perStop + " pictures on the " + word + ".", short: "file changed", lchoices: [fits ? { act: "replace", label: "Replace them", sub: plural(newPages, "new page", "new pages") + " in, then the old off" } : { act: "first", label: "Take the old ones off first", sub: "then add the new " + plural(newPages, "page", "pages") }, { act: "keep", label: "Keep the old ones", sub: "the new file stays out" }] });
       } else if (got.length) {
-        const fits = onStopNow(c.stop) + newPages <= LIMITS.perStop;
-        out.push({ ...base, ask: c.tid + " has another file in the list: add it to " + where(c.stop) + "?", hint: fits ? "Its other pictures stay." : "It would pass " + LIMITS.perStop + " pictures on the stop.", short: "another file", lchoices: (fits ? [{ act: "add", label: "Add it", sub: plural(newPages, "page", "pages") }] : []).concat([{ act: "keep", label: "Leave it out", sub: "nothing changes" }]) });
+        const fits = onPlaceNow(at) + newPages <= LIMITS.perStop;
+        out.push({ ...base, ask: c.tid + " has another file in the list: add it to " + where(at) + "?", hint: fits ? "Its other pictures stay." : "It would pass " + LIMITS.perStop + " pictures on the " + word + ".", short: "another file", lchoices: (fits ? [{ act: "add", label: "Add it", sub: plural(newPages, "page", "pages") }] : []).concat([{ act: "keep", label: "Leave it out", sub: "nothing changes" }]) });
       } else {
         const pics = c.drop.length === 1 ? "its picture" : "its " + c.drop.length + " pictures";
-        out.push({ ...base, ask: "A file of " + c.tid + " is gone from the list: take " + pics + " off " + where(c.stop) + "?", hint: "They can be put back from History.", short: "file gone from the list", lchoices: [{ act: "off", label: "Take them off", sub: plural(c.drop.length, "picture", "pictures") }, { act: "keep", label: "Leave them", sub: "nothing changes" }] });
+        out.push({ ...base, ask: "A file of " + c.tid + " is gone from the list: take " + pics + " off " + where(at) + "?", hint: "They can be put back from History.", short: "file gone from the list", lchoices: [{ act: "off", label: "Take them off", sub: plural(c.drop.length, "picture", "pictures") }, { act: "keep", label: "Leave them", sub: "nothing changes" }] });
       }
     }
     for (const c of plan.cancelled) {
-      const stops = [...new Set(c.tickets.map((t) => t.stop))];
-      const on = stops.map(where).join(", ");
+      const seen = new Map();
+      for (const t of c.tickets) {
+        const p = t.stay ? { stay: t.stay } : { stop: t.stop };
+        if (!seen.has(placeKey(p))) seen.set(placeKey(p), p);
+      }
+      const places = [...seen.values()];
+      const on = places.map(where).join(", ");
       const label = [c.tid, lineTitle(c.row)].filter(Boolean).join(" · ");
       const ask = c.why === "cancelled" ? c.tid + " is " + (c.status || "not active").toLowerCase() + " in the list: take its pictures off " + on + "?" : c.why === "gone" ? c.tid + " is gone from the list: take its pictures off " + on + "?" : c.tid + "’s file is gone from the list: take its pictures off " + on + "?";
-      out.push({ kind: "cancelled", key: c.key, label, file: null, onList: !!c.row, rowIds: [c.tid], who: "", stop: stops[0], drop: c.tickets, got: [], newPages: 0, choices: [], ask, hint: plural(c.tickets.length, "picture", "pictures") + ". They can be put back from History.", short: c.why === "cancelled" ? "cancelled in the list" : "gone from the list", lchoices: [{ act: "off", label: "Take them off", sub: plural(c.tickets.length, "picture", "pictures") }, { act: "keep", label: "Leave them", sub: "nothing changes" }] });
+      out.push({ kind: "cancelled", key: c.key, label, file: null, onList: !!c.row, rowIds: [c.tid], who: "", ...(places[0] || { stop: undefined }), drop: c.tickets, got: [], newPages: 0, choices: [], ask, hint: plural(c.tickets.length, "picture", "pictures") + ". They can be put back from History.", short: c.why === "cancelled" ? "cancelled in the list" : "gone from the list", lchoices: [{ act: "off", label: "Take them off", sub: plural(c.tickets.length, "picture", "pictures") }, { act: "keep", label: "Leave them", sub: "nothing changes" }] });
     }
     return out;
   }
@@ -497,6 +515,25 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
 
   const dayLabel = (stop) => stopLabel(stop, store.state.days || []);
   const stopOf = (id) => (store.state.stops || []).find((s) => s && s.id === id && !s.deleted);
+  const dayNum = (date) => (store.state.days || []).findIndex((d) => d && d.date === date) + 1;
+  // { d, when, title, date, there } for a place: a stop as stopLabel gives it;
+  // a stay (or one to add) by its first night's day, its dates and its name.
+  function placeLabel(p) {
+    if (p && (p.stay || p.newStay)) {
+      const st = p.stay ? stayOf_(p.stay) : p.newStay;
+      if (!st) return { d: "", when: "", title: "A stay", date: "", there: false };
+      const n = dayNum(st.firstNight);
+      return { d: n ? "D" + n : "", when: spanOf(st), title: String(st.name || st.nameJp || "").trim() || "A stay", date: st.firstNight || "", there: true };
+    }
+    const st = p ? stopOf(p.stop) : null;
+    if (!st) return { ...dayLabel({}), date: "", there: false };
+    return { ...dayLabel(st), date: st.date || "", there: true };
+  }
+  const placeTitle = (p, none = "its stop") => {
+    const lab = placeLabel(p);
+    return lab.there ? lab.title : p && (p.stay || p.newStay) ? "its stay" : none;
+  };
+  const isStayPlace = (p) => !!(p && (p.stay || p.newStay));
   const people = () => (store.state.people || []).map((p) => p.name).filter(Boolean);
 
   function drawTop() {
@@ -565,11 +602,10 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     const edge1 = el("div", "ba-tk");
     const edge2 = el("div", "ba-tk");
     const topTk = el("div", "ba-tk is-top");
-    const pp = items.find((i) => i.who && items.filter((j) => j.stop === i.stop && j.who).length > 1);
+    const pp = items.find((i) => i.who && items.filter((j) => placeKey(j) === placeKey(i) && j.who).length > 1);
     const first = pp || items[0];
-    const mine = items.filter((i) => i.stop === first.stop);
-    const st = stopOf(first.stop) || {};
-    const lab = dayLabel(st);
+    const mine = items.filter((i) => placeKey(i) === placeKey(first));
+    const lab = placeLabel(first);
     const each = mine.filter((i) => i.who).length > 1;
     const left = el("div");
     left.append(el("div", "ba-k", [lab.d, lab.when].filter(Boolean).join(" ") + (each ? " · one each" : mine.length > 1 ? " · " + mine.length + " files" : "")), el("div", "ba-n", lab.title));
@@ -628,10 +664,25 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
   }
 
   function choiceBtn(c, i, card) {
-    const st = stopOf(c.stop);
-    const lab = dayLabel(st || {});
     const b = btn("");
     b.dataset.choice = card.key + "|" + i;
+    // A stay to add: 宿 Add the stay and its booking, its name and nights.
+    if (c.newStay) {
+      const sp = el("span", "", "Add the stay and its booking");
+      const n = nightsOf(c.newStay);
+      sp.append(el("small", "", c.newStay.name + " · " + (n === 1 ? "night of " + monthDay(c.newStay.firstNight) : spanOf(c.newStay))));
+      b.classList.add("is-yado");
+      b.append(el("b", "", "宿"), sp, el("i", "", "›"));
+      return b;
+    }
+    const lab = placeLabel(c);
+    if (c.stay) {
+      const sp = el("span", "", c.pages ? "First " + plural(c.pages, "page", "pages") : lab.title);
+      sp.append(el("small", "", (c.pages ? lab.title + " · " : "") + lab.when + (c.who ? " · for " + c.who : "")));
+      b.append(el("b", "", c.pages ? "" : lab.d), sp, el("i", "", "›"));
+      if (c.pages) b.classList.add("is-fit");
+      return b;
+    }
     const sp = el("span", "", c.pages ? "First " + plural(c.pages, "page", "pages") : lab.when || "No time");
     sp.append(el("small", "", (c.pages ? lab.d + " " : "") + lab.title + (c.who ? " · for " + c.who : "")));
     b.append(el("b", "", c.pages ? "" : lab.d), sp, el("i", "", "›"));
@@ -643,7 +694,8 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     const c = el("div", "ba-card");
     c.dataset.card = card.key;
     const q = el("div", "ba-q");
-    q.append(el("span", "", card.kind === "limit" ? "満員 Too many" : "どちら？ Which one?"), el("i", "", card.onList ? card.rowIds.join(" ") || "on the list" : "not on the list"));
+    const stayCard = card.kind === "newstay" || card.kind === "stays";
+    q.append(el("span", "", card.kind === "limit" ? "満員 Too many" : stayCard ? "宿泊 A STAY" : "どちら？ Which one?"), el("i", "", card.onList ? (card.rowIds.join(" ") || "on the list") + (stayCard ? " · lodging" : "") : "not on the list"));
     const big = el("div", "ba-big");
     const pv = el("div", "ba-pv");
     if (card.file.pic) {
@@ -654,12 +706,20 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     }
     pv.append(el("div", "ba-cap", card.file.name));
     const words = el("div");
-    words.append(el("div", "ba-fn", card.onList ? card.label : card.file.kind === "application/pdf" ? "A PDF · " + plural(card.file.pages || 1, "page", "pages") : "A picture"), el("div", "ba-ask", card.ask), el("div", "ba-hint", card.hint));
+    // A stay's line: its name and night ("Lakeside Airport Inn · Dec 8").
+    const fn = stayCard && card.line ? [card.line.title, card.line.date ? monthDay(card.line.date) : ""].filter(Boolean).join(" · ") : card.onList ? card.label : card.file.kind === "application/pdf" ? "A PDF · " + plural(card.file.pages || 1, "page", "pages") : "A picture";
+    words.append(el("div", "ba-fn", fn), el("div", "ba-ask", card.ask), el("div", "ba-hint", card.hint));
     big.append(pv, words);
     const opts = el("div", "ba-opts");
     card.choices.forEach((ch, i) => opts.append(choiceBtn(ch, i, card)));
     const showOther = other === card.key || !card.choices.length;
-    if (!showOther) {
+    if (stayCard || (card.kind === "limit" && card.choices.some(isStayPlace))) {
+      // A stay is never moved to a stop: only Leave it out beside its choices.
+      const soft = btn("is-soft");
+      soft.dataset.out = card.key;
+      soft.append(el("span", "", "Leave it out"), el("i", "", "›"));
+      opts.append(soft);
+    } else if (!showOther) {
       const soft = btn("is-soft");
       soft.dataset.other = card.key;
       soft.append(el("span", "", "Another stop, or leave it out"), el("i", "", "›"));
@@ -728,8 +788,22 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
   function untiedList(items) {
     const box = el("div", "ba-list");
     const days = store.state.days || [];
+    // The stays first, under 宿泊: each with its day, name, line, file and dates, and the 宿 mark.
+    const onStays = items.filter(isStayPlace);
+    if (onStays.length) {
+      box.append(el("div", "ba-lh", "On a stay 宿泊"));
+      for (const it of onStays) {
+        const lab = placeLabel(it);
+        const d = el("div", "ba-lb");
+        const yado = el("span", "ba-seal yado", "宿");
+        yado.setAttribute("aria-hidden", "true");
+        d.append(el("b", "", lab.d), el("span", "", lab.title), el("small", "", [it.rowIds.join(" "), it.file.name, it.pages > 1 ? it.pages + " pages" : "", lab.when].filter(Boolean).join(" · ")), yado);
+        box.append(d);
+      }
+    }
     let lastDay = null;
     for (const it of items) {
+      if (isStayPlace(it)) continue;
       const st = stopOf(it.stop) || {};
       if (st.date !== lastDay) {
         lastDay = st.date;
@@ -773,14 +847,15 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     if (phase === "reading") nodes.push(progress("Reading " + reading.done + " of " + reading.total + "…", "Made into pictures on this phone. " + NOTHING_SENT, reading.done, reading.total));
     const sure = r.items;
     if (sure.length) {
-      const days = sure.map((i) => (store.state.days || []).findIndex((d) => d.date === (stopOf(i.stop) || {}).date) + 1).filter((n) => n > 0);
+      const days = sure.map((i) => dayNum(placeLabel(i).date)).filter((n) => n > 0);
       const lo = days.length ? Math.min(...days) : 0;
       const hi = days.length ? Math.max(...days) : 0;
-      const stops = new Set(sure.map((i) => i.stop)).size;
+      const stops = new Set(sure.filter((i) => !isStayPlace(i)).map((i) => i.stop)).size;
+      const onStays = sure.filter(isStayPlace).length;
       const each = sure.filter((i) => i.who).length;
       nodes.push(bundle(sure, {
         band: sure.length + " sorted",
-        small: (lo === hi ? "D" + lo : "D" + lo + " to D" + hi) + " · " + plural(stops, "stop", "stops") + (each ? " · " + each + " one each" : ""),
+        small: [lo ? (lo === hi ? "D" + lo : "D" + lo + " to D" + hi) : "", stops || !onStays ? plural(stops, "stop", "stops") : ""].filter(Boolean).join(" · ") + (each ? " · " + each + " one each" : "") + (onStays ? " · " + onStays + " on stays" : ""),
         action: "untie",
         actionLabel: untied ? "Tie ‹" : "Untie ›",
         expanded: untied,
@@ -808,7 +883,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     }
     const there = r.out.filter((o) => o.kind === "there");
     if (there.length) {
-      const names = there.map((o) => o.label + " is on " + ((stopOf(o.stop) || {}).title || "its stop")).join("; ");
+      const names = there.map((o) => o.label + " is on " + placeTitle(o)).join("; ");
       nodes.push(aside("既", there.length + " already there:", names + ". Left out."));
     }
     const notT = r.out.filter((o) => o.kind === "notTicket");
@@ -822,8 +897,8 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     if (inactive.length) nodes.push(aside("止", plural(inactive.length, "not active", "not active") + " on the list:", inactive.map((o) => o.label + " (" + o.why.replace(/^on the list as /, "") + ")").join(", ") + ". Left out."));
     const mineOut = r.out.filter((o) => o.kind === "leftOut");
     if (mineOut.length) nodes.push(aside("除", plural(mineOut.length, "left out", "left out") + ":", mineOut.map((o) => o.label).join(", ") + "."));
-    const hand = r.out.filter((o) => o.kind === "hand").map((o) => ({ label: o.label, stop: o.stop })).concat(mode === "list" ? handPre : []);
-    if (hand.length) nodes.push(aside("手", plural(hand.length, "stop was", "stops were") + " filled by hand:", hand.map((o) => o.label.split(" · ")[0] + " on " + ((stopOf(o.stop) || {}).title || "its stop")).join("; ") + ". The list’s are left out."));
+    const hand = r.out.filter((o) => o.kind === "hand").map((o) => ({ label: o.label, ...placeOf(o) })).concat(mode === "list" ? handPre : []);
+    if (hand.length) nodes.push(aside("手", plural(hand.length, "stop was", "stops were") + " filled by hand:", hand.map((o) => o.label.split(" · ")[0] + " on " + placeTitle(o)).join("; ") + ". The list’s are left out."));
     if (mode === "list") {
       if (fetching.failed.length) nodes.push(aside("外", plural(fetching.failed.length, "file wasn’t fetched:", "files weren’t fetched:"), fetching.failed.map((x) => x.label + " (" + x.why + ")").join(", ") + ".", "is-warn"));
       const qd = plan ? plan.quiet : null;
@@ -879,14 +954,17 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
       if (a.step === "making") nodes.push(progress("Making pictures: " + a.made + " of " + a.total, "Keep MAT open until they are all added. Nothing is sent yet.", a.made, a.total));
       else if (a.step === "off") nodes.push(progress("Taking pictures off: " + a.off, "The old ones, as you said. They can be put back from History.", a.off, a.off + 1));
       else if (a.step === "sending") nodes.push(progress("While adding: " + a.settled + " of " + plural(a.pics, "picture", "pictures"), "Keep MAT open until they are all added. One that can’t go up now is kept on this phone and goes up when MAT next has signal.", a.settled, a.pics));
+      else if (a.step === "stay") nodes.push(progress("Adding the stay…", "A stay from the list, so its booking has a card to go on.", 0, 1));
       else nodes.push(progress("Filling in the stops’ details…", "From the list, only where a stop’s field is empty.", 1, 1));
     }
     if (phase === "added") {
       const ok = a.items.filter((i) => i.saved + i.waiting > 0);
-      const stops = new Set(ok.map((i) => i.stop)).size;
+      const stops = new Set(ok.filter((i) => !isStayPlace(i)).map((i) => i.stop)).size;
+      const stays = new Set(ok.filter(isStayPlace).map((i) => placeKey(i))).size;
       const pics = ok.reduce((s, i) => s + i.saved + i.waiting, 0);
       const waiting = ok.reduce((s, i) => s + i.waiting, 0);
-      nodes.push(el("p", "ba-done-h", ok.length ? plural(ok.length, "ticket", "tickets") + " added to " + plural(stops, "stop", "stops") + "." : a.off ? plural(a.off, "picture", "pictures") + " taken off." : "No ticket was added."));
+      const to = stays ? [stops ? plural(stops, "stop", "stops") : "", plural(stays, "stay", "stays")].filter(Boolean).join(" and ") : plural(stops, "stop", "stops");
+      nodes.push(el("p", "ba-done-h", ok.length ? plural(ok.length, "ticket", "tickets") + " added to " + to + "." : a.off ? plural(a.off, "picture", "pictures") + " taken off." : "No ticket was added."));
       if (ok.length && a.off) nodes.push(el("p", "ba-done-s", plural(a.off, "old picture", "old pictures") + " taken off. History puts them back."));
       if (ok.length) {
         const s = el("p", "ba-done-s");
@@ -898,8 +976,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
         if (seeAll) {
           const box = el("div", "ba-list");
           for (const it of ok) {
-            const st = stopOf(it.stop) || {};
-            const lab = dayLabel(st);
+            const lab = placeLabel(it);
             const row = el("div", "ba-line");
             const d = el("div", "ba-lb");
             d.append(el("b", "", lab.d), el("span", "", lab.title), el("small", "", (it.rowIds.length ? it.rowIds.join(" ") + " · " : "") + plural(it.saved + it.waiting, "picture", "pictures") + (it.waiting ? ", waiting" : "")));
@@ -917,8 +994,8 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
         const box = el("div", "ba-next is-flat ba-wait");
         for (const it of waitingNow) {
           const d = el("div");
-          const st = stopOf(it.stop) || {};
-          d.append(el("span", "", [it.rowIds.join(" ") || it.file.name, st.title].filter(Boolean).join(" · ")), el("i", "", (it.waiting === it.saved + it.waiting ? "" : it.waiting + " of " + (it.saved + it.waiting) + " ") + "on this phone, goes up " + (it.busy === it.waiting ? "in a moment" : "when there is signal")));
+          const lab = placeLabel(it);
+          d.append(el("span", "", [it.rowIds.join(" ") || it.file.name, lab.there ? lab.title : ""].filter(Boolean).join(" · ")), el("i", "", (it.waiting === it.saved + it.waiting ? "" : it.waiting + " of " + (it.saved + it.waiting) + " ") + "on this phone, goes up " + (it.busy === it.waiting ? "in a moment" : "when there is signal")));
           box.append(d);
         }
         nodes.push(box);
@@ -935,7 +1012,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
         nodes.push(box);
       }
       if (notAdded.some((x) => x.why.startsWith("details not filled"))) nodes.push(aside("控", "", "Details not filled can be added from the stop’s Edit sheet.", "is-warn"));
-      const firstDay = ok.map((i) => (stopOf(i.stop) || {}).date).filter(Boolean).sort()[0];
+      const firstDay = ok.map((i) => placeLabel(i).date).filter((d) => d && dayNum(d) > 0).sort()[0];
       if (firstDay) {
         const n = (store.state.days || []).findIndex((d) => d.date === firstDay) + 1;
         const go = btn("ba-plain", "Open Day " + n + " · see the stubs");
@@ -985,7 +1062,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     else topB.focus({ preventScroll: true });
   }
 
-  const sigOf = (r) => JSON.stringify([r.items.map((i) => [i.key, i.stop, i.who, i.pages]), r.cards.map((c) => [c.key, c.kind, c.choices.map((x) => x.stop)]), r.out.map((o) => o.kind + (o.key || "")), r.now, r.after, (store.state.stops || []).map((x) => x.id + x.date + x.time + x.title + !!x.deleted)]);
+  const sigOf = (r) => JSON.stringify([r.items.map((i) => [i.key, placeKey(i), i.who, i.pages]), r.cards.map((c) => [c.key, c.kind, c.choices.map((x) => placeKey(x))]), r.out.map((o) => o.kind + (o.key || "")), r.now, r.after, (store.state.stops || []).map((x) => x.id + x.date + x.time + x.title + !!x.deleted), (store.state.stays || []).map((x) => x.id + x.firstNight + x.lastNight + x.name + !!x.deleted)]);
 
   // After an answer or a change of the trip: sort again and draw.
   function afterChange() {
@@ -1021,6 +1098,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
   // Every stop as it was when the sort was last drawn (I1): a stop changed
   // since then gets no facts from the list.
   let seenStops = new Map();
+  let seenStays = new Map();
   const stopKey = (st) => {
     const b = { ...st };
     delete b.pending;
@@ -1029,6 +1107,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
   };
   const noteStops = () => {
     seenStops = new Map((store.state.stops || []).filter((x) => x && x.id).map((x) => [x.id, stopKey(x)]));
+    seenStays = new Map((store.state.stays || []).filter((x) => x && x.id).map((x) => [x.id, stopKey(x)]));
   };
 
   const FACTS_WHY = { notSent: "no signal", notLanded: "it didn’t land", unsure: "no reply yet, look at the stop later", gone: "the stop was removed", changed: "changed on another phone" };
@@ -1056,7 +1135,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     const offBefore = [], offAfter = [];
     for (const { card, act } of done) {
       if (act === "replace" || act === "first" || act === "add") {
-        card.got.forEach((f, i) => extra.push({ key: card.key + "#" + i, file: f, label: card.label, stop: card.stop, who: card.who, rowIds: card.rowIds, pages: Math.min(Math.max(1, f.pages || 1), LIMITS.perStop), cut: "", from: "card" }));
+        card.got.forEach((f, i) => extra.push({ key: card.key + "#" + i, file: f, label: card.label, ...placeOf(card), who: card.who, rowIds: card.rowIds, pages: Math.min(Math.max(1, f.pages || 1), LIMITS.perStop), cut: "", from: "card" }));
       }
       const ids = card.drop.map((t) => ({ id: t.id, label: card.label }));
       if (act === "first" || act === "off") offBefore.push(...ids);
@@ -1072,7 +1151,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     // What the sort left out goes on the Not added list: cards not looked at, then the rest.
     for (const c of r.cards) adding.notAdded.push({ label: c.label, why: "left out: " + c.short });
     for (const o of r.out) {
-      if (o.kind === "there") adding.notAdded.push({ label: [o.label.split(" · ")[0], (stopOf(o.stop) || {}).title].filter(Boolean).join(" · "), why: "already there", grey: true });
+      if (o.kind === "there") adding.notAdded.push({ label: [o.label.split(" · ")[0], placeLabel(o).there ? placeLabel(o).title : ""].filter(Boolean).join(" · "), why: "already there", grey: true });
       else if (o.kind === "notTicket") adding.notAdded.push({ label: o.file.name, why: o.file.unreadable || "not a ticket file", grey: true });
       else adding.notAdded.push({ label: o.label, why: o.why });
     }
@@ -1090,6 +1169,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     };
     for (const it of adding.items) {
       if (dead()) break;
+      const firstPicture = pics.length;
       try {
         // The review already holds the final compressed first page (or image).
         hold(it, it.file.pic, 0);
@@ -1110,6 +1190,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
         }
       } catch {
         it.failed += 1;
+        pics.splice(firstPicture);
         it.message = "That PDF couldn’t be read here. Try a screenshot of the ticket instead.";
       }
       if (dead()) return;
@@ -1141,20 +1222,52 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
       if (mine !== gen || dead()) return;
     }
 
+    // A stay the list names that MAT does not have yet: added first (store.addStay,
+    // waited for; it needs signal, as a stop's edit does), then its pictures go
+    // up on it. One that is not added keeps its pictures out.
+    const made = new Map(); // newStay's place key -> the stay's id, or { failed: why }
+    for (const it of adding.items) {
+      if (!it.newStay || dead()) continue;
+      const pk = placeKey(it);
+      if (!made.has(pk)) {
+        adding.step = "stay";
+        draw();
+        let unsure = null;
+        const noReply = new Promise((resolve) => {
+          unsure = resolve;
+        });
+        const token = store.addStay({ name: it.newStay.name, firstNight: it.newStay.firstNight, lastNight: it.newStay.lastNight }, { id: newId(), quiet: true, onUnsure: () => unsure({ saved: false, reason: "unsure" }) });
+        const out = token ? await orAbort(Promise.race([store.outcome(token), noReply])) : null;
+        if (mine !== gen) return;
+        made.set(pk, out && out.saved && out.item ? out.item.id : { failed: out && out.reason === "refused" ? out.message || "refused" : out && out.reason === "notSent" ? "no signal" : "no reply yet, look at Days later" });
+      }
+      const got = made.get(pk);
+      if (typeof got === "string") {
+        it.stay = got;
+        delete it.newStay;
+      } else {
+        it.failed += 1;
+        it.message = "the stay wasn’t added: " + got.failed;
+      }
+    }
+    if (dead()) return;
+
     // 2. Handed over ONE AT A TIME, each one's outcome awaited before the next, as the single add does (fix round 2, R1): never two ticket sends of ours in flight. One that cannot go up (no signal, busy) settles as waiting and the next is handed over; with no signal the store keeps each without sending it.
     adding.step = "sending";
     adding.pics = pics.length;
-    const liveOn = (id) => (store.state.tickets || []).filter((t) => t && t.stop === id && !t.gone);
+    const liveOn = (p) => (store.state.tickets || []).filter((t) => t && !t.gone && (p.stay ? t.stay === p.stay : t.stop === p.stop));
     draw();
     for (const { it, id, pic, k } of pics.splice(0)) {
       if (dead()) break;
+      // A stay that could not be added: its pictures stay out (said on the Not added list).
+      if (it.newStay) continue;
       // Into the keep right before its own add, as the single add does (fix round 3, R2): a load's cleanup of the keep can never take a picture this loop has not reached. Not waited for: a keep that never answers must not hold the rest up; the data travels with the add.
       keep.put(id, pic.blob, { gen: at });
-      const sameWho = liveOn(it.stop).filter((t) => (t.who || "") === it.who).length;
+      const sameWho = liveOn(it).filter((t) => (t.who || "") === it.who).length;
       // From the list: its tie, and its page within its own file, so another phone adding the same one is told it is already there.
       const tie = listing && typeof it.file.tie === "string" ? it.file.tie : "";
       const page = tie ? Math.min(LIMITS.perStop, k + 1) : Math.min(LIMITS.perStop, Math.max(k + 1, sameWho + 1));
-      const token = store.addTicket({ id, stop: it.stop, who: it.who, seat: seatFor(it, rows), page, mime: pic.mime, w: pic.w, h: pic.h, data: pic.data, ...(tie ? { from: tie } : {}) });
+      const token = store.addTicket({ id, ...(it.stay ? { stay: it.stay } : { stop: it.stop }), who: it.who, seat: seatFor(it, rows), page, mime: pic.mime, w: pic.w, h: pic.h, data: pic.data, ...(tie ? { from: tie } : {}) });
       const res = await orAbort(store.ticketOutcome(token));
       if (mine !== gen) return;
       if (res && res.saved) it.saved += 1;
@@ -1181,16 +1294,16 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     }
     for (const it of adding.items) {
       // Fix round 1, M9: which limit cut a PDF.
-      if (it.pages < it.file.pages) adding.notAdded.push({ label: (it.rowIds[0] || it.file.name) + " · pages " + (it.pages + 1) + (it.file.pages > it.pages + 1 ? "–" + it.file.pages : ""), why: it.cut === "trip" ? "trip full, " + LIMITS.perTrip + " of " + LIMITS.perTrip : "stop full, " + LIMITS.perStop + " of " + LIMITS.perStop });
+      if (it.pages < it.file.pages) adding.notAdded.push({ label: (it.rowIds[0] || it.file.name) + " · pages " + (it.pages + 1) + (it.file.pages > it.pages + 1 ? "–" + it.file.pages : ""), why: it.cut === "trip" ? "trip full, " + LIMITS.perTrip + " of " + LIMITS.perTrip : (it.cut === "stay" ? "stay" : "stop") + " full, " + LIMITS.perStop + " of " + LIMITS.perStop });
       if (it.short) adding.notAdded.push({ label: it.label, why: it.short + " pages couldn’t be made into pictures here" });
-      else if (it.failed) adding.notAdded.push({ label: it.label, why: it.message });
+      else if (it.failed) adding.notAdded.push({ label: it.newStay ? it.newStay.name : it.stay ? placeTitle(it) : it.label, why: it.message });
     }
 
     // 3. The stops' facts, each from the stop as this phone has it now.
     adding.step = "facts";
     draw();
     const missed = (id, why) => adding.notAdded.push({ label: (stopOf(id) || {}).title || (r.items.find((i) => i.stop === id) || {}).label || "A stop", why: "details not filled: " + FACTS_WHY[why] });
-    const stopIds = [...new Set(adding.items.map((i) => i.stop))];
+    const stopIds = [...new Set(adding.items.filter((i) => !isStayPlace(i)).map((i) => i.stop))];
     for (const id of stopIds) {
       if (dead()) break;
       const now = stopOf(id);
@@ -1220,6 +1333,31 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
         if (out && out.reason === "refused") adding.notAdded.push({ label: now.title || "A stop", why: "details not filled: " + (out.message || "refused") });
         else missed(id, out ? out.reason : "unsure");
       }
+    }
+    // The stays' booking (tkRef, tkName), only where empty, through store.saveStay
+    // (merge: only these fields). A stay this phone saw change since the sort gets none.
+    const stayItems = adding.items.filter((i) => i.stay && i.saved + i.waiting > 0);
+    const stayWant = stayFactsFor(stayItems, rows, store.state.stays || []);
+    for (const [id, want] of Object.entries(stayWant)) {
+      if (dead()) break;
+      const now = stayOf_(id);
+      const name = (now && now.name) || "A stay";
+      if (!now) {
+        adding.notAdded.push({ label: name, why: "details not filled: the stay was removed" });
+        continue;
+      }
+      if (seenStays.has(id) && seenStays.get(id) !== stopKey(now)) {
+        adding.notAdded.push({ label: name, why: "details not filled: " + FACTS_WHY.changed });
+        continue;
+      }
+      let unsure = null;
+      const noReply = new Promise((resolve) => {
+        unsure = resolve;
+      });
+      const token = store.saveStay(id, want, { quiet: true, onUnsure: () => unsure({ saved: false, reason: "unsure" }) });
+      const out = token ? await orAbort(Promise.race([store.outcome(token), noReply])) : null;
+      if (mine !== gen) return;
+      if (!out || !out.saved) adding.notAdded.push({ label: name, why: "details not filled: " + (out && out.reason === "refused" ? out.message || "refused" : FACTS_WHY[out ? out.reason : "unsure"] || FACTS_WHY.unsure) });
     }
     if (mine !== gen) return;
     phase = "added";
@@ -1304,7 +1442,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
       const [key, i] = d.choice.split("|");
       const card = r.cards.find((c) => c.key === key);
       const ch = card && card.choices[Number(i)];
-      if (ch) answerCard(key, { stop: ch.stop, who: ch.who, rowIds: ch.rowIds, pages: ch.pages || null });
+      if (ch) answerCard(key, { ...placeOf(ch), who: ch.who, rowIds: ch.rowIds, pages: ch.pages || null });
       return;
     }
     if (d.other) {
@@ -1344,7 +1482,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
       const [key, who] = d.who.split("|");
       const it = r.items.find((i) => i.key === key);
       if (it) {
-        answers.set(key, { stop: it.stop, who, rowIds: it.rowIds, pages: it.pages });
+        answers.set(key, { ...placeOf(it), who, rowIds: it.rowIds, pages: it.pages });
         afterChange();
       }
     }
@@ -1403,6 +1541,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     hashes = new Map();
     adding = null;
     seenStops = new Map();
+    seenStays = new Map();
     // Work waiting on the store (outcomes, facts) stops waiting.
     for (const done of [...aborts]) done(null);
     aborts = new Set();
