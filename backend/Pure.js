@@ -6,7 +6,7 @@ var TABS = {
   People: ["name", "initials", "order", "etransfer", "simplify", "email", "photo"],
   Days: ["date", "city", "title", "line_jp", "line_en", "line_colour", "from_jp", "from_en", "to_jp", "to_en", "lat", "lng"],
   Stops: ["id", "date", "time", "title", "detail", "getting_there", "travel_min", "fixed", "place", "sign_jp", "booked", "link", "photo", "note", "deleted_at", "lat", "lng", "tk_ref", "tk_name", "tk_people", "tk_seat"],
-  Stays: ["id", "name", "name_jp", "address_jp", "first_night", "last_night", "note", "place", "link", "photo", "deleted_at", "lat", "lng"],
+  Stays: ["id", "name", "name_jp", "address_jp", "first_night", "last_night", "note", "place", "link", "photo", "deleted_at", "lat", "lng", "tk_ref", "tk_name", "tk_people", "tk_room"],
   Expenses: ["id", "day", "title", "amount", "currency", "rate", "paid_by", "split", "split_mode", "split_vals", "note", "kind", "receipt", "added_by", "added_at", "deleted_at", "planner_id"],
   Settlements: ["id", "from", "to", "cad", "stamped_by", "stamped_at", "seed", "rot", "removed_at"],
   Log: ["id", "at", "who", "via", "action", "kind", "ref", "summary", "before", "after", "undoes", "undone_by"],
@@ -17,7 +17,8 @@ var TABS = {
   // pictures' base64 in chunks, one cell each (README, The ticket on a stop).
   // planner_id: the line of the planner's Tickets list a picture came from
   // ("T007:<print>"), set only by an add from the list (auto-add).
-  Tickets: ["id", "stop", "who", "seat", "page", "mime", "w", "h", "size", "chunks", "by", "at", "gone", "planner_id"],
+  // stay: the stay a picture is on (a booking), set instead of stop.
+  Tickets: ["id", "stop", "who", "seat", "page", "mime", "w", "h", "size", "chunks", "by", "at", "gone", "planner_id", "stay"],
   TicketData: ["ticket", "n", "data"],
 };
 
@@ -392,9 +393,16 @@ function validateStay(input) {
   if (!link.ok) return link;
   var photo = optPhoto_(input.photo, "That photo link has to start with https://.");
   if (!photo.ok) return photo;
+  // The booking on a stay: four facts, as a stop's ticket has (Room where a stop says Seat).
+  var facts = {};
+  for (var i = 0; i < STAY_FACTS_.length; i++) {
+    var fact = optText_(input[STAY_FACTS_[i]], TICKET_LIMITS.fact, "Keep each booking detail under " + TICKET_LIMITS.fact + " letters.");
+    if (!fact.ok) return fact;
+    facts[STAY_FACTS_[i]] = fact.value;
+  }
   return {
     ok: true,
-    value: { id: input.id, name: name, nameJp: nameJp.value, addressJp: addressJp.value, firstNight: input.firstNight, lastNight: input.lastNight, note: note.value, place: place.value, link: link.value, photo: photo.value },
+    value: { id: input.id, name: name, nameJp: nameJp.value, addressJp: addressJp.value, firstNight: input.firstNight, lastNight: input.lastNight, note: note.value, place: place.value, link: link.value, photo: photo.value, tkRef: facts.tkRef, tkName: facts.tkName, tkPeople: facts.tkPeople, tkRoom: facts.tkRoom },
   };
 }
 
@@ -564,6 +572,10 @@ function stayFromRow(o) {
     deleted: cellSet_(o.deleted_at),
     lat: coordsOf_(o).lat,
     lng: coordsOf_(o).lng,
+    tkRef: cellText_(o.tk_ref),
+    tkName: cellText_(o.tk_name),
+    tkPeople: cellText_(o.tk_people),
+    tkRoom: cellText_(o.tk_room),
   };
 }
 
@@ -661,6 +673,10 @@ function stayToRow(s) {
   put_(o, "photo", s.photo);
   put_(o, "lat", s.lat);
   put_(o, "lng", s.lng);
+  put_(o, "tk_ref", s.tkRef);
+  put_(o, "tk_name", s.tkName);
+  put_(o, "tk_people", s.tkPeople);
+  put_(o, "tk_room", s.tkRoom);
   return o;
 }
 
@@ -881,6 +897,8 @@ function summarize(action, kind, before, after) {
     if (action === "add") return "added the stay " + stayName;
     if (action === "delete") return "removed the stay " + stayName;
     if (action === "restore") return "put back the stay " + stayName;
+    // The booking's four facts are named as a stop's are: "ticket", never their values.
+    if (before && after && STAY_FACTS_.some(function (f) { return (before[f] || "") !== (after[f] || ""); })) return "changed the stay " + stayName + ": ticket";
     return "changed the stay " + stayName;
   }
   // A stamp in the book: the day it is for (a snapshot's `day`), never a place or a drawing.
@@ -893,7 +911,7 @@ function summarize(action, kind, before, after) {
   if (kind === "ticket") {
     var tk = after || before;
     var whose = cellText_(tk.who) ? cellText_(tk.who) + "\u2019s ticket" : "a ticket";
-    var on = cellText_(tk.stopTitle) || "a stop";
+    var on = cellText_(tk.stopTitle) || (cellText_(tk.stay) ? "a stay" : "a stop");
     if (action === "remove") return "removed " + whose + " from " + on;
     return "added " + whose + " to " + on;
   }
@@ -1448,6 +1466,7 @@ function changeLogRow(rows, fields) {
 // each (a cell holds at most 50,000). Each fact is text up to `fact` letters.
 var TICKET_LIMITS = { maxSide: 1500, maxChars: 450000, perStop: 8, perTrip: 120, chunk: 45000, fact: 60 };
 var TICKET_FACTS_ = ["tkRef", "tkName", "tkPeople", "tkSeat"];
+var STAY_FACTS_ = ["tkRef", "tkName", "tkPeople", "tkRoom"];
 var TICKET_MIMES_ = { "image/jpeg": [0xff, 0xd8, 0xff], "image/png": [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a] };
 var B64_RE_ = /^[A-Za-z0-9+\/]+={0,2}$/;
 var B64_CHARS_ = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -1483,7 +1502,12 @@ function wholeIn_(v, lo, hi) {
 function validateTicket(input, peopleNames) {
   if (!isObj_(input)) return fail_(TICKET_BAD_);
   if (typeof input.id !== "string" || !ID_RE_.test(input.id)) return fail_("That ticket picture has a bad id.");
-  if (typeof input.stop !== "string" || !ID_RE_.test(input.stop)) return fail_("That didn’t say which stop it is for.");
+  // A picture is on a stop or on a stay (its booking): exactly one, each by the id rule.
+  var onStop = input.stop !== undefined && input.stop !== null && input.stop !== "";
+  var onStay = input.stay !== undefined && input.stay !== null && input.stay !== "";
+  if (onStop === onStay) return fail_("That didn’t say which stop it is for.");
+  if (onStop && (typeof input.stop !== "string" || !ID_RE_.test(input.stop))) return fail_("That didn’t say which stop it is for.");
+  if (onStay && (typeof input.stay !== "string" || !ID_RE_.test(input.stay))) return fail_("That didn’t say which stop it is for.");
   var who = input.who === undefined || input.who === null ? "" : input.who;
   if (typeof who !== "string" || (who !== "" && peopleNames.indexOf(who) === -1)) return fail_("That person isn’t on this trip.");
   var seat = optText_(input.seat, TICKET_LIMITS.fact, "Keep the seat under " + TICKET_LIMITS.fact + " letters.");
@@ -1501,7 +1525,7 @@ function validateTicket(input, peopleNames) {
   // from: the list line it came from (auto-add), or "" for a picture added by hand.
   var from = input.from === undefined || input.from === null ? "" : input.from;
   if (typeof from !== "string" || (from !== "" && !TICKET_FROM_RE_.test(from))) return fail_("That ticket’s line on the list didn’t come through properly.");
-  return { ok: true, value: { id: input.id, stop: input.stop, who: who, seat: seat.value, page: input.page, mime: input.mime, w: input.w, h: input.h, data: data, from: from } };
+  return { ok: true, value: { id: input.id, stop: onStop ? input.stop : "", stay: onStay ? input.stay : "", who: who, seat: seat.value, page: input.page, mime: input.mime, w: input.w, h: input.h, data: data, from: from } };
 }
 
 // A picture's tie to its line of the planner's Tickets list: letters, digits and ":" only, short.
@@ -1539,6 +1563,8 @@ function ticketFromRow(o) {
   };
   if (cellText_(o.gone) === "yes") t.gone = true;
   if (cellText_(o.planner_id) !== "") t.from = cellText_(o.planner_id);
+  // On a stay (its booking): only when the cell is filled, so a stop's picture reads as before.
+  if (cellText_(o.stay) !== "") t.stay = cellText_(o.stay);
   return t;
 }
 
@@ -1650,9 +1676,12 @@ function deskFileFrom(answer, handle) {
 }
 
 // What the Log keeps of a picture: its row (no data), whether it is removed,
-// and the stop's name for the sentence.
+// and the stop's name for the sentence (a stay's name when it is on a stay,
+// under the same field, so old entries read as before).
 function ticketSnap_(t, stopTitle) {
-  return { id: t.id, stop: t.stop, who: t.who, seat: t.seat, page: t.page, mime: t.mime, w: t.w, h: t.h, size: t.size, chunks: t.chunks, by: t.by, at: t.at, gone: t.gone === true, stopTitle: cellText_(stopTitle) };
+  var snap = { id: t.id, stop: t.stop, who: t.who, seat: t.seat, page: t.page, mime: t.mime, w: t.w, h: t.h, size: t.size, chunks: t.chunks, by: t.by, at: t.at, gone: t.gone === true, stopTitle: cellText_(stopTitle) };
+  if (t.stay) snap.stay = t.stay;
+  return snap;
 }
 
 if (typeof module !== "undefined") {

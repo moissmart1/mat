@@ -183,7 +183,7 @@ test("tools/list names the twelve tools in order, each schema listing its own ar
   assert.deepEqual(props.add_expense, ["amount", "currency", "day", "kind", "note", "paid_by", "split", "title"]);
   assert.deepEqual(props.add_stop, ["booked", "date", "detail", "fixed", "getting_there", "link", "note", "photo", "place", "sign_jp", "time", "title", "travel_min"]);
   assert.deepEqual(props.change_stop, [...props.add_stop, "id"].sort());
-  assert.deepEqual(props.save_stay, ["address_jp", "first_night", "id", "last_night", "link", "name", "name_jp", "note", "photo", "place"]);
+  assert.deepEqual(props.save_stay, ["address_jp", "first_night", "id", "last_night", "link", "name", "name_jp", "note", "photo", "place", "tk_name", "tk_people", "tk_ref", "tk_room"]);
   assert.deepEqual(props.set_day, ["city", "date", "from_en", "from_jp", "line_colour", "line_en", "line_jp", "title", "to_en", "to_jp"]);
   assert.deepEqual(props.undo, ["log_id"]);
   assert.deepEqual(props.sync_payments, []);
@@ -583,6 +583,22 @@ test("save_stay with an id changes only the fields given; an empty string clears
   const cleared = ok(fake, "save_stay", { id: s.id, note: "" }).stay;
   assert.deepEqual([cleared.note, cleared.addressJp, cleared.lastNight], ["", "京都市東山区", "2026-12-16"]);
   assert.equal(fake.tables.Log.at(-1).via, "claude");
+});
+
+test("save_stay takes a stay's booking as text (tk_ref, tk_name, tk_people, tk_room); get_trip gives it, never the pictures", () => {
+  const fake = createFakeBackend(plan);
+  const s = ok(fake, "save_stay", { name: "Tsubame-so Guest House", first_night: "2026-12-14", last_night: "2026-12-16" }).stay;
+  const b = ok(fake, "save_stay", { id: s.id, tk_ref: "TSB-4827-KQ", tk_name: "M. EXAMPLE", tk_people: "3", tk_room: "Tatami room for 3" }).stay;
+  assert.deepEqual([b.tkRef, b.tkName, b.tkPeople, b.tkRoom, b.lastNight], ["TSB-4827-KQ", "M. EXAMPLE", "3", "Tatami room for 3", "2026-12-16"]);
+  assert.equal(ok(fake, "save_stay", { id: s.id, note: "x" }).stay.tkRef, "TSB-4827-KQ", "a change without them keeps them");
+  assert.equal(ok(fake, "save_stay", { id: s.id, tk_room: "" }).stay.tkRoom, "");
+  assert.equal(refusal(fake, "save_stay", { id: s.id, tk_ref: "x".repeat(61) }), "Keep each booking detail under 60 letters.");
+  const tools = fake.mcp(rpc("tools/list"), T).result.tools;
+  const getTrip = tools.find((t) => t.name === "get_trip");
+  assert.match(getTrip.description, /stays \(each with its booking details as text in tkRef, tkName, tkPeople and tkRoom, but never its booking pictures/);
+  const trip = ok(fake, "get_trip", {});
+  assert.equal(trip.stays.find((x) => x.id === s.id).tkRef, "TSB-4827-KQ");
+  assert.equal("tickets" in trip, false);
 });
 
 test("save_stay takes a photo; a change without it keeps it, an empty string clears it", () => {

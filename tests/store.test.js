@@ -44,7 +44,7 @@ function memStorage(init = {}) {
 //   net.garble         actions that reach the backend but get a non-envelope reply
 //   net.knownOffline   the phone itself says it has no network: nothing is sent
 //   timeoutMs          how long the api waits for a reply (the app's own 30 s by default)
-function phone({ seed, fake, storage, me = "Mo", nowMs = NOW, clock, timeoutMs } = {}) {
+function phone({ seed, fake, storage, me = "Mo", nowMs = NOW, clock, timeoutMs, ticketData } = {}) {
   fake = fake || createFakeBackend(seed);
   storage = storage || memStorage({ "mat.key": KEY, "mat.me": me });
   const net = { offline: false, knownOffline: false, failing: new Set(), lose: new Set(), garble: new Set(), override: null, holds: [], sent: [] };
@@ -71,7 +71,7 @@ function phone({ seed, fake, storage, me = "Mo", nowMs = NOW, clock, timeoutMs }
   };
   const api = createApi({ url: URL, getKey: () => storage.getItem("mat.key"), getActor: () => storage.getItem("mat.me"), fetchImpl, isOnline: () => !net.knownOffline, ...(timeoutMs ? { timeoutMs } : {}) });
   const waits = [];
-  const store = createStore({ api, storage, now: clock || (() => nowMs), wait: async (ms) => { waits.push(ms); } });
+  const store = createStore({ api, storage, now: clock || (() => nowMs), wait: async (ms) => { waits.push(ms); }, ...(ticketData ? { ticketData } : {}) });
   return { fake, storage, net, api, store, waits };
 }
 
@@ -3514,4 +3514,103 @@ test("round 2: an address key that is taken becomes the saved trip at once, so a
   await again.store.idle();
   assert.equal(storage.getItem("mat.key"), mine);
   assert.equal(again.store.state.me, "Trenton");
+});
+
+// ---------- a stay's booking (S2 鍵札): saveStay, addStay, a picture on a stay ----------
+
+const INN = { id: "stayINN00001", name: "Tsubame-so Guest House", nameJp: "つばめ荘", addressJp: "東京都台東区 つばめ町 1-2-3", firstNight: "2026-12-10", lastNight: "2026-12-12" };
+const stayOf = (store, id) => byId(store.state.stays, id);
+
+test("saveStay sends merge: true and only the patch; shown at once, saved, on the bar once saved", async () => {
+  const p = phone({ seed: { stays: [INN] } });
+  await p.store.boot();
+  // Someone typed a note in the Sheet since this phone loaded: it is kept.
+  p.fake.tables.Stays.find((r) => r.id === INN.id).note = "typed in the Sheet";
+  const t = p.store.saveStay(INN.id, { tkRef: "TSB-4827-KQ", tkRoom: "Tatami room for 3" }, QUIET);
+  assert.equal(stayOf(p.store, INN.id).tkRef, "TSB-4827-KQ", "shown at once");
+  const out = await p.store.outcome(t);
+  await p.store.idle();
+  assert.equal(out.saved, true);
+  const body = p.net.sent.find((b) => b.action === "saveStay");
+  assert.deepEqual(body.args, { stay: { id: INN.id, tkRef: "TSB-4827-KQ", tkRoom: "Tatami room for 3" }, merge: true });
+  const row = p.fake.tables.Stays.find((r) => r.id === INN.id);
+  assert.deepEqual([row.tk_ref, row.tk_room, row.note, row.name], ["TSB-4827-KQ", "Tatami room for 3", "typed in the Sheet", INN.name]);
+  assert.deepEqual([p.store.state.lastChange.kind, p.store.state.lastChange.action], ["stay", "edit"]);
+  assert.deepEqual(queueOf(p.storage), []);
+});
+
+test("saveStay is not queued with no signal: rolled back, said not sent; nothing in mat.queue", async () => {
+  const p = phone({ seed: { stays: [INN] } });
+  await p.store.boot();
+  p.net.knownOffline = true;
+  const out = await p.store.outcome(p.store.saveStay(INN.id, { tkRef: "TSB-4827-KQ" }, QUIET));
+  await p.store.idle();
+  assert.deepEqual(out, { saved: false, reason: "notSent" });
+  assert.equal(stayOf(p.store, INN.id).tkRef, "");
+  assert.deepEqual(queueOf(p.storage), []);
+  assert.equal(p.net.sent.filter((b) => b.action === "saveStay").length, 0);
+});
+
+test("saveStay refused by the backend rolls back with its sentence", async () => {
+  const p = phone({ seed: { stays: [INN] } });
+  await p.store.boot();
+  const out = await p.store.outcome(p.store.saveStay(INN.id, { tkRef: "x".repeat(61) }, QUIET));
+  await p.store.idle();
+  assert.deepEqual(out, { saved: false, reason: "refused", message: "Keep each booking detail under 60 letters." });
+  assert.equal(stayOf(p.store, INN.id).tkRef, "");
+});
+
+test("saveStay with no reply: unsure, then the truth from the next load", async () => {
+  const p = phone({ seed: { stays: [INN] } });
+  await p.store.boot();
+  p.net.lose.add("saveStay");
+  let unsure = false;
+  const out = await p.store.outcome(p.store.saveStay(INN.id, { tkName: "M. EXAMPLE" }, { ...QUIET, onUnsure: () => { unsure = true; } }));
+  await p.store.idle();
+  assert.equal(unsure, true);
+  assert.equal(out.saved, true, "it did land");
+  assert.equal(stayOf(p.store, INN.id).tkName, "M. EXAMPLE");
+});
+
+test("addStay adds a bare stay through saveStay { stay }; refused, it is gone", async () => {
+  const p = phone({ seed: {} });
+  await p.store.boot();
+  const t = p.store.addStay({ name: "Lakeside Airport Inn", firstNight: "2026-12-10", lastNight: "2026-12-10" }, { ...QUIET, id: "stayNEW00001" });
+  assert.equal(stayOf(p.store, "stayNEW00001").pending, true);
+  const out = await p.store.outcome(t);
+  await p.store.idle();
+  assert.equal(out.saved, true);
+  assert.deepEqual(p.net.sent.find((b) => b.action === "saveStay").args, { stay: { name: "Lakeside Airport Inn", firstNight: "2026-12-10", lastNight: "2026-12-10", id: "stayNEW00001" } });
+  assert.equal(p.fake.tables.Stays.length, 1);
+  const bad = await p.store.outcome(p.store.addStay({ name: "", firstNight: "2026-12-10", lastNight: "2026-12-10" }, { ...QUIET, id: "stayNEW00002" }));
+  await p.store.idle();
+  assert.equal(bad.saved, false);
+  assert.equal(stayOf(p.store, "stayNEW00002"), undefined);
+});
+
+test("a stay's picture waits on the phone with its stay, survives mat.queue and a reload, and goes up on the stay", async () => {
+  const kept = new Map();
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]).toString("base64");
+  const p = phone({ seed: { stays: [INN] }, ticketData: async (id) => kept.get(id) || null });
+  await p.store.boot();
+  p.net.knownOffline = true;
+  const token = p.store.addTicket({ stay: INN.id, who: "", seat: "", page: 1, mime: "image/png", w: 10, h: 10, data: png });
+  const id = p.store.state.tickets[0].id;
+  kept.set(id, png);
+  assert.equal(p.store.state.tickets[0].stay, INN.id);
+  assert.equal(p.store.state.tickets[0].stop, "");
+  const out = await p.store.ticketOutcome(token);
+  assert.equal(out.reason, "queued");
+  const q = queueOf(p.storage);
+  assert.equal(q[0].ticket.stay, INN.id);
+  assert.equal(q[0].ticket.stop, "");
+  assert.equal(JSON.stringify(q).includes(png), false);
+  // Closed and opened again, with signal: sent with its stay.
+  const again = phone({ fake: p.fake, storage: p.storage, ticketData: async (i) => kept.get(i) || null });
+  await again.store.boot();
+  assert.equal(again.store.state.tickets.find((t) => t.id === id).stay, INN.id, "the reloaded queue still says its stay");
+  await again.store.idle();
+  const row = again.fake.tables.Tickets.find((r) => r.id === id);
+  assert.deepEqual([row.stay, row.stop], [INN.id, ""]);
+  assert.deepEqual(queueOf(again.storage), []);
 });

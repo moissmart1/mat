@@ -419,7 +419,7 @@ function mcpSaveStay_(args, who) {
   if (args.id === undefined) {
     ["name", "first_night", "last_night"].forEach(function (k) { if (args[k] === undefined) mcpBad_(k + " is missing."); });
   }
-  ["name", "first_night", "last_night", "name_jp", "address_jp", "note", "place", "link", "photo"].forEach(function (k) {
+  ["name", "first_night", "last_night", "name_jp", "address_jp", "note", "place", "link", "photo", "tk_ref", "tk_name", "tk_people", "tk_room"].forEach(function (k) {
     if (args[k] !== undefined) stay[mcpCamel_(k)] = args[k];
   });
   var request = { stay: stay };
@@ -504,7 +504,7 @@ function mcpTools_() {
   return [
     {
       name: "get_trip",
-      description: "Use this first to see the whole trip: its days, stops (each with its ticket details as text in tkRef, tkName, tkPeople and tkSeat, but never the ticket pictures, which only the app can add, read or remove), stays, expenses and payments, who owes whom now, and the bookings still to make before the trip. Amounts owed are in Canadian dollars.",
+      description: "Use this first to see the whole trip: its days, stops (each with its ticket details as text in tkRef, tkName, tkPeople and tkSeat, but never the ticket pictures, which only the app can add, read or remove), stays (each with its booking details as text in tkRef, tkName, tkPeople and tkRoom, but never its booking pictures, which only the app can add, read or remove), expenses and payments, who owes whom now, and the bookings still to make before the trip. Amounts owed are in Canadian dollars.",
       args: {},
       run: mcpGetTrip_,
     },
@@ -548,6 +548,10 @@ function mcpTools_() {
         place: arg("string", "A place name or a Google Maps link."),
         link: arg("string", "A https:// link, such as the booking."),
         photo: arg("string", "A https:// link to a photo."),
+        tk_ref: arg("string", "The booking reference (tkRef), under 60 letters."),
+        tk_name: arg("string", "The name the booking is under (tkName), under 60 letters."),
+        tk_people: arg("string", "How many people are in the room (tkPeople), under 60 letters."),
+        tk_room: arg("string", "The room, such as Tatami room for 3 (tkRoom), under 60 letters."),
       },
       run: mcpSaveStay_,
     },

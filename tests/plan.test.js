@@ -290,3 +290,33 @@ test("(b) lodging distance: nothing beyond 50 km", () => {
   assert.equal(stayDistance({ lat: String(north(SKYAT, 49900).lat), lng: String(SKYAT.lng) }, SKYAT), "50 km from here");
   assert.equal(stayDistance({ lat: String(north(SKYAT, 51000).lat), lng: String(SKYAT.lng) }, SKYAT), "");
 });
+
+import { nightOf, staySpan } from "../js/plan.js";
+
+test("nightOf: which night of a stay is in force, the night ending at 04:00", () => {
+  const inn = { firstNight: "2026-12-10", lastNight: "2026-12-12" };
+  assert.deepEqual(nightOf(inn, { today: "2026-12-09", minutes: 1200 }), { total: 3, n: 0, state: "before" });
+  assert.deepEqual(nightOf(inn, { today: "2026-12-10", minutes: 120 }), { total: 3, n: 0, state: "before" }, "at 02:00 on the first day it is still the night before");
+  assert.deepEqual(nightOf(inn, { today: "2026-12-10", minutes: NIGHT_ENDS_MIN }), { total: 3, n: 1, state: "on" });
+  assert.deepEqual(nightOf(inn, { today: "2026-12-11", minutes: 600 }), { total: 3, n: 2, state: "on" });
+  assert.deepEqual(nightOf(inn, { today: "2026-12-12", minutes: 239 }), { total: 3, n: 2, state: "on" }, "03:59 is still last night");
+  assert.deepEqual(nightOf(inn, { today: "2026-12-12", minutes: 240 }), { total: 3, n: 3, state: "on" });
+  assert.deepEqual(nightOf(inn, { today: "2026-12-13", minutes: 60 }), { total: 3, n: 3, state: "on" }, "01:00 on the morning after the last night");
+  assert.deepEqual(nightOf(inn, { today: "2026-12-13", minutes: 600 }), { total: 3, n: 3, state: "after" });
+  assert.deepEqual(nightOf(inn, { today: "2026-12-20", minutes: 600 }), { total: 3, n: 3, state: "after" });
+  const one = { firstNight: "2026-12-08", lastNight: "2026-12-08" };
+  assert.deepEqual(nightOf(one, { today: "2026-12-08", minutes: 1300 }), { total: 1, n: 1, state: "on" });
+  assert.deepEqual(nightOf(one, { today: "2026-12-09", minutes: 100 }), { total: 1, n: 1, state: "on" });
+  assert.deepEqual(nightOf(one, { today: "2026-12-09", minutes: 300 }), { total: 1, n: 1, state: "after" });
+  // Across a month, and nights typed badly.
+  assert.deepEqual(nightOf({ firstNight: "2026-12-30", lastNight: "2027-01-01" }, { today: "2027-01-01", minutes: 600 }), { total: 3, n: 3, state: "on" });
+  assert.deepEqual(nightOf({ firstNight: "soon", lastNight: "" }, { today: "2026-12-10", minutes: 600 }), { total: 0, n: 0, state: "before" });
+});
+
+test("staySpan: the first night to the morning after the last", () => {
+  assert.equal(staySpan({ firstNight: "2026-12-10", lastNight: "2026-12-12" }), "Dec 10 to 13");
+  assert.equal(staySpan({ firstNight: "2026-12-08", lastNight: "2026-12-08" }), "Dec 8 to 9");
+  assert.equal(staySpan({ firstNight: "2026-12-30", lastNight: "2027-01-01" }), "Dec 30 to Jan 2");
+  assert.equal(staySpan({ firstNight: "2026-11-29", lastNight: "2026-11-30" }), "Nov 29 to Dec 1");
+  assert.equal(staySpan({ firstNight: "", lastNight: "2026-12-12" }), "");
+});

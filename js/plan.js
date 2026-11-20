@@ -216,6 +216,39 @@ export function stayShownFor(stays, date, { today, minutes } = {}) {
   return last && last !== tonight ? last : tonight;
 }
 
+// Which night of a stay is in force (S2 鍵札): { total, n, state }. total:
+// the nights from firstNight to lastNight. The night in force is today's, or
+// the day before's until NIGHT_ENDS_MIN (the night just begun). state is
+// "before" (n 0), "on" (n 1 to total) or "after" (n = total).
+export function nightOf(stay, { today, minutes } = {}) {
+  const first = str(stay && stay.firstNight);
+  const last = str(stay && stay.lastNight);
+  if (!DATE_RE.test(first) || !DATE_RE.test(last) || last < first) return { total: 0, n: 0, state: "before" };
+  const total = dayNumber(last) - dayNumber(first) + 1;
+  const night = typeof today === "string" && DATE_RE.test(today) ? (minutes < NIGHT_ENDS_MIN ? dayBefore(today) : today) : "";
+  if (!night || night < first) return { total, n: 0, state: "before" };
+  if (night > last) return { total, n: total, state: "after" };
+  return { total, n: dayNumber(night) - dayNumber(first) + 1, state: "on" };
+}
+
+// A stay's dates in short, from the first night to the morning after the
+// last: "Dec 10 to 13", "Dec 30 to Jan 2". "" when its nights are not dates.
+export function staySpan(stay) {
+  const first = str(stay && stay.firstNight);
+  const last = str(stay && stay.lastNight);
+  if (!DATE_RE.test(first) || !DATE_RE.test(last)) return "";
+  const [, m1, d1] = first.split("-").map(Number);
+  const [, m2, d2] = dayAfter(last).split("-").map(Number);
+  return SHORT_MON[m1 - 1] + " " + d1 + " to " + (m1 === m2 ? "" : SHORT_MON[m2 - 1] + " ") + d2;
+}
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const SHORT_MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const dayAfter = (date) => {
+  const [y, m, d] = date.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10);
+};
+
 export function safeHref(v) {
   return typeof v === "string" && /^https?:\/\/\S+$/i.test(v) ? v : "";
 }

@@ -173,3 +173,38 @@ test("a blank or odd row from the Sheet does not break it", () => {
   assert.equal(c.next.id, "c");
   assert.ok(c.today.some((x) => x.id === "odd"), "an odd time is treated as no time");
 });
+
+// ---------- the hook: tonight's stay, when it has a booking (S2 鍵札) ----------
+
+const INN = { id: "inn00001", name: "Tsubame-so Guest House", nameJp: "つばめ荘", firstNight: "2026-12-11", lastNight: "2026-12-13", deleted: false, tkRef: "TSB-4827-KQ", tkName: "", tkPeople: "", tkRoom: "" };
+const stayPic = (id, o = {}) => ({ id, stop: "", stay: "inn00001", who: "", seat: "", page: 1, mime: "image/png", ...o });
+
+test("the hook: tonight's stay with its booking, its night; nothing else in the case changes", () => {
+  const plain = passCase({ ...full(), stays: [{ ...INN, tkRef: "" }] }, NOON, { have });
+  assert.equal(plain.hook, null, "a stay with no booking hangs nothing");
+  const withPics = { ...full(), stays: [INN] };
+  withPics.tickets = [...withPics.tickets, stayPic("k1"), stayPic("k2", { page: 2 })];
+  const c = passCase(withPics, NOON, { have: (id) => have(id) || id === "k1" });
+  assert.deepEqual(c.hook, { id: "inn00001", name: "Tsubame-so Guest House", ref: "TSB-4827-KQ", n: 2, total: 3, state: "on", mark: { kind: "pics", label: "2 pages", saved: false } });
+  // The same state with and without the stay's pictures: the window, pockets and counts are the same.
+  const without = passCase({ ...full(), stays: [INN] }, NOON, { have });
+  const strip = (x) => ({ ...x, hook: null });
+  assert.deepEqual(strip(c), strip(without));
+  assert.deepEqual(strip(c), strip(passCase(full(), NOON, { have })));
+  // Facts alone hang it too.
+  assert.deepEqual(without.hook.mark, { kind: "ref", label: "Reference", saved: true });
+});
+
+test("the hook shows with no stop ticket at all, on the night and at 01:00 the morning after the last, not the day after", () => {
+  const s = state({ stops: [stop("a", "2026-12-12", "09:00")], stays: [INN], tickets: [stayPic("k1")] });
+  const night2 = passCase(s, NOON, { have });
+  assert.equal(night2.empty, true);
+  assert.deepEqual([night2.hook.n, night2.hook.total, night2.hook.state], [2, 3, "on"]);
+  const late = passCase(s, at("2026-12-14T01:00:00+09:00"), { have });
+  assert.deepEqual([late.hook.id, late.hook.n, late.hook.state], ["inn00001", 3, "on"]);
+  assert.equal(passCase(s, at("2026-12-14T09:00:00+09:00"), { have }).hook, null);
+  assert.equal(passCase(s, at("2026-12-10T20:00:00+09:00"), { have }).hook, null, "not before its first night");
+  // A removed stay hangs nothing; nor before migrate.
+  assert.equal(passCase({ ...s, stays: [{ ...INN, deleted: true }] }, NOON, { have }).hook, null);
+  assert.equal(passCase({ ...s, ticketsReady: false }, NOON, { have }).hook, null);
+});

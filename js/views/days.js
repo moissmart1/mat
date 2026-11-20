@@ -14,7 +14,8 @@
 // - onAllDays(): the counter was tapped. onStay(stayId): a ticket's stay row
 //   was tapped. onAddStop(date): a ticket's ＋ Add a stop was tapped.
 //   onStop(stopId): an open stop's Edit was tapped.
-// - tickets: { mark(stop, state), subscribe(fn) } (the 券 box and Show ticket,
+// - tickets: { mark(stop, state), stayMark(stay, state), subscribe(fn) } (the
+//   券 box and Show ticket, and a stay's booking on its 宿泊 line,
 //   js/tickets.js), or null; onTicket(stopId, button): Show ticket was tapped.
 // - held(): true while a sheet over Days is in use (the stop sheet): coming
 //   back to the screen then does not move the rail (R32).
@@ -45,7 +46,7 @@
 // ground under it), it goes back to the top. Never
 // on a minute tick, a sync or a redraw.
 
-import { openDayIndex, dayState, daysToGo, nowIn, stopsFor, nextStopId, header, dayTotalYen, stayShownFor, hereLine, nearStops } from "../plan.js";
+import { openDayIndex, dayState, daysToGo, nowIn, stopsFor, nextStopId, header, dayTotalYen, stayShownFor, hereLine, nearStops, nightOf, NIGHT_ENDS_MIN } from "../plan.js";
 import { issuer, dayShort, dayHead } from "../format.js";
 import { ticketEl } from "./ticket.js";
 import { summary as bookSummary, countText } from "../stampbook.js";
@@ -615,6 +616,10 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
           if (m) tix[st.id] = m;
         }
         if (Object.keys(tix).length) model.tix = tix;
+        // The night's stay with a booking: 券 and the key-tag chip on its line,
+        // with that ticket's own night (today's, before 04:00, last night's).
+        const m = model.stay && tickets.stayMark ? tickets.stayMark(model.stay, s) : null;
+        if (m) model.stayTag = { ...m, ...nightOf(model.stay, { today: day.date, minutes: day.date === now.date ? now.minutes : NIGHT_ENDS_MIN }) };
       }
       // Asked once, on today's ticket, the first time a day has a next stop.
       if (nextId && where && where.supported() && where.state() === "unset") model.ask = true;

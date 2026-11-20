@@ -401,7 +401,7 @@ test("a Date time cell on Apps Script is read in the script's zone, and a second
 
 test("validateStay", () => {
   const stay = { id: "stayAAAA0001", name: "Asakusa hotel", firstNight: "2026-12-10", lastNight: "2026-12-12" };
-  assert.deepEqual(P.validateStay(stay).value, { ...stay, nameJp: "", addressJp: "", note: "", place: "", link: "", photo: "" });
+  assert.deepEqual(P.validateStay(stay).value, { ...stay, nameJp: "", addressJp: "", note: "", place: "", link: "", photo: "", tkRef: "", tkName: "", tkPeople: "", tkRoom: "" });
   assert.equal(P.validateStay({ ...stay, lastNight: "2026-12-09" }).message, "The last night can’t be before the first.");
   assert.equal(P.validateStay({ ...stay, name: "" }).message, "Say where you’re staying.");
   assert.equal(P.validateStay({ ...stay, link: "javascript:x" }).message, "That link has to start with https://.");
@@ -410,6 +410,66 @@ test("validateStay", () => {
   assert.equal(P.validateStay({ ...stay, name: "x".repeat(81) }).message, "Keep the name under 80 letters.");
   assert.equal(P.validateStay({ ...stay, nameJp: "x".repeat(81) }).message, "Keep the Japanese name under 80 letters.");
   assert.equal(P.validateStay({ ...stay, addressJp: "x".repeat(201) }).message, "Keep the address under 200 letters.");
+});
+test("a stay's booking: four facts at the end of Stays, both ways, each under 60 letters", () => {
+  assert.deepEqual(P.TABS.Stays.slice(-4), ["tk_ref", "tk_name", "tk_people", "tk_room"]);
+  for (const c of ["tk_ref", "tk_name", "tk_people", "tk_room"]) assert.equal(P.isTextColumn("Stays", c), true);
+  const stay = { id: "stayAAAA0001", name: "Tsubame-so Guest House", firstNight: "2026-12-10", lastNight: "2026-12-12" };
+  const v = P.validateStay({ ...stay, tkRef: " TSB-4827-KQ ", tkName: "M. EXAMPLE", tkPeople: "3", tkRoom: "Tatami room for 3" }).value;
+  assert.deepEqual([v.tkRef, v.tkName, v.tkPeople, v.tkRoom], ["TSB-4827-KQ", "M. EXAMPLE", "3", "Tatami room for 3"]);
+  const row = P.stayToRow(v);
+  assert.deepEqual([row.tk_ref, row.tk_name, row.tk_people, row.tk_room], ["TSB-4827-KQ", "M. EXAMPLE", "3", "Tatami room for 3"]);
+  const back = P.stayFromRow({ ...row, first_night: "2026-12-10", last_night: "2026-12-12" });
+  assert.deepEqual([back.tkRef, back.tkName, back.tkPeople, back.tkRoom], ["TSB-4827-KQ", "M. EXAMPLE", "3", "Tatami room for 3"]);
+  // A row before migrate (no such cells) reads them as empty.
+  const old = P.stayFromRow({ id: "s", name: "N" });
+  assert.deepEqual([old.tkRef, old.tkName, old.tkPeople, old.tkRoom], ["", "", "", ""]);
+  // Absent fields leave the row alone (a patch).
+  assert.equal("tk_room" in P.stayToRow({ id: "s" }), false);
+  for (const f of ["tkRef", "tkName", "tkPeople", "tkRoom"]) {
+    assert.equal(P.validateStay({ ...stay, [f]: "x".repeat(60) }).ok, true);
+    assert.equal(P.validateStay({ ...stay, [f]: "x".repeat(61) }).message, "Keep each booking detail under 60 letters.");
+    assert.equal(P.validateStay({ ...stay, [f]: 5 }).ok, false);
+  }
+});
+test("summarize: an edited stay names its booking as a stop's ticket facts, never their values", () => {
+  const stay = { id: "s", name: "Tsubame-so Guest House", tkRef: "", tkName: "", tkPeople: "", tkRoom: "", note: "" };
+  assert.equal(P.summarize("edit", "stay", stay, { ...stay, tkRef: "TSB-4827-KQ" }), "changed the stay Tsubame-so Guest House: ticket");
+  assert.equal(P.summarize("edit", "stay", stay, { ...stay, tkRoom: "Tatami" }), "changed the stay Tsubame-so Guest House: ticket");
+  assert.equal(P.summarize("edit", "stay", stay, { ...stay, note: "Late" }), "changed the stay Tsubame-so Guest House");
+  // An entry from before the booking existed (no such keys) reads as before.
+  assert.equal(P.summarize("edit", "stay", { id: "s", name: "N" }, { id: "s", name: "N", tkRef: "" }), "changed the stay N");
+});
+test("validateTicket: a picture names a stop or a stay, exactly one", () => {
+  const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]).toString("base64");
+  const base = { id: "tkt000000001", who: "", seat: "", page: 1, mime: "image/png", w: 10, h: 10, data: sig };
+  const say = "That didn’t say which stop it is for.";
+  const onStop = P.validateTicket({ ...base, stop: "planstop1203" }, []);
+  assert.equal(onStop.ok, true);
+  assert.equal(onStop.value.stop, "planstop1203");
+  assert.equal(onStop.value.stay, "");
+  const onStay = P.validateTicket({ ...base, stay: "planstay0001" }, []);
+  assert.equal(onStay.ok, true);
+  assert.equal(onStay.value.stay, "planstay0001");
+  assert.equal(onStay.value.stop, "");
+  assert.equal(P.validateTicket({ ...base, stop: "", stay: "planstay0001" }, []).ok, true);
+  assert.equal(P.validateTicket({ ...base, stop: "planstop1203", stay: "planstay0001" }, []).message, say);
+  assert.equal(P.validateTicket(base, []).message, say);
+  assert.equal(P.validateTicket({ ...base, stop: "", stay: "" }, []).message, say);
+  assert.equal(P.validateTicket({ ...base, stay: "bad" }, []).message, say);
+  assert.equal(P.validateTicket({ ...base, stay: 12345678 }, []).message, say);
+  // A Tickets row: stay only when the cell is filled.
+  assert.equal("stay" in P.ticketFromRow({ id: "a", stop: "planstop1203" }), false);
+  assert.equal("stay" in P.ticketFromRow({ id: "a", stop: "planstop1203", stay: "" }), false);
+  assert.equal(P.ticketFromRow({ id: "a", stop: "", stay: "planstay0001" }).stay, "planstay0001");
+  assert.deepEqual(P.TABS.Tickets.slice(-1), ["stay"]);
+  // History: the stay's name where a stop's title goes, under the same field.
+  const snap = P.ticketSnap_({ id: "a", stop: "", stay: "planstay0001", who: "" }, "Tsubame-so Guest House");
+  assert.equal(snap.stopTitle, "Tsubame-so Guest House");
+  assert.equal(snap.stay, "planstay0001");
+  assert.equal(P.summarize("add", "ticket", null, snap), "added a ticket to Tsubame-so Guest House");
+  assert.equal(P.summarize("remove", "ticket", snap, snap), "removed a ticket from Tsubame-so Guest House");
+  assert.equal("stay" in P.ticketSnap_({ id: "a", stop: "s" }, "T"), false);
 });
 test("validateStay: an optional https photo, like a stop's", () => {
   const stay = { id: "stayAAAA0001", name: "Asakusa hotel", firstNight: "2026-12-10", lastNight: "2026-12-12" };
@@ -425,8 +485,8 @@ test("validateStay: an optional https photo, like a stop's", () => {
 test("stay photo: column after link, read through safeUrl, written by stayToRow", () => {
   const t = P.TABS.Stays;
   assert.equal(t[t.indexOf("link") + 1], "photo");
-  // lat and lng came later: after deleted_at, where migrate adds them.
-  assert.deepEqual(t.slice(-3), ["deleted_at", "lat", "lng"]);
+  // lat and lng came later: after deleted_at, where migrate adds them; the booking's four after those.
+  assert.deepEqual(t.slice(-7, -4), ["deleted_at", "lat", "lng"]);
   assert.equal(P.isTextColumn("Stays", "photo"), P.isTextColumn("Stops", "photo"));
   assert.equal(P.stayFromRow({ id: "s", photo: "https://example.org/a.jpg" }).photo, "https://example.org/a.jpg");
   for (const bad of ["=HYPERLINK(\"https://example.org/a.jpg\")", "http://example.org/a.jpg", "javascript:x", undefined]) {
@@ -440,7 +500,7 @@ test("stay rows round-trip and read safely", () => {
   assert.equal("deleted_at" in P.stayToRow(stay), false);
   assert.equal(P.stayFromRow({ id: "s", name: "N", link: "javascript:x", deleted_at: "x" }).link, "");
   assert.equal(P.stayFromRow({ id: "s", deleted_at: "x" }).deleted, true);
-  assert.deepEqual(P.TABS.Stays.slice(-3), ["deleted_at", "lat", "lng"]);
+  assert.deepEqual(P.TABS.Stays.slice(-7, -4), ["deleted_at", "lat", "lng"]);
 });
 test("validateDayPatch", () => {
   assert.deepEqual(P.validateDayPatch({ city: " Tokyo ", lineColour: "#2fb6e8" }).value, { city: "Tokyo", lineColour: "#2fb6e8" });
