@@ -10,8 +10,7 @@ const fs = require("fs");
 const path = require("path");
 const { createFakeBackend } = require("../fake-backend.cjs");
 
-// MAT_PORT picks the port (default 4173). Two checkouts testing at once need two ports:
-// on one port the second run would be served the first one's files.
+// The runner sets MAT_PORT to its own listener before loading any cases.
 const PORT = Number(process.env.MAT_PORT) || 4173;
 const ORIGIN = "http://localhost:" + PORT;
 const SEED = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "fixtures", "seed.json"), "utf8"));
@@ -123,7 +122,9 @@ async function open(page, { seed = SEED, key = "test-key", me = "Mo", how = "1",
     }
   }, [entries, mark]);
 
-  await page.clock.install({ time: nowMs });
+  // install starts ticking immediately. Leave more than the case timeout
+  // before the target, then freeze there before any app timers are created.
+  await page.clock.install({ time: nowMs - 60000 });
   await page.clock.pauseAt(nowMs);
   await page.goto(ORIGIN + "/" + hash);
   // Initial geometry is measured with the faces the page has requested.

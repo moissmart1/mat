@@ -18,17 +18,13 @@
 // A case fails on a thrown error, a console error or an uncaught page error;
 // a failure prints its message and saves a screenshot.
 
-const { spawn } = require("child_process");
 const fs = require("fs");
-const http = require("http");
 const path = require("path");
 const { chromium } = require("playwright-core");
-const { PORT, ORIGIN } = require("./helpers.cjs");
 const { serveFont } = require("./font-routes.cjs");
 const { takeTurn } = require("./queue.cjs");
 const { parseShard, shardFiles } = require("./shard.cjs");
 
-const ROOT = path.join(__dirname, "..", "..");
 // Failure screenshots: MAT_SHOTS if set; on the owner's Mac where it has always
 // been; anywhere else (a GitHub runner) under the system temp folder.
 const MAC_TMP = "/private/tmp/claude-501";
@@ -37,40 +33,6 @@ const SHOTS =
   (fs.existsSync(MAC_TMP) ? path.join(MAC_TMP, "mat-shots", "failures") : path.join(require("os").tmpdir(), "mat-shots", "failures"));
 const CASE_TIMEOUT_MS = 30000;
 const CLOSE_TIMEOUT_MS = 8000;
-
-// What is on the test port: null (nothing), or the body of its front page.
-function frontPage() {
-  return new Promise((resolve) => {
-    const req = http.get(ORIGIN + "/", (res) => {
-      let body = "";
-      res.setEncoding("utf8");
-      res.on("data", (c) => (body += c));
-      res.on("end", () => resolve(body));
-    });
-    req.on("error", () => resolve(null));
-    req.setTimeout(1000, () => {
-      req.destroy();
-      resolve(null);
-    });
-  });
-}
-const isThisApp = (body) => typeof body === "string" && body.includes("<title>MAT</title>");
-
-async function startServer() {
-  const already = await frontPage();
-  if (already !== null) {
-    // One is already running (npm run serve): use it only if it is this app.
-    if (isThisApp(already)) return null;
-    throw new Error("Port " + PORT + " is taken by something that is not this app. Stop it and run the tests again.");
-  }
-  const child = spawn(process.execPath, [path.join(ROOT, "scripts", "serve.mjs")], { stdio: "ignore" });
-  for (let i = 0; i < 100; i++) {
-    if (isThisApp(await frontPage())) return child;
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  child.kill();
-  throw new Error("The test server did not start on port " + PORT + ".");
-}
 
 const CONTEXT = {
   viewport: { width: 390, height: 844 },
@@ -118,7 +80,6 @@ function withTimeout(promise, ms) {
 async function runCase(browser, fileBase, c) {
   const problems = [];
   const contexts = [];
-  const pages = [];
   const newPage = async () => {
     const context = await browser.newContext({
       ...CONTEXT,
@@ -133,7 +94,6 @@ async function runCase(browser, fileBase, c) {
     await hermetic(context);
     const page = await context.newPage();
     watch(page, problems);
-    pages.push(page);
     return { context, page };
   };
   const first = await newPage();
@@ -216,48 +176,62 @@ async function main() {
 
   // One run at a time on this computer: wait in line (tests/e2e/queue.cjs).
   const leave = await takeTurn();
-  const server = await startServer();
-  const launch = () => chromium.launch({ channel: "chrome", headless: true });
-  let browser = await launch();
+  const { startServer } = await import("../../scripts/serve.mjs");
+  // The runner itself owns the socket. Even a killed runner leaves no child
+  // serving stale files. Learn the OS-assigned port before cases load helpers.
+  const server = await startServer(Number(process.env.MAT_PORT || 0));
+  process.env.MAT_PORT = String(server.address().port);
   let passed = 0;
   let failed = 0;
   // A case that fails is tried once more, alone. Passing the second time counts
   // as passed, but it is named at the end: it is unreliable and wants fixing.
   const secondTry = [];
-  try {
-    for (const file of files) {
-      const base = path.basename(file, ".e2e.cjs");
-      for (const c of casesOf(file)) {
-        let { error, shot, stuck } = await runCase(browser, base, c);
-        if (error && !process.env.MAT_E2E_NO_RETRY) {
-          console.log("      (failed once: " + error.message.split("\n")[0] + "; trying again)");
+  const suites = files.map(file => ({
+    base: path.basename(file, ".e2e.cjs"),
+    cases: casesOf(file),
+  })).sort((a, b) => b.cases.length - a.cases.length);
+  const retries = [];
+  async function worker(pending, retrying) {
+    const launch = () => chromium.launch({ channel: "chrome", headless: true });
+    let browser = await launch();
+    try {
+      for (const { base, cases } of pending) {
+        for (const c of cases) {
+          const { error, shot, stuck } = await runCase(browser, base, c);
+          if (error && !retrying && !process.env.MAT_E2E_NO_RETRY) {
+            console.log("      (failed once: " + base + " > " + c.name + ": " + error.message.split("\n")[0] + "; queued for a second try)");
+            retries.push({ base, cases: [c] });
+          } else if (error) {
+            failed++;
+            console.log("FAIL " + base + " > " + c.name);
+            console.log("      " + error.message);
+            if (shot) console.log("      screenshot: " + shot);
+          } else {
+            if (retrying) secondTry.push(base + " > " + c.name);
+            passed++;
+            console.log("ok   " + base + " > " + c.name);
+          }
           if (stuck) {
+            console.log("      (a page would not close: starting a fresh browser)");
             withTimeout(browser.close(), CLOSE_TIMEOUT_MS).catch(() => {});
             browser = await launch();
           }
-          const again = await runCase(browser, base, c);
-          if (!again.error) secondTry.push(base + " > " + c.name);
-          ({ error, shot, stuck } = again);
-        }
-        if (error) {
-          failed++;
-          console.log("FAIL " + base + " > " + c.name);
-          console.log("      " + error.message);
-          if (shot) console.log("      screenshot: " + shot);
-        } else {
-          passed++;
-          console.log("ok   " + base + " > " + c.name);
-        }
-        if (stuck) {
-          console.log("      (a page would not close: starting a fresh browser)");
-          withTimeout(browser.close(), CLOSE_TIMEOUT_MS).catch(() => {});
-          browser = await launch();
         }
       }
+    } finally {
+      await withTimeout(browser.close(), CLOSE_TIMEOUT_MS).catch(() => {});
     }
+  }
+  try {
+    // Independent files can overlap their navigation and UI waits. Keep
+    // cases within each file serial and give each worker its own browser.
+    const workers = Math.min(suites.length, require("node:os").availableParallelism(), 2);
+    const pending = suites.values();
+    const results = await Promise.allSettled(Array.from({ length: workers }, () => worker(pending, false)));
+    for (const result of results) if (result.status === "rejected") throw result.reason;
+    if (retries.length) await worker(retries, true);
   } finally {
-    await withTimeout(browser.close(), CLOSE_TIMEOUT_MS).catch(() => {});
-    if (server) server.kill();
+    server.close();
     leave();
   }
   for (const name of secondTry) console.log("second try: " + name);

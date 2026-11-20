@@ -52,17 +52,31 @@ async function expectReach(page, selector) {
   }
 }
 
+// The counter changes before smooth scrolling finishes. Check the actual
+// snap position before the next key or pointer action.
+function waitDay(page, day) {
+  return until(() => page.evaluate(day => {
+    const rail = document.getElementById("rail");
+    const pages = rail.querySelectorAll(".pg");
+    if (!pages[day - 1] || pages.length < 2) return false;
+    const step = pages[1].offsetLeft - pages[0].offsetLeft;
+    return step > 0 && Math.abs(rail.scrollLeft - (day - 1) * step) <= 1;
+  }, day), "the rail settles on day " + day);
+}
+
+async function finishMotion(page, selector) {
+  await page.evaluate(async selector => {
+    const moving = [...document.querySelectorAll(selector)].flatMap(el => el.getAnimations());
+    await Promise.allSettled(moving.map(animation => animation.finished));
+  }, selector);
+}
+
 async function days(page, opts = {}) {
   const backend = await open(page, { seed: WITH_PLAN, tab: "days", nowMs: NOON12, ...opts });
   await until(() => page.evaluate(() => document.querySelectorAll("#rail .pg .tk").length === 11), "the tickets draw");
   // The strip has come to rest on today (Dec 12) before anything is tapped: a tap on a strip still gliding lands on another day.
   await until(() => page.evaluate(() => /^Day 3 of 11/.test(document.querySelector("#dayCount").textContent)), "the strip rests on today, Day 3 of 11");
-  await until(async () => {
-    const at = () => page.evaluate(() => document.querySelector("#rail").scrollLeft);
-    const a = await at();
-    await page.waitForTimeout(120);
-    return a === (await at());
-  }, "the strip is still");
+  await waitDay(page, 3);
   return backend;
 }
 async function money(page, opts = {}) {
@@ -86,7 +100,7 @@ async function raiseNotice(page) {
   await page.evaluate((t) => globalThis.__matTest.store.notify(t), LONG_NOTICE);
   await until(() => page.evaluate(() => !document.getElementById("ubar").hidden), "the notice shows");
   // It arrives over a fifth of a second and the sheets rise over half of one (real time).
-  await page.waitForTimeout(800);
+  await finishMotion(page, "#ubar, .sheet, .view, #hist");
 }
 
 const cases = [];
@@ -486,24 +500,26 @@ cases.push({
   mobile: false,
   async run({ page }) {
     await both(page);
+    await waitDay(page, 3);
     assert.equal(await dayText(page), "Day 3 of 11");
     await page.evaluate(() => document.activeElement && document.activeElement.blur());
     assert.equal(await page.evaluate(() => document.activeElement === document.body), true, "nothing is focused");
     await page.keyboard.press("ArrowRight");
     await until(async () => (await dayText(page)) === "Day 4 of 11", "the right arrow shows the next day");
+    await waitDay(page, 4);
     await page.keyboard.press("ArrowLeft");
     await until(async () => (await dayText(page)) === "Day 3 of 11", "the left arrow goes back");
+    await waitDay(page, 3);
     // A field has focus: the arrow is the field's.
     await page.click("#ring");
     await waitOpen(page, "reg");
     await page.click("#xWhat");
+    assert.equal(await page.locator("#xWhat").evaluate(el => el === document.activeElement), true);
     await page.keyboard.press("ArrowRight");
-    await page.waitForTimeout(250);
     assert.equal(await dayText(page), "Day 3 of 11", "not while a field has focus");
     // The register is open and nothing has focus: still not.
     await page.evaluate(() => document.activeElement.blur());
     await page.keyboard.press("ArrowRight");
-    await page.waitForTimeout(250);
     assert.equal(await dayText(page), "Day 3 of 11", "not while the register is open");
     await page.keyboard.press("Escape");
     await until(async () => !(await isOpen(page, "reg")), "the register closes");
@@ -513,7 +529,6 @@ cases.push({
     await waitOpen(page, "stay");
     await page.evaluate(() => document.activeElement && document.activeElement.blur());
     await page.keyboard.press("ArrowRight");
-    await page.waitForTimeout(250);
     assert.equal(await dayText(page), "Day 3 of 11", "not while a sheet is open");
   },
 });
@@ -541,7 +556,6 @@ cases.push({
     await until(() => page.evaluate(() => !document.getElementById("vDays").classList.contains("is-active")), "Before covers Days");
     await page.evaluate(() => document.activeElement && document.activeElement.blur());
     await page.keyboard.press("ArrowRight");
-    await page.waitForTimeout(250);
     assert.equal(await dayText(page), "Day 3 of 11");
   },
 });
@@ -667,7 +681,7 @@ async function clean(page, name) {
   const fs = require("fs");
   fs.mkdirSync(SHOTS, { recursive: true });
   // The sheets rise and the views fade in real time.
-  await page.waitForTimeout(800);
+  await finishMotion(page, ".sheet, .view, #reg, #hist");
   await page.screenshot({ path: SHOTS + "/320-" + name + ".png" });
   const found = await trouble(page);
   assert.deepEqual(found, [], "at 320x568, " + name + ": " + found.join("; "));

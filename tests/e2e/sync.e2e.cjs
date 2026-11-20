@@ -71,6 +71,29 @@ async function twoPhones(ctx) {
 
 module.exports = [
   {
+    name: "a delayed clock setup starts at the requested instant and each phone owns its timers",
+    async run({ page, newPhone }) {
+      // Simulate a slow round trip between install and pause without sleeping.
+      const install = page.clock.install.bind(page.clock);
+      page.clock.install = async (options) => {
+        await install(options);
+        await page.clock.fastForward(1500);
+      };
+      const other = await newPhone();
+      await open(page);
+      await open(other, { nowMs: NOON12 + 3600000 });
+      for (const phone of [page, other]) {
+        await phone.evaluate(() => { window.fired = false; setTimeout(() => { window.fired = true; }, 100); });
+      }
+      const state = (phone) => phone.evaluate(() => [Date.now(), window.fired]);
+      await page.clock.fastForward(100);
+      assert.deepEqual(await state(page), [NOON12 + 100, true]);
+      assert.deepEqual(await state(other), [NOON12 + 3600000, false]);
+      await other.clock.fastForward(100);
+      assert.deepEqual(await state(other), [NOON12 + 3600100, true]);
+    },
+  },
+  {
     name: "a line rung up on one phone shows on the other at its next check, marked new",
     async run(ctx) {
       const { a, b } = await twoPhones(ctx);
