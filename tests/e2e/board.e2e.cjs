@@ -269,16 +269,30 @@ module.exports = [
   {
     name: "the lines fill in left to right once when the board appears; with reduced motion they are simply there",
     async run({ page, newPhone }) {
+      // Record the wipe as it happens (start and end events), so nothing here depends on
+      // when the test looks: on a slow runner the 0.7 s wipe can be over before the first look.
+      await page.addInitScript(() => {
+        const log = (window.__wipe = { starts: 0, ends: 0, name: "", dur: "", timing: "" });
+        addEventListener("animationstart", (e) => {
+          if (e.animationName !== "wipe") return;
+          const cs = getComputedStyle(e.target);
+          log.starts++;
+          log.name = cs.animationName;
+          log.dur = cs.animationDuration;
+          log.timing = cs.animationTimingFunction;
+        }, true);
+        addEventListener("animationend", (e) => { if (e.animationName === "wipe") log.ends++; }, true);
+      });
       await ready(page, { nowMs: DAY12 });
       await until(() => boardUp(page), "the board shows");
-      const anim = await page.evaluate(() => {
-        const cs = getComputedStyle(document.querySelector("#vDays .led-in"));
-        return { name: cs.animationName, dur: cs.animationDuration, timing: cs.animationTimingFunction };
-      });
+      await until(() => page.evaluate(() => window.__wipe.ends > 0), "the wipe ends");
+      const anim = await page.evaluate(() => window.__wipe);
       assert.equal(anim.name, "wipe");
       assert.equal(anim.dur, "0.7s");
       assert.match(anim.timing, /steps\(28/);
+      assert.equal(anim.starts, 1, "it fills in once");
       await until(() => page.evaluate(() => getComputedStyle(document.querySelector("#vDays .led-in")).animationName === "none"), "it ends and does not repeat");
+      assert.equal(await page.evaluate(() => window.__wipe.starts), 1, "and does not start again");
       const calm = await newPhone();
       await calm.emulateMedia({ reducedMotion: "reduce" });
       await ready(calm, { nowMs: DAY12 });
