@@ -40,3 +40,17 @@ test("newId gives 20 letters and digits that pass the backend's id rule", () => 
   }
   assert.equal(seen.size, 500);
 });
+
+test("tripDay and defaultRingDay take the Days clock's date when given", () => {
+  const t12 = { start: "2026-12-09", end: "2026-12-20", tz: "Asia/Tokyo" };
+  const eve = Date.parse("2026-12-08T17:00:00-05:00"); // Dec 9 07:00 in Japan
+  assert.equal(tripDay(t12, eve), "2026-12-09", "Japan's date");
+  assert.equal(tripDay(t12, eve, "2026-12-08"), "pre", "the eve is before the trip");
+  assert.equal(defaultRingDay(t12, eve, "2026-12-08"), "pre");
+  const late = Date.parse("2026-12-09T11:45:00-05:00"); // Dec 10 in Japan
+  assert.equal(tripDay(t12, late), "2026-12-10");
+  assert.equal(tripDay(t12, late, "2026-12-09"), "2026-12-09");
+  assert.equal(defaultRingDay(t12, late, "2026-12-09"), "2026-12-09");
+  assert.equal(tripDay(t12, late, "2026-12-21"), "post");
+  assert.equal(defaultRingDay(t12, late, "2026-12-21"), "2026-12-20");
+});

@@ -842,3 +842,14 @@ test("fetchOrder: a stay's pictures at its first night, 15:00; first of all whil
   const dec14 = Date.parse("2026-12-14T07:00:00+09:00");
   assert.deepEqual(fetchOrder(s, dec14).map((t) => t.id), ["y1", "y2", "t2", "t1", "y3"]);
 });
+
+test("fetchOrder: today is the Days clock's day (Dec 9 in its own zone after Japan's midnight)", async () => {
+  const { dec9State, et } = await import("./fixtures/dec9.js");
+  // Two stays: the airport inn (Dec 8) and one from Dec 10. At 11:45 Eastern on Dec 9
+  // it is Dec 10 in Japan, but still Dec 9 by the Days clock: the inn is the stay you are in.
+  const s = dec9State({
+    stays: [{ id: "dec9stay0801", firstNight: "2026-12-08", lastNight: "2026-12-08" }, { id: "laterstay01", firstNight: "2026-12-10", lastNight: "2026-12-12" }],
+    tickets: [{ id: "inn", stay: "dec9stay0801" }, { id: "later", stay: "laterstay01" }, { id: "fl", stop: "dec9stop0903" }],
+  });
+  assert.deepEqual(fetchOrder(s, et("2026-12-09T11:45")).map((t) => t.id), ["inn", "fl", "later"]);
+});

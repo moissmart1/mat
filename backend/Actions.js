@@ -620,7 +620,7 @@ function plannerProblemsToStore_(at, problems) {
 }
 
 function pullPayments_(read, ctx) {
-  var dayDates = tripDates_();
+  var dayDates = moneyDates_();
   var inPlanner = {};
   read.payments.forEach(function (p) { inPlanner[p.id] = true; });
   // The Expenses tab, read once: each line with the payment it is tied to.
@@ -854,6 +854,14 @@ function writePlan_(plan, ref, patch) {
 
 function tripDates_() {
   return readTable_("Days").map(function (r) { return cellDate_(r.date); }).filter(function (d) { return d !== ""; });
+}
+
+// The days money can be on: every trip day except the evening before the
+// first (Days.kind "eve"), so a payment or expense dated on the eve is "pre",
+// as the register shows it. A stop may still be dated on the eve (tripDates_).
+function moneyDates_() {
+  return readTable_("Days").filter(function (r) { return dayFromRow(r).kind !== "eve"; })
+    .map(function (r) { return cellDate_(r.date); }).filter(function (d) { return d !== ""; });
 }
 
 // Appends a new stop or stay, or returns the one already there with the id

@@ -3614,3 +3614,42 @@ test("a stay's picture waits on the phone with its stay, survives mat.queue and 
   assert.deepEqual([row.stay, row.stop], [INN.id, ""]);
   assert.deepEqual(queueOf(again.storage), []);
 });
+
+// ---------- the eve kept apart from the days (Dec 9 brief) ----------
+
+const DEC9 = require("./fixtures/dec9.json");
+
+test("derive keeps the eve apart: state.eves, in order; state.days the rest; the cache as loaded", async () => {
+  const p = phone({ seed: DEC9 });
+  assert.deepEqual(p.store.state.eves, [], "eves starts empty");
+  await p.store.boot();
+  const s = p.store.state;
+  assert.deepEqual(s.eves.map((d) => [d.date, d.kind, d.tz]), [["2026-12-08", "eve", "America/New_York"]]);
+  assert.equal(s.days.length, 12, "Dec 9 to 20");
+  assert.deepEqual([s.days[0].date, s.days[0].tz, s.days[0].kind], ["2026-12-09", "America/New_York", ""]);
+  assert.ok(s.days.every((d) => d.kind !== "eve"));
+  const cache = JSON.parse(p.storage.getItem("mat.cache"));
+  assert.deepEqual(cache.data.days.map((d) => d.date).slice(0, 3), ["2026-12-08", "2026-12-09", "2026-12-10"], "the cache keeps every row as loaded");
+  assert.equal(cache.data.days.length, 13);
+  assert.equal("eves" in cache.data, false);
+  // A phone that boots from that cache with no signal splits it the same way.
+  const q = phone({ fake: p.fake, storage: p.storage });
+  q.net.offline = true;
+  await q.store.boot();
+  assert.deepEqual([q.store.state.eves.length, q.store.state.days.length, q.store.state.days[0].date], [1, 12, "2026-12-09"]);
+});
+
+test("a trip with no eve has eves [] and its days as loaded", async () => {
+  const p = phone({ seed: SEED });
+  await p.store.boot();
+  assert.deepEqual(p.store.state.eves, []);
+  assert.equal(p.store.state.days.length, 11);
+});
+
+test("the eve is emptied with the days when the trip comes off the phone", async () => {
+  const p = phone({ seed: DEC9 });
+  await p.store.boot();
+  assert.equal(p.store.state.eves.length, 1);
+  p.store.forgot();
+  assert.deepEqual([p.store.state.status, p.store.state.eves, p.store.state.days], ["nokey", [], []]);
+});

@@ -4,7 +4,9 @@
 var TABS = {
   Trip: ["key", "value"],
   People: ["name", "initials", "order", "etransfer", "simplify", "email", "photo"],
-  Days: ["date", "city", "title", "line_jp", "line_en", "line_colour", "from_jp", "from_en", "to_jp", "to_en", "lat", "lng"],
+  // tz: a day in its own time zone (blank: the trip's); kind: "eve" for the
+  // evening before the first day. Both typed in the Sheet only: no action writes them.
+  Days: ["date", "city", "title", "line_jp", "line_en", "line_colour", "from_jp", "from_en", "to_jp", "to_en", "lat", "lng", "tz", "kind"],
   Stops: ["id", "date", "time", "title", "detail", "getting_there", "travel_min", "fixed", "place", "sign_jp", "booked", "link", "photo", "note", "deleted_at", "lat", "lng", "tk_ref", "tk_name", "tk_people", "tk_seat"],
   Stays: ["id", "name", "name_jp", "address_jp", "first_night", "last_night", "note", "place", "link", "photo", "deleted_at", "lat", "lng", "tk_ref", "tk_name", "tk_people", "tk_room"],
   Expenses: ["id", "day", "title", "amount", "currency", "rate", "paid_by", "split", "split_mode", "split_vals", "note", "kind", "receipt", "added_by", "added_at", "deleted_at", "planner_id"],
@@ -594,7 +596,17 @@ function dayFromRow(o) {
     toEn: cellText_(o.to_en),
     lat: coordsOf_(o).lat,
     lng: coordsOf_(o).lng,
+    tz: dayZone_(o.tz),
+    kind: cellText_(o.kind).trim().toLowerCase() === "eve" ? "eve" : "",
   };
+}
+
+// A Days.tz cell when it looks like a zone name ("America/New_York"), at
+// most 40 letters; else "" (the trip's zone). The app checks it is a real one.
+var DAY_ZONE_RE_ = /^[A-Za-z]+(\/[A-Za-z0-9_+-]+){1,2}$/;
+function dayZone_(v) {
+  var t = cellText_(v).trim();
+  return t.length <= 40 && DAY_ZONE_RE_.test(t) ? t : "";
 }
 
 // ---- API shape -> sheet row ----

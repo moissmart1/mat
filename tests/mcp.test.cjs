@@ -292,7 +292,7 @@ test("the write tools map their arguments to the API and answer { <kind>, log_id
   assert.equal(refusal(fake, "save_stay", { name: "x", first_night: "2026-12-15", last_night: "2026-12-14" }), "The last night can’t be before the first.");
 
   const day = ok(fake, "set_day", { date: "2026-12-14", city: "Kyoto", line_jp: "東海道新幹線", line_en: "Tokaido Shinkansen", line_colour: "#0072BC", from_jp: "東京", from_en: "Tokyo", to_jp: "京都", to_en: "Kyoto", title: "West" });
-  assert.deepEqual(day.day, { date: "2026-12-14", city: "Kyoto", title: "West", lineJp: "東海道新幹線", lineEn: "Tokaido Shinkansen", lineColour: "#0072BC", fromJp: "東京", fromEn: "Tokyo", toJp: "京都", toEn: "Kyoto", lat: "", lng: "" });
+  assert.deepEqual(day.day, { date: "2026-12-14", city: "Kyoto", title: "West", lineJp: "東海道新幹線", lineEn: "Tokaido Shinkansen", lineColour: "#0072BC", fromJp: "東京", fromEn: "Tokyo", toJp: "京都", toEn: "Kyoto", lat: "", lng: "", tz: "", kind: "" });
   assert.equal(refusal(fake, "set_day", { date: "2026-12-14", line_colour: "blue" }), "Use a colour like #2FB6E8.");
   assert.equal(refusal(fake, "set_day", { date: "2027-01-01", city: "x" }), "That day isn’t on this trip.");
 
@@ -841,4 +841,32 @@ test("get_trip says who has a picture, never the picture; undoing one answers wi
   assert.equal(all.includes(JPEG.slice(30, 60)), false);
   assert.equal(all.includes("photo\":\"data"), false);
   assert.equal(fake.mcp(rpc("tools/list"), T).result.tools.length, 12, "no new tool");
+});
+
+// ---------- the eve and a day in its own zone (Dec 9 brief) ----------
+
+const dec9 = JSON.parse(fs.readFileSync(path.join(__dirname, "fixtures", "dec9.json"), "utf8"));
+
+test("add_expense: the eve is not a day money can be on; Dec 9 is; left out, it is Japan's date", () => {
+  const fake = createFakeBackend(dec9, { clock: () => "2026-12-08T22:00:00.000Z" }); // 17:00 Dec 8 Eastern, 07:00 Dec 9 in Japan
+  assert.equal(badArgs(fake, "add_expense", { title: "Train snack", amount: 9, currency: "CAD", paid_by: "Mo", day: "2026-12-08" }), "Invalid params: day has to be pre or one of the trip’s days, as YYYY-MM-DD.");
+  assert.equal(ok(fake, "add_expense", { title: "Shuttle tip", amount: 5, currency: "CAD", paid_by: "Mo", day: "2026-12-09" }).expense.day, "2026-12-09");
+  assert.equal(ok(fake, "add_expense", { title: "Train snack", amount: 9, currency: "CAD", paid_by: "Mo", day: "pre" }).expense.day, "pre");
+  assert.equal(ok(fake, "add_expense", { title: "Coffee", amount: 4, currency: "CAD", paid_by: "Mo" }).expense.day, "2026-12-09", "Japan's date, not the eve's");
+  const tool = fake.mcp(rpc("tools/list"), T).result.tools.find((t) => t.name === "add_expense");
+  assert.match(tool.inputSchema.properties.day.description, /Left out, it is today’s date in Japan\./);
+});
+
+test("set_day through the connector on a day with a tz leaves tz and kind alone, and an eve stop can be added", () => {
+  const fake = createFakeBackend(dec9);
+  const row = () => fake.tables.Days.find((r) => r.date === "2026-12-09");
+  const was = { ...row() };
+  ok(fake, "set_day", { date: "2026-12-09", title: "Out by air" });
+  assert.deepEqual([row().tz, row().kind, row().title], ["America/New_York", "", "Out by air"]);
+  const entry = ok(fake, "get_history", {}).entries[0];
+  assert.match(entry.sentence, /Wed Dec 9/);
+  ok(fake, "undo", { log_id: entry.id });
+  assert.deepEqual(row(), was);
+  const s = ok(fake, "add_stop", { date: "2026-12-08", time: "19:00", title: "Dinner by the station" });
+  assert.equal(s.stop.date, "2026-12-08", "a stop may be dated on the eve");
 });
