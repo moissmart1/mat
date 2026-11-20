@@ -8,7 +8,7 @@ import { findings } from "../scripts/scan.mjs";
 import { readFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { liveStampUntil, askUntil, checkKey, ownerKey, tripLoaded, withoutKeys } from "../scripts/release-lib.mjs";
+import { liveStampUntil, migrateUntilCurrent, askUntil, checkKey, ownerKey, tripLoaded, withoutKeys } from "../scripts/release-lib.mjs";
 
 test("I4: the live load is asked again for about 30 seconds; ship never advises rolling the backend back", async () => {
   const waits = [];
@@ -197,4 +197,50 @@ test("liveStampUntil asks again every 3 seconds, up to 30 seconds, until the liv
 test("the pre-push check waits for the live stamp before it judges", () => {
   const src = readFileSync(new URL("../scripts/prepush.mjs", import.meta.url), "utf8");
   assert.match(src, /liveStampUntil\(config\(show\(localSha, "js\/config\.js"\)\)\.apiUrl, commitStamp\)/);
+});
+
+test("migrate: an answer from the old backend is asked again; the new stamp's answer is trusted", async () => {
+  const waits = [];
+  const answers = [
+    { ok: true, data: { added: [] } },
+    { ok: true, data: { added: [], stamp: "old" } },
+    { ok: false, error: "bad_input" },
+    { ok: true, data: { added: ["Todos", "Expenses.planner_id"], stamp: "new" } },
+  ];
+  let n = 0;
+  const r = await migrateUntilCurrent(async () => answers[n++], "new", { sleep: async (ms) => waits.push(ms) });
+  assert.deepEqual(r, { ok: true, added: ["Todos", "Expenses.planner_id"], calls: 4 });
+  assert.deepEqual(waits, [3000, 4500, 6750]);
+});
+
+test("migrate: never the new stamp stops with a message and no success", async () => {
+  const waits = [];
+  let n = 0;
+  const r = await migrateUntilCurrent(async () => { n++; return { ok: true, data: { added: [], stamp: "old" } }; }, "new", { sleep: async (ms) => waits.push(ms) });
+  assert.equal(r.ok, false);
+  assert.match(r.why, /wrong backend/);
+  assert.match(r.why, /old/);
+  assert.equal(r.calls, n);
+  assert.ok(waits.reduce((a, b) => a + b, 0) <= 120000, "bounded at about two minutes of waiting");
+  assert.ok(waits.reduce((a, b) => a + b, 0) >= 90000);
+  assert.equal(waits[0], 3000);
+  assert.ok(Math.max(...waits) <= 15000);
+  // A call that throws is an old/unreachable backend too, not a crash.
+  const t = await migrateUntilCurrent(async () => { throw new Error("net"); }, "new", { sleep: async () => {}, budgetMs: 6000 });
+  assert.equal(t.ok, false);
+});
+
+test("migrate: the new stamp the first time is trusted at once, with no wait", async () => {
+  const waits = [];
+  const r = await migrateUntilCurrent(async () => ({ ok: true, data: { added: [], stamp: "new" } }), "new", { sleep: async (ms) => waits.push(ms) });
+  assert.deepEqual(r, { ok: true, added: [], calls: 1 });
+  assert.deepEqual(waits, []);
+});
+
+test("ship settles migrate only through migrateUntilCurrent with the commit's stamp, and the backend's migrate answers its stamp", () => {
+  const ship = readFileSync(join(ROOT, "scripts", "ship.mjs"), "utf8");
+  assert.match(ship, /migrateUntilCurrent\(\(\) => call\(cfg\.apiUrl, KEY, "migrate"\), want\)/);
+  assert.match(ship, /process\.exit\(1\)/);
+  const actions = readFileSync(join(ROOT, "backend", "Actions.js"), "utf8");
+  assert.match(actions, /ok_\(\{ added: added, stamp: typeof BACKEND_STAMP === "string" \? BACKEND_STAMP : "" \}/);
 });

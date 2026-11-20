@@ -34,7 +34,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
-import { ROOT, SITE, askUntil, call, checkKey, tripLoaded, git, gitOk, liveStamp, privateEnv, readConfig, readReceipt, withoutKeys, writtenBackendStamp } from "./release-lib.mjs";
+import { ROOT, SITE, askUntil, call, checkKey, tripLoaded, git, gitOk, liveStamp, migrateUntilCurrent, privateEnv, readConfig, readReceipt, withoutKeys, writtenBackendStamp } from "./release-lib.mjs";
 import { shellList } from "./stamp-sw.mjs";
 
 const check = process.argv.includes("--check");
@@ -100,22 +100,14 @@ if (live === want) {
 
 // 3 ---------------------------------------------------------------------------
 if (migrate && !check) {
-  // Asked until it answers that nothing is left to add. Right after a deploy a
-  // request can still land on the old version, whose migrate adds nothing and
-  // says ok (seen on 2026-11-18: the new columns only went in on a second call).
-  let added = [];
-  let settled = false;
-  for (let i = 0; i < 6 && !settled; i++) {
-    // A request that lands on the old version refuses the check key: asked again.
-    const r = await askUntil(() => call(cfg.apiUrl, KEY, "migrate"), (x) => !!x && x.ok === true);
-    if (!r || r.ok !== true) stop("migrate did not succeed (" + withoutKeys((r && (r.message || r.error)) || "no answer", env) + ").", "The site was NOT published. Run `npm run ship` again in a minute; fix forward, do not roll the backend back.");
-    const now = (r.data && r.data.added) || [];
-    added = added.concat(now);
-    settled = i > 0 && now.length === 0;
-    if (!settled) await sleep(5000);
-  }
-  if (!settled) stop("migrate kept adding columns after six calls.", "Look at the Sheet. The site was NOT published.");
-  step("backend: migrate ran" + (added.length ? ", added " + added.join(", ") : ", nothing to add"));
+  // Only an answer that carries THIS commit's stamp counts. Right after a deploy
+  // a request can still land on the old version, whose migrate adds nothing and
+  // says ok (2026-11-18, and again 2026-11-20, issue #55: the new tab and column
+  // only went in on a later call by hand). The backend's migrate answers with its
+  // stamp; the old version's answer has none, or an older one, and is asked again.
+  const m = await migrateUntilCurrent(() => call(cfg.apiUrl, KEY, "migrate"), want);
+  if (!m.ok) stop(withoutKeys(m.why, env), "The site was NOT published, and the Sheet may not have the new tabs or columns. Run `npm run ship -- --migrate` again in a few minutes; fix forward, do not roll the backend back.");
+  step("backend: migrate ran on this commit's backend (" + m.calls + " call" + (m.calls === 1 ? "" : "s") + ")" + (m.added.length ? ", added " + m.added.join(", ") : ", nothing to add"));
 }
 // Asked for about 30 seconds: right after a deploy a request can still land
 // on the old version, which refuses the check key.

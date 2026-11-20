@@ -193,7 +193,10 @@ function dispatch_(body, holder) {
     return withLock_(function () {
       var added = ensureColumns_();
       ensureClaudeToken_();
-      return ok_({ added: added }, rev_());
+      // The stamp says which backend answered: right after a deploy a request can
+      // still land on the previous version, and the release script only trusts
+      // an answer that carries this commit's stamp.
+      return ok_({ added: added, stamp: typeof BACKEND_STAMP === "string" ? BACKEND_STAMP : "" }, rev_());
     });
   }
   // Where things are: run from a terminal like migrate.

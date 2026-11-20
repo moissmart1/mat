@@ -514,11 +514,11 @@ test("claudeLink needs no actor, says nothing of the token when there is none, a
 test("migrate makes CLAUDE_TOKEN (32 hex) when it is missing, keeps one that is there, and never answers with it", async () => {
   const fake = createFakeBackend({});
   const keep = await fake({ key: "test-key", action: "migrate", args: {} });
-  assert.deepEqual(keep.data, { added: [] });
+  assert.deepEqual(keep.data, { added: [], stamp: "" });
   assert.equal(fake.props.CLAUDE_TOKEN, "claude-token");
   delete fake.props.CLAUDE_TOKEN;
   const made = await fake({ key: "test-key", action: "migrate", args: {} });
-  assert.deepEqual(made.data, { added: [] });
+  assert.deepEqual(made.data, { added: [], stamp: "" });
   assert.match(fake.props.CLAUDE_TOKEN, /^[0-9a-f]{32}$/);
   assert.equal(JSON.stringify(made).includes(fake.props.CLAUDE_TOKEN), false);
   const t = fake.props.CLAUDE_TOKEN;

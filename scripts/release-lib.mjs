@@ -186,6 +186,32 @@ export async function liveStampUntil(apiUrl, wanted, { ask = liveStamp, sleep, t
   return last === null ? "" : last;
 }
 
+// Calls migrate until an answer comes from the backend that carries `wanted`
+// (this commit's stamp), then trusts that answer's `added` list. Right after a
+// deploy a request can still land on the previous version, which answers ok with
+// "nothing to add" (2026-11-18, and again 2026-11-20); such an answer, and a
+// refusal from the old version, are asked again with a growing wait (3 s, then
+// 1.5 times longer, at most 15 s each) until about `budgetMs` of waiting has
+// passed. Resolves { ok: true, added, calls } or { ok: false, why, calls }.
+// ask and sleep stand in for the network and the clock in tests.
+export async function migrateUntilCurrent(ask, wanted, { sleep = (ms) => new Promise((r) => setTimeout(r, ms)), budgetMs = 120000 } = {}) {
+  let waited = 0;
+  let calls = 0;
+  let seen = "no answer";
+  for (let wait = 3000; ; wait = Math.min(Math.round(wait * 1.5), 15000)) {
+    const r = await ask().catch(() => null);
+    calls++;
+    if (r && r.ok === true && r.data && r.data.stamp === wanted) {
+      return { ok: true, added: Array.isArray(r.data.added) ? r.data.added : [], calls };
+    }
+    seen = !r ? "no answer" : r.ok === true ? "answered by backend " + ((r.data && r.data.stamp) || "older than the stamp") : "refused (" + (r.error || r.message || "no reason") + ")";
+    if (waited + wait > budgetMs) break;
+    await sleep(wait);
+    waited += wait;
+  }
+  return { ok: false, why: "migrate was only ever answered by the wrong backend (last: " + seen + "; wanted " + wanted + ") after " + calls + " calls over about " + Math.round(waited / 1000) + " seconds.", calls };
+}
+
 // --- rules that are pure, so tests can pin them -----------------------------
 
 // A change the phones must fetch needs a new APP_VERSION, or they keep the old one.
