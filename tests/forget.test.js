@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { forgetPhone } from "../js/forget.js";
+import { forgetPhone, clearTrip } from "../js/forget.js";
 
 const SCOPE = "https://host.test/mat/";
 
@@ -45,4 +45,17 @@ test("forgetPhone works on a phone without indexedDB.databases", async () => {
   await forgetPhone({ storages: [], indexedDB: { deleteDatabase: () => assert.fail("nothing to delete") }, caches: s.caches, serviceWorker: s.serviceWorker, scope: SCOPE });
   assert.deepEqual(s.deleted.caches.sort(), ["mat-fonts", "mat-shell-28"]);
   assert.deepEqual(s.deleted.unregistered, [SCOPE]);
+});
+
+test("Forget this phone and a refused key take mat.bulkBatch (Take all back's record) with the rest; a refused key keeps only the queue", async () => {
+  const mem = () => {
+    const m = new Map([["mat.bulkBatch", "[]"], ["mat.listSkip", "[]"], ["mat.key", "k"], ["mat.queue", "[1]"], ["other.app", "x"]]);
+    return { m, get length() { return m.size; }, key: (i) => [...m.keys()][i], removeItem: (k) => m.delete(k), setItem: (k, v) => m.set(k, v), getItem: (k) => m.get(k) ?? null };
+  };
+  const forgot = mem();
+  await forgetPhone({ storages: [forgot] });
+  assert.deepEqual([...forgot.m.keys()], ["other.app"]);
+  const refused = mem();
+  clearTrip(refused, { queue: "[1]" });
+  assert.deepEqual([...refused.m.keys()].sort(), ["mat.queue", "other.app"]);
 });

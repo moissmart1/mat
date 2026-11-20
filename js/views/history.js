@@ -9,8 +9,13 @@
 // Undo is store.undoEntry(id): the store handles a refused (stale) undo by
 // showing the notice and loading the first page again. Text from people or
 // the Sheet goes in with textContent only.
+//
+// Above the first day's head (bulk C): one row per Add from the planner's
+// list this phone remembers (js/takeback.js, newest first, 5 at most), with
+// Take all back; once taken back it reads when, greyed as an undone row.
 
 import { clock, dayHead, localDay, viaText } from "../format.js";
+import { rowText } from "../bulkbatch.js";
 
 const LOADING = "…";
 const NO_HISTORY = "History needs a connection.";
@@ -30,7 +35,7 @@ function el(tag, cls, text) {
   return n;
 }
 
-export function mountHistory(root, store) {
+export function mountHistory(root, store, { takeBack = null } = {}) {
   const scrim = el("div", "scrim");
   scrim.id = "histScrim";
   scrim.hidden = true;
@@ -73,8 +78,31 @@ export function mountHistory(root, store) {
     return row;
   }
 
+  // This phone's batches from the list, as rows.
+  function batchRows() {
+    if (!takeBack) return [];
+    return takeBack.list().map((b) => {
+      const t = rowText(b, "history");
+      const row = el("div", "tp-row tp-batch" + (t.undone ? " is-undone" : ""));
+      const said = el("span", "tp-s");
+      said.append(el("b", "", t.title), el("small", "", t.small));
+      row.append(el("time", "", t.time), said);
+      if (!t.undone) {
+        const run = takeBack.running(b.at);
+        const u = el("button", "tp-undo", run ? "Taking back…" : "Take all back");
+        u.type = "button";
+        u.dataset.batch = b.at;
+        u.disabled = run;
+        u.setAttribute("aria-label", "Take all back: " + t.title);
+        row.append(u);
+      }
+      return row;
+    });
+  }
+
   function draw(s) {
     const h = s.history;
+    const batches = batchRows();
     // Nothing held yet: wait for the fetch. What is already held shows at once
     // and is replaced when the fetch lands.
     if (phase === "loading" && !h.entries.length) {
@@ -83,14 +111,14 @@ export function mountHistory(root, store) {
     }
     // The fetch for this opening failed: whatever is left from an earlier opening is not shown.
     if (phase === "failed") {
-      tape.replaceChildren(el("p", "tp-msg", h.error === "network" ? NO_HISTORY : HISTORY_FAILED));
+      tape.replaceChildren(...batches, el("p", "tp-msg", h.error === "network" ? NO_HISTORY : HISTORY_FAILED));
       return;
     }
     if (!h.entries.length) {
-      tape.replaceChildren(el("p", "tp-msg", NOTHING_YET));
+      tape.replaceChildren(...batches, el("p", "tp-msg", NOTHING_YET));
       return;
     }
-    const nodes = [];
+    const nodes = [...batches];
     let last = null;
     for (const en of h.entries) {
       const day = localDay(Date.parse(en.at));
@@ -180,6 +208,15 @@ export function mountHistory(root, store) {
       store.loadHistory({ older: true });
       return;
     }
+    // Take all back: one step at a time (js/takeback.js); the tape follows.
+    const all = ev.target.closest("button[data-batch]");
+    if (all) {
+      if (!takeBack || all.disabled) return;
+      tape.focus({ preventScroll: true });
+      await takeBack.run(all.dataset.batch);
+      render(store.state);
+      return;
+    }
     const btn = ev.target.closest("button.tp-undo");
     if (!btn) return;
     const id = Number(btn.closest(".tp-row").dataset.id);
@@ -200,6 +237,7 @@ export function mountHistory(root, store) {
   });
 
   store.subscribe(render);
+  if (takeBack) takeBack.subscribe(() => render(store.state));
 
   return { open, close: (restoreFocus) => close(restoreFocus), isOpen: () => opened };
 }

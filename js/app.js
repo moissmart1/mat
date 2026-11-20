@@ -33,6 +33,7 @@ import { mountStub } from "./views/stub.js";
 import { mountStaySheet } from "./views/staysheet.js";
 import { tripNow, zoneOf, daySpan } from "./plan.js";
 import { mountBulkAdd } from "./views/bulkadd.js";
+import { createTakeBack } from "./takeback.js";
 import { clearTrip, forgetPhone } from "./forget.js";
 
 // How often a visible phone asks the backend whether anything changed.
@@ -307,8 +308,11 @@ function start() {
       tabs.showTab("days", false);
     },
   });
+  // Take all back (bulk C): this phone's record of each Add from the list,
+  // shown on the added screen and in History.
+  const takeBack = createTakeBack(store, { storage: raw });
   // One sheet at a time: opening one closes the others.
-  const history = mountHistory(phone, store);
+  const history = mountHistory(phone, store, { takeBack });
   // The Days sheets: the hotel card, the list of every day and the stop sheet.
   // The hotel card's Edit opens Edit stay (js/views/staysheet.js); its Done or a
   // finished Save opens the card again. Show booking holds the booking up.
@@ -401,9 +405,10 @@ function start() {
       history.open();
     },
     // 一括 Add tickets: its own sheet, where You stands (the Money pane on a computer).
+    // On the owner's phone it opens straight on the list's slip (bulk C).
     onBulk: () => {
       you.close(false);
-      bulk.open();
+      bulk.openStart();
     },
     // The notice "4 new tickets from the list": the same sheet, opened on the list's review.
     onListCheck: () => {
@@ -459,6 +464,7 @@ function start() {
     // What the list's look found: the notice in You (the owner's phone only).
     onList: (info) => you.setListNotice(info),
     storage: raw,
+    takeBack,
   });
   const closeYou = you.close;
   you.close = (restoreFocus) => {

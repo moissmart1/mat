@@ -77,9 +77,8 @@ async function openYou(page) {
   await until(() => sheetUp(page, "you"), "You opens");
 }
 const listSorted = (page) => until(() => page.evaluate(() => {
-  const t = document.querySelector("#bulk .sheet-top i");
-  return !!t && t.textContent.startsWith("from the list · ") && !document.querySelector("#bulk .ba-prog") && !!document.getElementById("bulkPunch");
-}), "the list's review is up", 20000);
+  return !!document.querySelector("#bulk .sl") && !document.querySelector("#bulk .ba-prog") && !!document.getElementById("bulkPunch");
+}), "the list's slip is up", 20000);
 const added = (page) => until(() => page.evaluate(() => !!document.querySelector("#bulk .ba-done-h")), "added", 30000);
 
 const cases = [];
@@ -107,21 +106,21 @@ cases.push({
     await listSorted(page);
     // Fetched one at a time: T001, T005, T019; not T008 (its stop was filled by hand), T010 (cancelled), T030 (before the trip), receipt.png (not on the list).
     assert.deepEqual(deskCalls(backend, "ticketFile").map((c) => c.h), [H(1), H(5), H(19)]);
-    await expectText(page, "#bulk .sheet-top i", "from the list · 3 files");
-    await expectText(page, "#bulk .ba-band", "帯2 sortedD3 · 2 stops · 1 one eachUntie ›");
-    await expectText(page, "#bulk .ba-card .ba-ask", "No stop on Day 7 at 19:30.");
-    const asides = await page.evaluate(() => [...document.querySelectorAll("#bulk .ba-aside")].map((a) => a.textContent.replace(/\s+/g, " ").trim()));
-    assert.ok(asides.includes("手1 stop was filled by hand: T008 on Senso-ji. The list’s are left out."), JSON.stringify(asides));
-    assert.ok(asides.includes("表On the list: 1 line has no file yet, 1 is outside the trip’s days, 1 file in the folder isn’t on the list."), JSON.stringify(asides));
-    assert.equal(calls(backend, "addTicket").length, addsBefore, "nothing is added before 入鋏");
+    await expectText(page, "#bulk .sheet-top i", "一括");
+    await expectText(page, "#bulk .sl-h", "Will add · 2 ticketson 2 stops");
+    await expectText(page, "#bulk .sl-q .sl-qt b", "Lantern boat: Day 7 has no stop for it");
+    const asides = await page.evaluate(() => [...document.querySelectorAll("#bulk .sl-notes > span")].map((a) => a.textContent.replace(/\s+/g, " ").trim()));
+    assert.ok(asides.includes("1 stop was filled by hand; the list’s tickets for them are left out"), JSON.stringify(asides));
+    assert.ok(asides.includes("On the list: 1 line has no file yet, 1 is outside the trip’s days, 1 file in the folder isn’t on the list"), JSON.stringify(asides));
+    assert.equal(calls(backend, "addTicket").length, addsBefore, "nothing is added before Add");
 
-    // The odd one left out: remembered on this phone (its tie only).
-    await page.click("#bulk .ba-card [data-out]");
-    await expectText(page, "#bulk .ba-h", "検札 All 1 looked at");
-    assert.deepEqual(JSON.parse(await page.evaluate(() => localStorage.getItem("mat.listSkip"))), ["T019:aaaaaaaaaa19"]);
-    await expectText(page, "#bulkPunch", /^入鋏Add 2 now/);
+    // The odd one left out: remembered on this phone (its tie only), once Add is pressed.
+    await page.click("#bulk .sl-q [data-out]");
+    assert.equal(await page.evaluate(() => localStorage.getItem("mat.listSkip")), null);
+    await expectText(page, "#bulkPunch", "Add 2 ticketsUndo from History");
     await page.click("#bulkPunch");
     await added(page);
+    assert.deepEqual(JSON.parse(await page.evaluate(() => localStorage.getItem("mat.listSkip"))), ["T019:aaaaaaaaaa19"]);
     const adds = calls(backend, "addTicket").slice(addsBefore).map((b) => b.args.ticket);
     assert.deepEqual(adds.map((t) => [t.stop, t.who, t.page, t.from]), [
       [MEIJI, "Mo", 1, "T005:aaaaaaaaaaa5"],
@@ -180,13 +179,13 @@ cases.push({
     await page.dispatchEvent("#setListNt", "click");
     await listSorted(page);
     assert.deepEqual(deskCalls(backend, "ticketFile").map((c) => c.h), [H(1)]);
-    await expectText(page, "#bulk .ba-card .ba-ask", "T001’s file changed in the list: replace its picture on D3 · Shibuya Sky?");
-    await expectText(page, "#bulk .ba-card .ba-hint", "Adding first would pass 8 pictures on the stop.");
-    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll("#bulk .ba-card [data-lchoice]")].map((b) => b.dataset.lchoice)), ["chg:T001|first", "chg:T001|keep"]);
+    await expectText(page, '#bulk [data-card="chg:T001"] .sl-qt b', "Shibuya Sky deck: the list has a newer file");
+    await expectText(page, '#bulk [data-lchoice="chg:T001|first"]', "Take the old pictures off, then add the new filethe stop holds 8 pictures; the old ones can be put back from History");
+    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('#bulk [data-card="chg:T001"] [data-lchoice]')].map((b) => b.dataset.lchoice)), ["chg:T001|first", "chg:T001|keep"]);
     await page.click('#bulk [data-lchoice="chg:T001|first"]');
-    await expectText(page, "#bulk .ba-card .ba-ask", "T010 is cancelled in the list: take its pictures off D3 · Lunch in Harajuku?");
+    await expectText(page, '#bulk [data-card="off:T010"] .sl-qt b', "Lunch voucher: cancelled in the list");
     await page.click('#bulk [data-lchoice="off:T010|off"]');
-    await expectText(page, "#bulkPunch", /^入鋏Add 1, take 1 off/);
+    await expectText(page, "#bulkPunch", "Add 1 ticket, take 1 picture offUndo from History");
     const before = backend.requests.length;
     await page.click("#bulkPunch");
     await added(page);
@@ -220,8 +219,8 @@ cases.push({
     await until(() => visible(page, "#setListNt"), "the notice shows");
     await page.dispatchEvent("#setListNt", "click");
     await until(() => page.evaluate(() => !document.querySelector("#bulk .ba-prog")), "fetching ends", 20000);
-    const asides = await page.evaluate(() => [...document.querySelectorAll("#bulk .ba-aside")].map((a) => a.textContent.replace(/\s+/g, " ").trim()));
-    assert.ok(asides.some((a) => a === "外2 files weren’t fetched: T001 Sky order.png (The list’s ticket files can’t be reached right now. Try again later.), T005 Mo.png (no signal: Check the list again later)."), JSON.stringify(asides));
+    const asides = await page.evaluate(() => [...document.querySelectorAll("#bulk .sl-notes > span")].map((a) => a.textContent.replace(/\s+/g, " ").trim()));
+    assert.ok(asides.some((a) => a === "2 files couldn’t be fetched: T001 Sky order.png (The list’s ticket files can’t be reached right now. Try again later.), T005 Mo.png (no signal: Check the list again later)"), JSON.stringify(asides));
     assert.equal(await page.evaluate(() => document.getElementById("bulkPunch").disabled), true);
     // The look itself failing (the desk unreachable): the notice says so instead of failing quietly.
     backend.fake.desk.answer = () => null;
@@ -230,6 +229,8 @@ cases.push({
     await openYou(page);
     await page.dispatchEvent("#setBulk", "click");
     await until(() => sheetUp(page, "bulk"), "Add tickets opens");
+    await listSorted(page);
+    await page.click("#bulkByHand");
     await page.click("#bulkCheckList");
     await until(() => calls(backend, "listTickets").some((b) => b.args.force === true), "a forced look");
     await expectText(page, "#bulk .ba-vh[role=status]", "The list’s ticket files can’t be reached right now. Try again later.");
@@ -249,8 +250,11 @@ for (const how of ["Forget this phone", "a refused key"]) {
       await until(() => visible(page, "#setListNt"), "the notice shows");
       await page.dispatchEvent("#setListNt", "click");
       await listSorted(page);
-      await page.click("#bulk .ba-card [data-out]");
+      await page.click("#bulk .sl-q [data-out]");
+      await page.click("#bulkPunch");
+      await added(page);
       assert.ok(await page.evaluate(() => localStorage.getItem("mat.listSkip")));
+      assert.ok(await page.evaluate(() => localStorage.getItem("mat.bulkBatch")));
       await page.keyboard.press("Escape");
       await until(() => page.evaluate(() => !document.getElementById("bulk").classList.contains("is-open")), "closed");
       if (how === "a refused key") {
@@ -266,6 +270,7 @@ for (const how of ["Forget this phone", "a refused key"]) {
       for (const w of ["T001", "T005", "T019", "Sky order", "Lantern", "new tickets from the list"]) assert.equal(t.includes(w), false, w + " is still there");
       assert.equal(await page.evaluate(() => document.getElementById("setListNt").hidden), true);
       assert.equal(await page.evaluate(() => localStorage.getItem("mat.listSkip")), null);
+      assert.equal(await page.evaluate(() => localStorage.getItem("mat.bulkBatch")), null);
       // Nothing more is asked of the list once the trip is off the phone.
       const n = calls(backend, "listTickets").length;
       await page.clock.fastForward(11 * 60 * 1000);
@@ -303,6 +308,8 @@ cases.push({
     await until(() => sheetUp(mo, "you"), "You opens");
     await mo.dispatchEvent("#setBulk", "click");
     await until(() => sheetUp(mo, "bulk"), "Add tickets opens");
+    await listSorted(mo);
+    await mo.click("#bulkByHand");
     await mo.click("#bulkCheckList");
     await until(() => looks().length === 3, "Check the list now looks at once");
     assert.equal(looks()[2].args.force, true);
