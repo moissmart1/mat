@@ -54,10 +54,34 @@ const lines = (page) =>
     };
     return { small: q(".led-big small"), big: q(".led-big b"), l1: q(".led-1"), l2: q(".led-2") };
   });
+// The board's lines, waited for until they read as expected (the claim and the list arrive after the board first draws).
+async function expectLines(page, expected) {
+  let got;
+  try {
+    await until(async () => JSON.stringify((got = await lines(page))) === JSON.stringify(expected), "");
+  } catch {
+    assert.deepEqual(got, expected);
+  }
+}
+// Records the wipe's start and end events from page load, so nothing depends on when the test looks
+// (the wipe lasts 0.7 s and can be over before a slow runner's first look).
+const recordWipe = (page) =>
+  page.addInitScript(() => {
+    const log = (window.__wipe = { starts: 0, ends: 0, name: "", dur: "", timing: "" });
+    addEventListener("animationstart", (e) => {
+      if (e.animationName !== "wipe") return;
+      const cs = getComputedStyle(e.target);
+      log.starts++;
+      log.name = cs.animationName;
+      log.dur = cs.animationDuration;
+      log.timing = cs.animationTimingFunction;
+    }, true);
+    addEventListener("animationend", (e) => { if (e.animationName === "wipe") log.ends++; }, true);
+  });
 const shot = async (page, name) => {
   fs.mkdirSync(SHOTS, { recursive: true });
   await page.evaluate(() => (document.getElementById("vDays").scrollTop = 0));
-  await page.waitForTimeout(900); // the fill-in has finished
+  await until(() => page.evaluate(() => !document.querySelector("#vDays .led-wipe")), "the fill-in has finished");
   await page.screenshot({ path: SHOTS + "/" + name + ".png" });
 };
 
@@ -125,7 +149,7 @@ module.exports = [
     async run({ page }) {
       await ready(page, { claims: { 1: "Mo" } });
       await until(() => boardUp(page), "the board shows");
-      assert.deepEqual(await lines(page), { small: "出発まで", big: "23日", l1: "Book next: Rail pass seat reservations", l2: "By Fri Nov 20 · You’re on it" });
+      await expectLines(page, { small: "出発まで", big: "23日", l1: "Book next: Rail pass seat reservations", l2: "By Fri Nov 20 · You’re on it" });
       const ink = await page.evaluate(() => ({
         big: getComputedStyle(document.querySelector("#vDays .led-big b")).color,
         l1: getComputedStyle(document.querySelector("#vDays .led-1")).color,
@@ -171,7 +195,7 @@ module.exports = [
     async run({ page }) {
       await ready(page, { nowMs: DAY12 });
       await until(() => boardUp(page), "the board shows");
-      assert.deepEqual(await lines(page), { small: "次 Next", big: "14:00", l1: "Shibuya Sky", l2: "Leave by 13:30 · in 18 min" });
+      await expectLines(page, { small: "次 Next", big: "14:00", l1: "Shibuya Sky", l2: "Leave by 13:30 · in 18 min" });
       // The same words as the ticket's own line for that stop.
       await expectText(page, "#rail .r.is-next .r-lv", "Leave by 13:30, in 18 min.");
       assert.equal(await page.evaluate(() => document.querySelector("#vDays .brd").dataset.kind), "trip");
@@ -180,14 +204,15 @@ module.exports = [
   {
     name: "on a trip day: the minute moves the line in place (no new fill-in), and the board goes when no timed stop is left",
     async run({ page }) {
+      await recordWipe(page);
       const backend = await ready(page, { nowMs: DAY12 });
       await until(() => boardUp(page), "the board shows");
-      await page.waitForTimeout(900);
+      await until(() => page.evaluate(() => window.__wipe.ends > 0), "the fill-in has finished");
       const node = await page.evaluateHandle(() => document.querySelector("#vDays .brd .led-1"));
       await advance(page, backend, 3 * MIN);
       await expectText(page, "#vDays .led-2", "Leave by 13:30 · in 15 min");
       assert.equal(await page.evaluate((n) => n === document.querySelector("#vDays .brd .led-1"), node), true, "the same node, not redrawn");
-      assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector("#vDays .led-in")).animationName), "none", "no new fill-in on a minute's change");
+      assert.equal(await page.evaluate(() => window.__wipe.starts), 1, "no new fill-in on a minute's change");
       // 19:00 Dinner is the last timed stop: past it (and its grace), nothing is next.
       await advance(page, backend, 7 * 60 * MIN);
       await until(async () => !(await boardUp(page)), "no board once nothing is left today");
@@ -241,7 +266,7 @@ module.exports = [
       assert.equal(await boardUp(page), false, "still the 12th: closed");
       await advance(page, backend, 25 * MIN); // 00:15 on the 13th
       await until(() => boardUp(page), "the 13th: the board is back");
-      assert.deepEqual(await lines(page), { small: "次 Next", big: "09:00", l1: "Breakfast by the lake", l2: "In 8 h 45 min" });
+      await expectLines(page, { small: "次 Next", big: "09:00", l1: "Breakfast by the lake", l2: "In 8 h 45 min" });
       // Closing it now keeps the 13th.
       await page.dispatchEvent("#vDays .brd-x", "click");
       assert.equal(await page.evaluate(() => localStorage.getItem("mat.board")), "2026-12-13");
@@ -271,18 +296,7 @@ module.exports = [
     async run({ page, newPhone }) {
       // Record the wipe as it happens (start and end events), so nothing here depends on
       // when the test looks: on a slow runner the 0.7 s wipe can be over before the first look.
-      await page.addInitScript(() => {
-        const log = (window.__wipe = { starts: 0, ends: 0, name: "", dur: "", timing: "" });
-        addEventListener("animationstart", (e) => {
-          if (e.animationName !== "wipe") return;
-          const cs = getComputedStyle(e.target);
-          log.starts++;
-          log.name = cs.animationName;
-          log.dur = cs.animationDuration;
-          log.timing = cs.animationTimingFunction;
-        }, true);
-        addEventListener("animationend", (e) => { if (e.animationName === "wipe") log.ends++; }, true);
-      });
+      await recordWipe(page);
       await ready(page, { nowMs: DAY12 });
       await until(() => boardUp(page), "the board shows");
       await until(() => page.evaluate(() => window.__wipe.ends > 0), "the wipe ends");
