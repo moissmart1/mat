@@ -763,6 +763,7 @@ test("an undone add whose reply came back garbled is finished on the next contac
   await p.store.idle();
   assert.equal(p.store.state.expenses.find((e) => e.id === id && !e.deleted), undefined);
   assert.deepEqual(queueOf(p.storage).map((q) => [q.undo, q.args.expense.id]), [[true, id]]);
+  assert.equal(p.store.state.settlementProvisional, true, "the add and undo are still being reconciled");
   p.net.garble.clear();
   await p.store.checkRev();
   await p.store.idle();
@@ -772,6 +773,7 @@ test("an undone add whose reply came back garbled is finished on the next contac
   assert.equal(byId(p.store.state.expenses, id).deleted, true);
   assert.equal(p.store.state.notice, null);
   assert.deepEqual(queueOf(p.storage), []);
+  assert.equal(p.store.state.settlementProvisional, false);
 });
 
 test("an add whose reply came back garbled stays queued and is resent once, not marked failed", async () => {
@@ -808,6 +810,7 @@ test("an undo whose reply came back garbled is finished without a second undo", 
   p.store.undo(t);
   await p.store.idle();
   assert.equal(p.store.state.expenses.find((e) => e.id === id && !e.deleted), undefined);
+  assert.equal(p.store.state.settlementProvisional, true);
   p.net.garble.clear();
   await p.store.checkRev();
   await p.store.idle();
@@ -815,6 +818,7 @@ test("an undo whose reply came back garbled is finished without a second undo", 
   assert.deepEqual((await backend(p.fake, "history")).entries.map((e) => e.action), ["undo", "add"]);
   assert.equal(p.store.state.notice, null);
   assert.deepEqual(queueOf(p.storage), []);
+  assert.equal(p.store.state.settlementProvisional, false);
 });
 
 test("an undone add that the backend refuses is dropped with nothing more sent", async () => {
@@ -3717,6 +3721,46 @@ for (const failure of ["memory-only", "queue write", "wipe write"]) {
     assert.equal((await backend(fake)).expenses.filter(e => e.id === id).length, 1);
   });
 }
+
+test("settlement is provisional during a queued retry through acknowledgement, and ordinary sends stay quiet", async () => {
+  const p = phone();
+  await p.store.boot();
+  const release = p.net.hold("addExpense");
+  p.store.addExpense(draft());
+  assert.equal(p.store.state.settlementProvisional, false);
+  release();
+  await p.store.idle();
+
+  p.net.offline = true;
+  await p.store.checkRev();
+  p.store.addExpense(draft());
+  await p.store.idle();
+  assert.equal(p.store.state.settlementProvisional, true);
+  p.net.offline = false;
+  const ack = p.net.hold("addExpense");
+  await p.store.checkRev();
+  await p.store.checkRev();
+  assert.equal(p.store.state.settlementProvisional, true);
+  ack();
+  await p.store.idle();
+  assert.equal(p.store.state.settlementProvisional, false);
+});
+
+test("undoing a payment after a garbled reply stays provisional until the undo is acknowledged", async () => {
+  const p = phone();
+  await p.store.boot();
+  p.net.garble.add("addPayment");
+  const token = p.store.addPayment({ from: "Ajen", to: "Mo", cad: 25 });
+  await p.store.idle();
+  assert.equal(p.store.state.online, true);
+  assert.equal(p.store.state.settlementProvisional, true);
+  await p.store.undo(token);
+  assert.equal(p.store.state.settlementProvisional, true);
+  p.net.garble.clear();
+  await p.store.checkRev();
+  await p.store.idle();
+  assert.equal(p.store.state.settlementProvisional, false);
+});
 
 // ---------- a stay's booking (S2 鍵札): saveStay, addStay, a picture on a stay ----------
 

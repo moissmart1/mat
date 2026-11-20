@@ -283,7 +283,19 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
       });
     }
     state.setAside = aside;
+    // Undo keeps a separate operation while it reconciles a possibly landed add.
+    state.settlementProvisional = resolving.some((op) =>
+      (op.kind === "expense" || op.kind === "payment") && (op.lost || op.delayed)
+    );
     for (const op of ops) {
+      if (op.kind === "expense" || op.kind === "payment") {
+        // Once delayed, a retry remains provisional until the write is acknowledged.
+        // op.delayed is deliberately sticky (derive sets it and never clears it; the
+        // op is dropped once acknowledged) and is not saved to mat.queue: ops restored
+        // from it come back queued, which sets it again (#21 review M3).
+        if (op.status === "queued" || op.status === "failed" || op.lost || !state.online) op.delayed = true;
+        if (op.delayed) state.settlementProvisional = true;
+      }
       const list = lists[op.kind];
       const i = list.findIndex((x) => keyOf(op.kind, x) === op.id);
       const next = op.view(i >= 0 ? bare(list[i]) : null);
@@ -454,6 +466,7 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
       history: { entries: [], more: false, loading: false, error: null, firstPageError: null },
       cleared: had ? { kept: mine.length } : null,
       queueStorageFailed: memoryQueue !== null,
+      settlementProvisional: false,
     });
     historyLoaded = false;
     emit();
@@ -1238,7 +1251,10 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
       try {
         r = await call("undo", { logId: op.logId });
       } catch (err) {
-        if (transient(err)) return "offline";
+        if (transient(err)) {
+          op.uop.delayed = true;
+          return "offline";
+        }
         stopResolving(op);
         if (refusedAsStale(err)) {
           // Already undone (an earlier undo whose reply was lost) is fine;

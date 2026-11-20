@@ -238,6 +238,47 @@ module.exports = [
     },
   },
   {
+    name: "the settlement stays provisional until the queued expense syncs",
+    async run({ page }) {
+      const backend = await ready(page);
+      assert.equal(await visible(page, "#moneyProvisional"), false);
+
+      backend.failWith = "network";
+      await advance(page, backend, POLL_MS);
+      await expectText(page, "#net", NO_SIGNAL);
+      await ringUp(page, "Onigiri", "4 5 0");
+      await page.click("#regDone");
+      await waitClosed(page);
+      assert.equal(await visible(page, "#moneyProvisional"), true);
+      assert.equal(await visible(page, "#slipProvisional"), true);
+
+      backend.failWith = null;
+      await signalBack(page);
+      await waitRow(page, "Onigiri", (row) => !row.cls.includes("is-pending"), "sent");
+      await until(async () => !(await visible(page, "#moneyProvisional")), "the balance is confirmed");
+      assert.equal(await visible(page, "#slipProvisional"), false);
+    },
+  },
+  {
+    name: "a phone that has not picked a name shows the provisional line on Money as well as on the slip",
+    async run({ page }) {
+      const backend = await open(page, { seed: SEED, nowMs: NOON12, me: null });
+      await until(() => page.evaluate(() => globalThis.__matTest.store.state.status === "ready"), "the trip loads");
+      assert.equal(await page.evaluate(() => globalThis.__matTest.store.state.me), null, "no name picked");
+      await until(() => visible(page, "#slip"), "the slip draws");
+      assert.equal(await visible(page, "#moneyProvisional"), false);
+      assert.equal(await visible(page, "#slipProvisional"), false);
+
+      backend.failWith = "network";
+      await advance(page, backend, POLL_MS);
+      await until(() => page.evaluate(() => globalThis.__matTest.store.state.online === false), "no signal");
+      await page.evaluate(() => globalThis.__matTest.store.addExpense({ day: "pre", title: "Onigiri", amount: 450, currency: "JPY", paidBy: "Mo", split: ["Mo", "Ajen", "Trenton"], splitMode: "equal", splitVals: [], note: "", kind: "" }));
+      await until(() => visible(page, "#moneyProvisional"), "Money says the balance is provisional");
+      assert.equal(await visible(page, "#slipProvisional"), true);
+      // Clearing once synced is covered by the case above (a phone with a name).
+    },
+  },
+  {
     name: "a check cut off while the page is hidden is not no signal; back on screen it asks again and the strip stays away",
     async run({ page }) {
       const backend = await ready(page);
