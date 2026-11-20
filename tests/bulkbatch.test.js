@@ -138,10 +138,11 @@ function fakeStore({ online = true, tickets = [], stops = [], log = [], cut = ()
     removeTicket(tid) {
       calls.push("removeTicket:" + tid);
       if (cut("removeTicket:" + tid)) return "fail-" + tid; // sent, rolled back: no signal
+      if (cut("refuse:" + tid)) return "no-" + tid; // refused for good
       this.state.tickets = this.state.tickets.map((t) => (t.id === tid ? { ...t, gone: true } : t));
       return "tok-" + tid;
     },
-    outcome: async (tok) => (tok.startsWith("fail-") ? { saved: false, reason: "notSent" } : { saved: true }),
+    outcome: async (tok) => (tok.startsWith("fail-") ? { saved: false, reason: "notSent" } : tok.startsWith("no-") ? { saved: false, reason: "refused", message: "test" } : { saved: true }),
     async historyFor(ref) {
       calls.push("historyFor:" + ref);
       if (cut("historyFor:" + ref)) throw Object.assign(new Error("No signal"), { code: "network" });
@@ -279,4 +280,13 @@ test("the runner: an old picture History can no longer put back is said, and the
   tb.record(fields({ n: 1, items: [[id(1)]], removed: [id(8)], stops: [], stays: [] }));
   assert.equal(await tb.run(AT), "Taken back: 1 ticket. The rest have their own line in History.");
   assert.notEqual(tb.list()[0].back, "");
+});
+
+test("fix round 2, R3: a picture the backend refuses to take off for good is said, and the batch is done", async () => {
+  const store = world({ cut: (c) => c === "refuse:" + id(2) });
+  const tb = createTakeBack(store, { storage: memory() });
+  tb.record(fields({ stays: [] }));
+  assert.equal(await tb.run(AT), "Taken back 2 of 3. 2 old pictures put back. 1 picture couldn’t be taken off.");
+  assert.notEqual(tb.list()[0].back, "", "the button does not stay for ever");
+  assert.equal(resultText({ total: 3, back: 1, stuck: 2 }), "Taken back 1 of 3. 2 pictures couldn’t be taken off.");
 });

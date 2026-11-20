@@ -105,10 +105,12 @@ export function createTakeBack(store, { storage = null, now = () => Date.now() }
       }
       // 1. The pictures it added, each waited for; one that did not surely come off is tried again next time.
       const unsure = new Set();
+      const stuck = new Set(); // refused for good by the backend (not a lost signal): final, said (fix round 2, R3)
       for (const id of plan.remove) {
         if (store.state.status === "nokey") return "";
         const out = await settle((onUnsure) => store.removeTicket(id, { quiet: true, onUnsure }));
-        if (!(out && out.saved) && (ticketOn(id) || (out && out.reason === "unsure"))) unsure.add(id);
+        if (out && !out.saved && out.reason === "refused" && ticketOn(id)) stuck.add(id);
+        else if (!(out && out.saved) && (ticketOn(id) || (out && out.reason === "unsure"))) unsure.add(id);
       }
       const isOn = (id) => ticketOn(id) || unsure.has(id);
       // 2. The old pictures it took off: each one's own History line, undone.
@@ -149,9 +151,10 @@ export function createTakeBack(store, { storage = null, now = () => Date.now() }
       const total = b.items.length;
       const back = ticketsBack(b, isOn);
       const oldBack = b.removed.filter((id) => ticketOn(id)).length;
-      const done = back === total && oldBack + lost >= b.removed.length && stopsLeft === 0;
+      const settled = b.items.every((one) => one.every((id) => stuck.has(id) || !isOn(id)));
+      const done = settled && oldBack + lost >= b.removed.length && stopsLeft === 0;
       const stays = b.stays.filter((id) => (store.state.stays || []).some((x) => x && x.id === id && !x.deleted)).length;
-      const text = resultText({ total, back, put: Math.min(put, oldBack), lost, stays, done });
+      const text = resultText({ total, back, put: Math.min(put, oldBack), lost, stays, done, stuck: stuck.size });
       if (done) {
         const iso = new Date(now()).toISOString();
         batches = batches.map((x) => (x.at === at ? { ...x, back: iso } : x));

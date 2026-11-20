@@ -140,12 +140,14 @@ export const NOT_LOOKED_UP = "The old pictures couldn’t be looked up, so nothi
 // back: the batch's tickets now off the trip, of total (tickets, not pages);
 // put: old pictures put back; lost: old pictures History can no longer put
 // back; done: nothing is left to try (else the row keeps its button).
-export function resultText({ total = 0, back = 0, put = 0, lost = 0, stays = 0, done = true } = {}) {
+// stuck: pictures the backend refused to take off for good (said, not tried again).
+export function resultText({ total = 0, back = 0, put = 0, lost = 0, stays = 0, done = true, stuck = 0 } = {}) {
   let t;
   if (!total) t = "Taken back.";
   else if (back >= total) t = "Taken back: " + plural(total, "ticket", "tickets") + ".";
   else t = "Taken back " + back + " of " + total + ".";
   if (put) t += " " + plural(put, "old picture", "old pictures") + " put back.";
+  if (stuck) t += " " + plural(stuck, "picture", "pictures") + " couldn’t be taken off.";
   if (!done) return t + " Try again for the rest.";
   if (lost) t += " The rest have their own line in History.";
   if (stays) t += stays === 1 ? " The stay it added is left on." : " The stays it added are left on.";

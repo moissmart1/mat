@@ -297,6 +297,9 @@ export function skipsOf({ base, picks = new Map(), outs = new Set(), extras = []
 
 // ---------- the slip ----------
 
+export const SAVE = "Save my choices";
+export const SAVED = "Saved. These won’t ask again.";
+
 // The button's first line, by the review's counts; open: questions with no dot yet.
 export function buttonText(n, offs, open = 0) {
   let t;
@@ -338,7 +341,8 @@ export function slipModel({ base, picks = new Map(), outs = new Set(), state = {
     };
   });
   const open = questions.filter((q) => !q.options.some((o) => o.on) && !q.pickOn).length;
-  const check = questions.length ? { left: questions.length === 1 ? "Check this 1" : "Check these " + questions.length, right: "the likely answer is picked" } : null;
+  // "the likely answer is picked" is not said while a question has no dot (fix round 2, R2).
+  const check = questions.length ? { left: questions.length === 1 ? "Check this 1" : "Check these " + questions.length, right: open ? "" : "the likely answer is picked" } : null;
 
   // The notes: one short sentence each, only those that apply.
   const notes = [];
@@ -369,6 +373,9 @@ export function slipModel({ base, picks = new Map(), outs = new Set(), state = {
   const add = (r.items || []).length + done.filter((d) => d.act === "replace" || d.act === "first" || d.act === "add").length;
   const off = done.filter((d) => d.act === "off").reduce((k, d) => k + d.card.drop.length, 0);
   const none = !(base.items || []).length && !(base.cards || []).length;
+  // Nothing to add, but choices he tapped (a line kept, a question left out): the key saves them (fix round 2, R1).
+  const tapped = skipsOf({ base, picks, outs, extras });
+  const save = !add && !off && tapped.items.length + tapped.cards.length + tapped.keeps.length > 0;
   const sure = cells.reduce((n, c) => n + c.tickets, 0);
   const say = none ? "Nothing new on the list." : [sure || !questions.length ? plural(sure, "ticket", "tickets") + " ready to add" : "", questions.length ? questions.length + " to check" : ""].filter(Boolean).join(", ") + ".";
   const ms = Date.parse(listAt);
@@ -376,7 +383,7 @@ export function slipModel({ base, picks = new Map(), outs = new Set(), state = {
     at: isFinite(ms) ? "read at " + clock(ms) : "",
     cells, will, questions, check, notes, none, say,
     now: r.now, after: r.after, add, off,
-    open, button: buttonText(add, off, open), canAdd: add > 0 || off > 0,
+    open, save, button: save ? SAVE : buttonText(add, off, open), canAdd: add > 0 || off > 0 || save,
   };
 }
 

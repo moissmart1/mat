@@ -63,7 +63,7 @@ import { parseList, sortFiles, factsFor, stayFactsFor, seatFor, stopLabel, place
 import { newId } from "../time.js";
 import { minutesOf } from "../plan.js";
 import { listPlan, byHand, noticeText, readSkip, writeSkip } from "../autoadd.js";
-import { slipModel, toAnswers, extrasOf, skipsOf, addedSlip } from "../bulkslip.js";
+import { slipModel, toAnswers, extrasOf, skipsOf, addedSlip, SAVED } from "../bulkslip.js";
 import { printOf, rowText } from "../bulkbatch.js";
 
 function el(tag, cls, text) {
@@ -1202,7 +1202,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     const add = btn("sl-add", m.button);
     add.id = "bulkPunch";
     add.disabled = !m.canAdd;
-    add.append(el("small", "", "Undo from History"));
+    if (!m.save) add.append(el("small", "", "Undo from History"));
     const by = el("p", "sl-by", "Not from the list? ");
     const hand = btn("ba-link", "Choose files by hand");
     hand.id = "bulkByHand";
@@ -1732,6 +1732,15 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     for (const key of k.keeps) {
       const card = sl.base.cards.find((c) => c.key === key);
       if (card) keepSkip(card);
+    }
+    // Nothing to add: his tapped choices are kept on this phone, and the sheet closes (fix round 2, R1).
+    if (sl.m.save) {
+      replan();
+      reset();
+      close();
+      store.notify(SAVED);
+      say.textContent = SAVED;
+      return;
     }
     return punch();
   }

@@ -459,6 +459,51 @@ cases.push({
   },
 });
 
+// Fix round 2, R1: a kept line he tapped can be saved when there is nothing to add, and stops asking.
+cases.push({
+  name: "only a line whose file is gone: tapping Leave its pictures on and Save my choices stops it asking; a new file for it asks again",
+  async run({ page }) {
+    const lines = [A({ ticket_id: "T012", start_date: "2026-12-18", start_time: "12:00", title: "Ferry lunch" })];
+    const backend = await tripWith({ old: false, lines, folder: [] });
+    for (const [pid, page_] of [["oldlunch0001", 1], ["oldlunch0002", 2]]) assert.equal((await as(backend, "Mo", "addTicket", { ticket: { ...tied(pid, HF, "T012:ccccccccccc1"), page: page_ } })).ok, true);
+    await ready(page, backend);
+    await page.dispatchEvent("#youBtn", "click");
+    await until(() => sheetUp(page, "you"), "You opens");
+    await until(() => visible(page, "#setListNt"), "the notice shows");
+    await expectText(page, "#setListNt", /1 ticket changed in the list/);
+    await page.dispatchEvent("#setBulk", "click");
+    await slipUp(page);
+    await expectText(page, '#bulk [data-card="off:T012"] .sl-qt b', "Ferry lunch: a file is gone from the list");
+    await expectText(page, "#bulkPunch", "Nothing to addUndo from History");
+    assert.equal(await page.evaluate(() => document.getElementById("bulkPunch").disabled), true);
+    // Tapping the filled dot is his choice: the key saves it.
+    await page.click('#bulk [data-lchoice="off:T012|keep"]');
+    await expectText(page, "#bulkPunch", "Save my choices");
+    assert.equal(await skipNow(page), null, "nothing remembered before the key");
+    const sent = backend.requests.length;
+    await page.click("#bulkPunch");
+    await until(() => page.evaluate(() => !document.getElementById("bulk").classList.contains("is-open")), "the sheet closes");
+    await expectText(page, "#bulk .ba-vh[role=status]", "Saved. These won’t ask again.");
+    assert.equal(backend.requests.slice(sent).some((b) => b.action === "removeTicket" || b.action === "addTicket"), false, "nothing sent");
+    assert.deepEqual(JSON.parse(await skipNow(page)), ["keep:T012:ccccccccccc1"]);
+    // The next look: no notice, nothing to ask.
+    await page.dispatchEvent("#youBtn", "click");
+    await until(() => sheetUp(page, "you"), "You opens again");
+    await until(() => page.evaluate(() => document.getElementById("setListNt").hidden), "the notice is gone");
+    await page.dispatchEvent("#setBulk", "click");
+    await slipUp(page);
+    await expectText(page, "#bulk .sl-none", "Nothing new on the list.");
+    // The list changes: a new file for that line asks again.
+    backend.fake.desk.answer = desk([png(12, "T012 ferry lunch.png", 12)]);
+    backend.now += 60 * 1000;
+    await page.click("#bulkByHand");
+    await page.click("#bulkCheckList");
+    await slipUp(page);
+    await expectText(page, '#bulk [data-card="chg:T012"] .sl-qt b', "Ferry lunch: the list has one more file");
+    assert.deepEqual(live(backend).map((r) => r.id).sort(), ["oldlunch0001", "oldlunch0002"]);
+  },
+});
+
 cases.push({
   name: "the picker row: choosing a stop fills its dot, the first option gives the likely answer back; the ticket lands on that stop",
   async run({ page }) {

@@ -124,8 +124,9 @@ test("a pick and an out change add, off, after, the heading and the button", () 
   ({ m } = slip({ list: [chg(), off()], picks: new Map([["off:T011", "off"]]) }));
   assert.equal(m.button, "Add 6 tickets, take 2 pictures off");
   ({ m } = slip({ outs: new Set(["stay:y-1", "stop:s-aq", "stop:s-mu"]), picks: new Map([["chg:T009", "keep"], ["f10#0", "out"]]) }));
-  assert.equal(m.button, "Nothing to add");
-  assert.equal(m.canAdd, false);
+  // Nothing to add, but cells and choices he tapped: the key saves them (fix round 2, R1).
+  assert.equal(m.button, "Save my choices");
+  assert.equal(m.canAdd, true);
 });
 
 test("picks and outs give exactly the answers the old taps gave", () => {
@@ -424,4 +425,39 @@ test("a cell whose ticket a moved dot pushed out shows a ring and says so", () =
   assert.equal(museum.held, true);
   assert.equal(museum.aria, "Aonami Museum, D3 Sat 10:00, left out");
   assert.equal(m.will.left, "Will add · nothing");
+});
+
+test("fix round 2, R1: nothing to add but a choice he tapped: the key saves it; untapped, it stays disabled", () => {
+  const st = state();
+  const list = [off({ slip: "filegone", status: "" })];
+  const base = review({ files: [], st, list });
+  const run = (picks) => {
+    const a = toAnswers({ base, picks });
+    const result = review({ files: [], st, list, ...a });
+    return slipModel({ base, picks, state: st, rows: ROWS, result, extras: [] });
+  };
+  const untouched = run(new Map());
+  assert.equal(untouched.button, "Nothing to add");
+  assert.equal(untouched.canAdd, false);
+  assert.equal(untouched.save, false);
+  const kept = run(new Map([["off:T011", "keep"]]));
+  assert.equal(kept.button, "Save my choices");
+  assert.equal(kept.canAdd, true);
+  assert.equal(kept.save, true);
+  // Something to add: Add as before (it remembers the tapped keep too).
+  const withAdd = slip({ list: [chg(), off()], picks: new Map([["off:T011", "keep"]]) }).m;
+  assert.equal(withAdd.save, false);
+  assert.equal(withAdd.button, "Add 6 tickets");
+});
+
+test("fix round 2, R2: the heading does not say the likely answer is picked while a question has no dot", () => {
+  const st = state({ stops: STOPS.concat([{ id: "s-f2", date: "2026-12-18", time: "10:00", title: "Pier cafe" }]) });
+  const rows = ROWS.concat([R({ ticket_id: "T020", start_date: "2026-12-18", start_time: "09:50", title: "Morning pass" })]);
+  const files = [png("f20", "T020 pass.png")];
+  const base = review({ files, rows, st });
+  const result = review({ files, rows, st, ...toAnswers({ base }) });
+  assert.deepEqual(slipModel({ base, state: st, rows, result, extras: [] }).check, { left: "Check this 1", right: "" });
+  const picks = new Map([["f20#0", "c1"]]);
+  const r2 = review({ files, rows, st, ...toAnswers({ base, picks }) });
+  assert.deepEqual(slipModel({ base, picks, state: st, rows, result: r2, extras: [] }).check, { left: "Check this 1", right: "the likely answer is picked" });
 });
