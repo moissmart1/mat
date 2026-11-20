@@ -30,9 +30,8 @@ jobs:
       - run: node scripts/scan.mjs --patterns-only
 
   browser:
-    # macOS on purpose: the suite's layout checks were written against Google
-    # Chrome on a Mac, and fonts and sizes differ on Linux.
-    runs-on: macos-latest
+    # Linux verification of #10 on this draft PR.
+    runs-on: ubuntu-latest
     timeout-minutes: 25
     strategy:
       fail-fast: false
@@ -46,15 +45,8 @@ jobs:
         with:
           node-version: 25
       - run: npm ci --ignore-scripts
-      - name: Make sure Google Chrome is there
-        run: |
-          CHROME="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-          if [ -x "$CHROME" ]; then
-            "$CHROME" --version
-          else
-            echo "Google Chrome is not on this runner: installing it."
-            npx playwright install chrome
-          fi
+      - name: Verify the runner's Google Chrome
+        run: google-chrome --version
       - name: Browser tests, slice ${{ matrix.shard }} of 4
         shell: bash
         run: |
