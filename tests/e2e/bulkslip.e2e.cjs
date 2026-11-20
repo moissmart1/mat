@@ -263,7 +263,8 @@ cases.push({
     await expectText(page, "#bulkOpenDay", "Open Day 2 · see the stubs");
     const stored = JSON.parse(await page.evaluate(() => localStorage.getItem("mat.bulkBatch")));
     assert.equal(stored.length, 1);
-    assert.equal(stored[0].tickets.length, 10);
+    assert.equal(stored[0].items.length, 10, "ten tickets, one list of picture ids each");
+    assert.ok(stored[0].items.every((one) => one.length === 1));
     assert.deepEqual(stored[0].removed.sort(), ["oldwalk00001", "oldwalk00002"]);
     assert.deepEqual(stored[0].stops, [stop.id]);
     for (const never of ["Lantern", "Kogane", ".png", "T010", "LB-55120"]) assert.equal(JSON.stringify(stored).includes(never), false, never);
@@ -274,6 +275,7 @@ cases.push({
     await until(() => page.evaluate(() => /taken back at \d\d:\d\d/.test(document.querySelector("#bulk .sl-batch").textContent)), "the row reads taken back", 20000);
     assert.equal(await page.evaluate(() => !!document.getElementById("bulkTakeBack")), false);
     assert.ok(await page.evaluate(() => document.querySelector("#bulk .sl-batch .tp-row").classList.contains("is-undone")));
+    assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector("#bulk .sl-batch .tp-s")).textDecorationLine), "none", "the taken back line is not struck through");
     assert.ok((await texts(page, "#bulk .sl.is-done .sl-c")).includes("D7 Wed 16:30Lantern boatstop added"), "the slip keeps the stop's name");
     await expectText(page, "#bulk .ba-vh[role=status]", "Taken back: 10 tickets. 2 old pictures put back.");
     const now = live(backend);
@@ -406,10 +408,54 @@ cases.push({
     await expectText(page, "#bulk .ba-done-h", "2 pictures taken off.");
     await expectText(page, "#bulk .sl-batch", /^\d\d:\d\d2 pictures taken off, from the listalso in HistoryTake all back$/);
     assert.deepEqual(live(backend).map((r) => r.id).sort(), ["oldlunch0001", "oldlunch0002"]);
-    // Kept, and the museum left out: remembered on this phone only now.
+    // The museum tapped out: remembered on this phone only now. Ferry lunch kept its
+    // pictures only because its dot opened there: not remembered, it asks again (fix round 1).
     const skip = JSON.parse(await page.evaluate(() => localStorage.getItem("mat.listSkip")));
-    assert.ok(skip.includes("T004:aaaaaaaaaa04"), JSON.stringify(skip));
-    assert.ok(skip.includes("keep:T012:ccccccccccc1"), JSON.stringify(skip));
+    assert.deepEqual(skip, ["T004:aaaaaaaaaa04"]);
+  },
+});
+
+// Fix round 1, I3: a filled "Replace" never takes the old pictures off when the new file is not in.
+cases.push({
+  name: "a newer file the backend refuses: the filled Replace leaves the two old pictures on",
+  async run({ page }) {
+    const backend = await tripWith({ lines: [LINES[8]], folder: [FOLDER()[9]] });
+    const real = backend.handle;
+    backend.handle = async (body) => {
+      if (body.action === "addTicket" && body.args && body.args.ticket && body.args.ticket.from === "T009:aaaaaaaaaa09") return { ok: false, error: "bad_input", message: "That picture can’t go on this stop." };
+      return real.call(backend, body);
+    };
+    await ready(page, backend);
+    await addTickets(page);
+    await slipUp(page);
+    await expectText(page, "#bulkPunch", "Add 1 ticketUndo from History");
+    await page.click("#bulkPunch");
+    await added(page);
+    assert.equal(calls(backend, "removeTicket").length, 0, "nothing taken off");
+    assert.deepEqual(live(backend).map((r) => r.id).sort(), ["oldwalk00001", "oldwalk00002"]);
+    await expectText(page, "#bulk .ba-done-h", "No ticket was added.");
+  },
+});
+
+cases.push({
+  name: "a newer file that can't be made into pictures here, on a full stop (old ones off first): the old pictures stay on",
+  async run({ page }) {
+    const pdf = { h: H(9), name: "T009 night walk.pdf", mime: "application/pdf", print: "aaaaaaaaaa09", data: b64(pdfBytes(2)) };
+    const backend = await tripWith({ lines: [LINES[8]], folder: [pdf] });
+    // Kogane Garden holds the two old pictures and 6 more: adding first would pass 8.
+    for (let i = 0; i < 6; i++) assert.equal((await as(backend, "Ajen", "addTicket", { ticket: { id: "handkg00000" + i, stop: KG, who: "", seat: "", page: i + 3, mime: "image/png", w: 60, h: 60, data: smallPng } })).ok, true);
+    await ready(page, backend);
+    await addTickets(page);
+    await slipUp(page);
+    await expectText(page, '#bulk [data-lchoice="chg:T009|first"]', /^Take the old pictures off, then add the new file/);
+    assert.equal(await page.getAttribute('#bulk [data-lchoice="chg:T009|first"]', "aria-checked"), "true");
+    // This phone can no longer turn a page into a picture.
+    await page.evaluate(() => { HTMLCanvasElement.prototype.toBlob = function (done) { setTimeout(() => done(null), 0); }; });
+    await page.click("#bulkPunch");
+    await added(page);
+    assert.equal(calls(backend, "removeTicket").length, 0, "the old ones are not taken off");
+    assert.equal(live(backend).filter((r) => r.stop === KG).length, 8);
+    assert.ok((await texts(page, "#bulk .ba-next.is-flat > div")).some((t) => /couldn’t be made into pictures here/.test(t)));
   },
 });
 

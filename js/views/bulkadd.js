@@ -1077,7 +1077,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     answers = a.answers;
     lanswers = a.lanswers;
     let r = sorted();
-    const extras = extrasOf(base, r);
+    const extras = extrasOf(base, r, picks);
     if (extras.length) {
       a = toAnswers({ base, picks, outs, extras });
       answers = a.answers;
@@ -1109,11 +1109,11 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
   };
 
   function slipCell(c, done = false) {
-    const b = done ? el("div", "sl-c") : btn("sl-c" + (c.out ? " is-out" : ""));
+    const b = done ? el("div", "sl-c") : btn("sl-c" + (c.out || c.held ? " is-out" : ""));
     const words = el("span");
     words.append(el("small", "", c.small), el("b", "", c.title));
     if (done && c.how) words.append(el("small", "sl-how", c.how));
-    b.append(dot(done || !c.out), words);
+    b.append(dot(done || (!c.out && !c.held)), words);
     if (!done) {
       b.dataset.cell = c.key;
       b.setAttribute("aria-pressed", String(!c.out));
@@ -1432,6 +1432,19 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
         else adding.notAdded.push({ label, why: "not taken off: " + (out && out.reason === "refused" ? out.message || "refused" : out && out.reason === "notSent" ? "no signal" : "no reply yet, look at the stop later") });
       }
     }
+    // Old pictures come off only for a card whose new ones are in (fix round 1,
+    // I3): a filled dot never takes a picture off for a new file that wasn't
+    // made, wasn't saved or doesn't wait on the phone. A cancelled line's
+    // "off" was chosen by hand and stays as it is.
+    const newOf = (card) => adding.items.filter((i) => i.key.startsWith(card.key + "#"));
+    const keepOnly = (list, ok) => {
+      const kept = list.filter((x) => {
+        const d = done.find((one) => one.card.drop.some((t) => t.id === x.id));
+        return !d || d.act === "off" || ok(newOf(d.card));
+      });
+      list.splice(0, list.length, ...kept);
+    };
+    keepOnly(offBefore, (mineNew) => mineNew.length > 0 && mineNew.every((i) => !i.failed && !i.short && pics.some((p) => p.it === i)));
     if (offBefore.length) {
       adding.step = "off";
       draw();
@@ -1507,7 +1520,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     if (dead()) return;
     // A stop that was not added: its pictures are not handed over.
     for (let i = pics.length - 1; i >= 0; i--) if (pics[i].it.newStop) pics.splice(i, 1);
-    const sentIds = pics.map((p) => p.id);
+    const sentIds = pics.map((p) => [p.it, p.id]);
 
     // 2. Handed over ONE AT A TIME, each one's outcome awaited before the next, as the single add does (fix round 2, R1): never two ticket sends of ours in flight. One that cannot go up (no signal, busy) settles as waiting and the next is handed over; with no signal the store keeps each without sending it.
     adding.step = "sending";
@@ -1543,6 +1556,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
       draw();
     }
     if (mine !== gen) return;
+    keepOnly(offAfter, (mineNew) => mineNew.length > 0 && mineNew.every((i) => !i.failed && !i.short && i.saved + i.waiting > 0));
     if (offAfter.length) {
       adding.step = "off";
       draw();
@@ -1627,7 +1641,8 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
       for (const id of stopsMade) if (stopOf(id)) prints[id] = printOf(stopOf(id));
       adding.batch = takeBack.record({
         at: adding.doneAt, n: ok, off: adding.off,
-        tickets: sentIds.filter(on),
+        // One list of picture ids per ticket (a PDF's pages are one ticket).
+        items: adding.items.map((it) => sentIds.filter(([i, id]) => i === it && on(id)).map(([, id]) => id)).filter((one) => one.length),
         removed: offBefore.concat(offAfter).map((x) => x.id).filter((id) => !on(id)),
         stops: stopsMade, stays: [...made.values()].filter((v) => typeof v === "string"), prints,
       });

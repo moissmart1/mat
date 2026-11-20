@@ -288,7 +288,7 @@ export function spanOf(st) {
 // at most 80 letters), its first night (start_date) and last (the day before
 // end_date, else the first). null with no name or no usable date.
 export function newStayFrom(row) {
-  const name = (str(row && row.title) || str(row && row.provider)).slice(0, 80).trim();
+  const name = [...(str(row && row.title) || str(row && row.provider))].slice(0, 80).join("").trim();
   const first = str(row && row.start_date);
   if (!name || !DATE.test(first)) return null;
   const end = str(row.end_date);
@@ -302,7 +302,7 @@ export function newStayFrom(row) {
 // date is not a day of the trip or there is no name.
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
 export function newStopFrom(row, days) {
-  const title = (str(row && row.title) || str(row && row.provider)).slice(0, 80).trim();
+  const title = [...(str(row && row.title) || str(row && row.provider))].slice(0, 80).join("").trim();
   const date = str(row && row.start_date);
   if (!title || !DATE.test(date) || !(days || []).some((d) => d && d.date === date)) return null;
   const time = str(row.start_time);

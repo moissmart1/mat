@@ -3,21 +3,22 @@
 // the list, and taking it all back. Everything is made up.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { BATCH_KEY, BATCH_MAX, batchOf, readBatches, writeBatches, addBatch, loadBatches, saveBatches, printOf, planOf, stopFree, resultText, rowText, NO_SIGNAL } from "../js/bulkbatch.js";
+import { BATCH_KEY, BATCH_MAX, batchOf, readBatches, writeBatches, addBatch, loadBatches, saveBatches, printOf, planOf, stopFree, resultText, rowText, NO_SIGNAL, NOT_LOOKED_UP } from "../js/bulkbatch.js";
 import { createTakeBack } from "../js/takeback.js";
 
 const id = (n) => "pictureid" + String(n).padStart(4, "0");
 const STOP = { id: "newstop00001", date: "2026-12-16", time: "16:30", title: "Lantern boat", tkRef: "QZ-REF-1" };
-const fields = (o = {}) => ({ at: "2026-12-12T00:13:00.000Z", n: 3, off: 2, tickets: [id(1), id(2), id(3)], removed: [id(8), id(9)], stops: [STOP.id], stays: ["newstay00001"], prints: { [STOP.id]: printOf(STOP) }, ...o });
+const fields = (o = {}) => ({ at: "2026-12-12T00:13:00.000Z", n: 3, off: 2, items: [[id(1)], [id(2)], [id(3)]], removed: [id(8), id(9)], stops: [STOP.id], stays: ["newstay00001"], prints: { [STOP.id]: printOf(STOP) }, ...o });
 const memory = () => {
   const m = new Map();
   return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k), m };
 };
 
 test("the record: ids, counts and times only, never a name, a reference or a file name", () => {
-  const b = batchOf({ ...fields(), tickets: [id(1), "Lantern boat.png", id(1), "x"], title: "Lantern boat", file: "T010 boat.png", prints: { [STOP.id]: printOf(STOP), other: "Lantern" } });
-  assert.deepEqual(Object.keys(b).sort(), ["at", "back", "n", "off", "prints", "removed", "stays", "stops", "tickets"]);
-  assert.deepEqual(b.tickets, [id(1)]);
+  const b = batchOf({ ...fields(), items: [[id(1), "Lantern boat.png", id(1), "x"], ["T010 boat.png"], [id(1), id(2)]], title: "Lantern boat", file: "T010 boat.png", prints: { [STOP.id]: printOf(STOP), other: "Lantern" } });
+  assert.deepEqual(Object.keys(b).sort(), ["at", "back", "items", "n", "off", "prints", "removed", "stays", "stops"]);
+  assert.deepEqual(b.items, [[id(1)], [id(2)]], "ids only, each picture once");
+  assert.deepEqual(batchOf({ tickets: [id(1), id(2)] }).items, [[id(1)], [id(2)]], "an older record: one picture per ticket");
   assert.deepEqual(Object.keys(b.prints), [STOP.id]);
   assert.match(b.prints[STOP.id], /^[0-9a-f]{8}$/);
   const text = writeBatches([b]);
@@ -58,11 +59,11 @@ test("the plan: the batch's pictures still on come off, the old ones are put bac
     online: true,
     stops: [STOP],
     stays: [{ id: "newstay00001", firstNight: "2026-12-14", lastNight: "2026-12-14", name: "Inn" }],
-    tickets: [{ id: id(1), stop: STOP.id }, { id: id(2), stop: "otherstop001" }, { id: id(3), stop: "otherstop001", gone: true }, { id: id(8), stop: "otherstop001", gone: true }],
+    tickets: [{ id: id(1), stop: STOP.id }, { id: id(2), stop: "otherstop001" }, { id: id(3), stop: "otherstop001", gone: true }, { id: id(8), stop: "otherstop001", gone: true }, { id: id(9), stop: "otherstop001" }],
   };
   const p = planOf(b, state);
   assert.deepEqual(p.remove, [id(1), id(2)]);
-  assert.deepEqual(p.putBack, [id(8), id(9)]);
+  assert.deepEqual(p.putBack, [id(8)], "one already back is not put back twice");
   assert.deepEqual(p.stops, [STOP.id]);
   assert.equal(p.stays, 1);
   assert.equal(p.blocked, false);
@@ -98,9 +99,10 @@ test("no signal: nothing tried once anything was sent; pictures only waiting on 
 test("the words: the result, and the row on the added screen and in History", () => {
   assert.equal(resultText({ total: 10, back: 10 }), "Taken back: 10 tickets.");
   assert.equal(resultText({ total: 1, back: 1 }), "Taken back: 1 ticket.");
-  assert.equal(resultText({ total: 10, back: 8 }), "Taken back 8 of 10. The rest have their own line in History.");
-  assert.equal(resultText({ total: 10, back: 10, put: 2, removed: 2 }), "Taken back: 10 tickets. 2 old pictures put back.");
-  assert.equal(resultText({ total: 10, back: 10, put: 1, removed: 2 }), "Taken back: 10 tickets. 1 old picture put back. The rest have their own line in History.");
+  assert.equal(resultText({ total: 10, back: 8, done: false }), "Taken back 8 of 10. Try again for the rest.");
+  assert.equal(resultText({ total: 10, back: 10, put: 1, done: false }), "Taken back: 10 tickets. 1 old picture put back. Try again for the rest.");
+  assert.equal(resultText({ total: 10, back: 10, put: 2 }), "Taken back: 10 tickets. 2 old pictures put back.");
+  assert.equal(resultText({ total: 10, back: 10, put: 1, lost: 1 }), "Taken back: 10 tickets. 1 old picture put back. The rest have their own line in History.");
   assert.equal(resultText({ total: 3, back: 3, stays: 1 }), "Taken back: 3 tickets. The stay it added is left on.");
   assert.equal(NO_SIGNAL, "No signal. Take it back from History when there is signal.");
   const b = batchOf(fields({ n: 10 }));
@@ -117,11 +119,14 @@ test("the words: the result, and the row on the added screen and in History", ()
 });
 
 // A stand-in store with the calls the runner uses, in the order it is called.
-function fakeStore({ online = true, tickets = [], stops = [], history = [] } = {}) {
+// log: the whole History, any length (historyFor asks by ref, as the backend
+// does, with no page limit; state.history holds only the first 200).
+// cut: a function (call name) -> true when that call meets no signal.
+function fakeStore({ online = true, tickets = [], stops = [], log = [], cut = () => false } = {}) {
   const calls = [];
   const subs = new Set();
   const store = {
-    state: { status: "ready", online, tickets, stops, stays: [], history: { entries: history } },
+    state: { status: "ready", online, tickets, stops, stays: [], history: { entries: log.slice(0, 200) } },
     calls,
     subscribe(fn) {
       subs.add(fn);
@@ -132,16 +137,25 @@ function fakeStore({ online = true, tickets = [], stops = [], history = [] } = {
     unsaved: () => false,
     removeTicket(tid) {
       calls.push("removeTicket:" + tid);
+      if (cut("removeTicket:" + tid)) return "fail-" + tid; // sent, rolled back: no signal
       this.state.tickets = this.state.tickets.map((t) => (t.id === tid ? { ...t, gone: true } : t));
       return "tok-" + tid;
     },
-    outcome: async () => ({ saved: true }),
+    outcome: async (tok) => (tok.startsWith("fail-") ? { saved: false, reason: "notSent" } : { saved: true }),
+    async historyFor(ref) {
+      calls.push("historyFor:" + ref);
+      if (cut("historyFor:" + ref)) throw Object.assign(new Error("No signal"), { code: "network" });
+      return log.filter((e) => e.ref === ref);
+    },
     loadHistory: async () => {
       calls.push("loadHistory");
     },
     async undoEntry(n) {
       calls.push("undoEntry:" + n);
-      const e = this.state.history.entries.find((x) => x.id === n);
+      if (cut("undoEntry:" + n)) return false;
+      const e = log.find((x) => x.id === n);
+      e.undoneBy = 999;
+      e.canUndo = false;
       this.state.tickets = this.state.tickets.map((t) => (t.id === e.ref ? { ...t, gone: false } : t));
       return true;
     },
@@ -158,41 +172,100 @@ function fakeStore({ online = true, tickets = [], stops = [], history = [] } = {
   };
   return store;
 }
+const AT = "2026-12-12T00:13:00.000Z";
+// A batch's trip: its three new pictures (one on the new stop), its two old ones off, and older History.
+const world = (o = {}) => fakeStore({
+  tickets: [{ id: id(1), stop: STOP.id }, { id: id(2), stop: "otherstop001" }, { id: id(3), stop: "otherstop001" }, { id: id(8), stop: "otherstop001", gone: true }, { id: id(9), stop: "otherstop001", gone: true }],
+  stops: [STOP],
+  log: [
+    { id: 7, kind: "ticket", ref: id(9), action: "remove", canUndo: true },
+    { id: 6, kind: "ticket", ref: id(8), action: "remove", canUndo: true },
+    { id: 5, kind: "ticket", ref: id(8), action: "remove", canUndo: false, undoneBy: 4 },
+  ],
+  ...o,
+});
 
-test("the runner: one step at a time, in order; then the row reads taken back and it is said", async () => {
-  const store = fakeStore({
-    tickets: [{ id: id(1), stop: STOP.id }, { id: id(2), stop: "otherstop001" }, { id: id(3), stop: "otherstop001" }, { id: id(8), stop: "otherstop001", gone: true }, { id: id(9), stop: "otherstop001", gone: true }],
-    stops: [STOP],
-    history: [
-      { id: 7, kind: "ticket", ref: id(9), action: "remove", canUndo: true },
-      { id: 6, kind: "ticket", ref: id(8), action: "remove", canUndo: true },
-      { id: 5, kind: "ticket", ref: id(8), action: "remove", canUndo: false, undoneBy: 4 },
-    ],
-  });
+test("the runner: the old pictures looked up first, then one step at a time, in order; the row reads taken back and it is said", async () => {
+  const store = world();
   const storage = memory();
   let t = Date.parse("2026-12-12T00:20:00.000Z");
   const tb = createTakeBack(store, { storage, now: () => t });
-  assert.equal(tb.record(fields({ stays: [] })).at, "2026-12-12T00:13:00.000Z");
+  assert.equal(tb.record(fields({ stays: [] })).at, AT);
   assert.equal(tb.record({ at: "2026-12-12T00:14:00.000Z", n: 0, off: 0 }), null, "nothing added or taken off: no row");
   assert.equal(loadBatches(storage).length, 1);
   const seen = [];
-  tb.subscribe(() => seen.push(tb.running("2026-12-12T00:13:00.000Z")));
-  const text = await tb.run("2026-12-12T00:13:00.000Z");
+  tb.subscribe(() => seen.push(tb.running(AT)));
+  const text = await tb.run(AT);
   assert.equal(text, "Taken back: 3 tickets. 2 old pictures put back.");
-  assert.deepEqual(store.calls, ["removeTicket:" + id(1), "removeTicket:" + id(2), "removeTicket:" + id(3), "loadHistory", "undoEntry:6", "undoEntry:7", "deleteStop:" + STOP.id, "idle", "notify:" + text]);
+  assert.deepEqual(store.calls, ["historyFor:" + id(8), "historyFor:" + id(9), "removeTicket:" + id(1), "removeTicket:" + id(2), "removeTicket:" + id(3), "undoEntry:6", "undoEntry:7", "deleteStop:" + STOP.id, "idle", "notify:" + text]);
   assert.deepEqual(seen, [true, false]);
   assert.equal(tb.list()[0].back, "2026-12-12T00:20:00.000Z");
   assert.equal(loadBatches(storage)[0].back, "2026-12-12T00:20:00.000Z");
   // A second tap does nothing.
   t += 1000;
-  assert.equal(await tb.run("2026-12-12T00:13:00.000Z"), "");
+  assert.equal(await tb.run(AT), "");
+});
+
+test("the runner counts tickets, not pages: a 3-page PDF is one ticket", async () => {
+  const store = world({ tickets: [{ id: id(1), stop: "s" }, { id: id(2), stop: "s" }, { id: id(3), stop: "s" }, { id: id(4), stop: "s" }], log: [] });
+  const tb = createTakeBack(store, { storage: memory() });
+  tb.record(fields({ n: 2, items: [[id(1), id(2), id(3)], [id(4)]], removed: [], stops: [], stays: [] }));
+  assert.equal(await tb.run(AT), "Taken back: 2 tickets.");
+});
+
+test("the runner: signal drops part way; the row keeps its button, and the second run does only what is left", async () => {
+  let cutOff = true;
+  const store = world({ cut: (c) => cutOff && (c === "removeTicket:" + id(3) || c.startsWith("undoEntry")) });
+  const tb = createTakeBack(store, { storage: memory() });
+  tb.record(fields({ stays: [] }));
+  const first = await tb.run(AT);
+  assert.equal(first, "Taken back 2 of 3. Try again for the rest.");
+  assert.equal(tb.list()[0].back, "", "not marked taken back");
+  assert.ok(store.calls.includes("deleteStop:" + STOP.id), "the stop whose picture surely came off goes");
+  // Signal back: the same button again.
+  cutOff = false;
+  store.calls.length = 0;
+  const second = await tb.run(AT);
+  assert.equal(second, "Taken back: 3 tickets. 2 old pictures put back.");
+  assert.deepEqual(store.calls.filter((c) => !c.startsWith("notify")), ["historyFor:" + id(8), "historyFor:" + id(9), "removeTicket:" + id(3), "undoEntry:6", "undoEntry:7"], "nothing done twice");
+  assert.notEqual(tb.list()[0].back, "");
+});
+
+test("the runner: the first remove fails while the phone still thinks it is online; nothing is marked, the stop stays", async () => {
+  const store = world({ cut: (c) => c === "removeTicket:" + id(1) });
+  const tb = createTakeBack(store, { storage: memory() });
+  tb.record(fields({ stays: [] }));
+  assert.equal(await tb.run(AT), "Taken back 2 of 3. 2 old pictures put back. Try again for the rest.");
+  assert.equal(tb.list()[0].back, "");
+  assert.equal(store.calls.includes("deleteStop:" + STOP.id), false, "never a stop whose picture is still on");
+});
+
+test("the runner: a batch older than 200 History lines still finds its old pictures' lines", async () => {
+  const old = [{ id: 6, kind: "ticket", ref: id(8), action: "remove", canUndo: true }, { id: 7, kind: "ticket", ref: id(9), action: "remove", canUndo: true }];
+  const newer = Array.from({ length: 250 }, (_, i) => ({ id: 1000 - i, kind: "stop", ref: "otherstop001", action: "edit", canUndo: false }));
+  const store = world({ log: newer.concat(old) });
+  assert.equal(store.state.history.entries.some((e) => e.kind === "ticket"), false, "not on History's first page");
+  const tb = createTakeBack(store, { storage: memory() });
+  tb.record(fields({ stays: [] }));
+  assert.equal(await tb.run(AT), "Taken back: 3 tickets. 2 old pictures put back.");
+});
+
+test("the runner: an old picture's lookup fails: nothing is taken back, and it is said", async () => {
+  const store = world({ cut: (c) => c === "historyFor:" + id(9) });
+  const tb = createTakeBack(store, { storage: memory() });
+  tb.record(fields({ stays: [] }));
+  assert.equal(await tb.run(AT), NOT_LOOKED_UP);
+  assert.equal(store.calls.some((c) => /^(removeTicket|undoEntry|deleteStop)/.test(c)), false);
+  assert.equal(tb.list()[0].back, "");
+  store.state.online = false;
+  assert.equal(await tb.run(AT), NO_SIGNAL);
 });
 
 test("the runner: no signal and something sent: nothing is tried; a wipe empties the memory", async () => {
   const store = fakeStore({ online: false, tickets: [{ id: id(1), stop: "s" }] });
   const tb = createTakeBack(store, { storage: memory() });
   tb.record(fields({ removed: [], stops: [], stays: [] }));
-  assert.equal(await tb.run("2026-12-12T00:13:00.000Z"), NO_SIGNAL);
+  assert.equal(await tb.run(AT), NO_SIGNAL);
   assert.deepEqual(store.calls, ["notify:" + NO_SIGNAL]);
   assert.equal(tb.list()[0].back, "");
   store.state.status = "nokey";
@@ -200,9 +273,10 @@ test("the runner: no signal and something sent: nothing is tried; a wipe empties
   assert.deepEqual(tb.list(), []);
 });
 
-test("the runner: an old picture changed since is not put back, and it is said", async () => {
-  const store = fakeStore({ tickets: [{ id: id(1), stop: "s" }, { id: id(8), stop: "s", gone: true }], history: [{ id: 3, kind: "ticket", ref: id(8), action: "remove", canUndo: false }] });
+test("the runner: an old picture History can no longer put back is said, and the batch is done", async () => {
+  const store = fakeStore({ tickets: [{ id: id(1), stop: "s" }, { id: id(8), stop: "s", gone: true }], log: [{ id: 3, kind: "ticket", ref: id(8), action: "remove", canUndo: false }] });
   const tb = createTakeBack(store, { storage: memory() });
-  tb.record(fields({ n: 1, tickets: [id(1)], removed: [id(8)], stops: [], stays: [] }));
-  assert.equal(await tb.run("2026-12-12T00:13:00.000Z"), "Taken back: 1 ticket. The rest have their own line in History.");
+  tb.record(fields({ n: 1, items: [[id(1)]], removed: [id(8)], stops: [], stays: [] }));
+  assert.equal(await tb.run(AT), "Taken back: 1 ticket. The rest have their own line in History.");
+  assert.notEqual(tb.list()[0].back, "");
 });

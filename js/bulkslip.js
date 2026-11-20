@@ -88,8 +88,13 @@ const rowOf = (rows, id) => (rows || []).find((r) => r && r.ticket_id === id) ||
 const lineName = (row) => (row ? str(row.title) || str(row.provider) : "");
 
 // The likely way: the first choice of a file's card, else Leave it out; a
-// changed or cancelled line's first act that does not take pictures off by itself.
+// changed or cancelled line's first act that does not take pictures off by
+// itself. A "which stop is it for?" question, whose stops are only a guess,
+// starts with no dot ("none", Mo's call in fix round 1): until it is
+// answered its ticket is not added, and the key says how many are left.
+export const GUESS = ["close", "ref", "several", "split", "norow"];
 export function defaultPick(card) {
+  if (card && GUESS.includes(card.kind)) return "none";
   if (card && card.lchoices) {
     const ch = card.lchoices.find((c) => c.act !== "off");
     return ch ? ch.act : card.lchoices[0] ? card.lchoices[0].act : "keep";
@@ -258,42 +263,48 @@ export function toAnswers({ base, picks = new Map(), outs = new Set(), extras = 
   for (const card of base.cards || []) {
     const p = pickOf(picks, card.key, card, false);
     if (card.lchoices) lanswers.set(card.key, card.lchoices.some((c) => c.act === p) ? p : defaultPick(card));
-    else answers.set(card.key, answerOf(card, p));
+    else if (p !== "none") answers.set(card.key, answerOf(card, p));
   }
   for (const { key, card } of extras) answers.set(card.key, answerOf(card, pickOf(picks, key, card, true)));
   return { answers, lanswers };
 }
 
-// The cards still open once every question has its answer: brought up by a moved dot.
-export function extrasOf(base, result) {
+// The cards still open once every question has its answer: brought up by a
+// moved dot (a question with no dot yet is not one of them).
+export function extrasOf(base, result, picks = new Map()) {
   const keys = new Set((base.cards || []).map((c) => c.key));
-  return (result.cards || []).filter((c) => !c.lchoices).map((card) => ({ key: keys.has(card.key) ? "more:" + card.key : card.key, card }));
+  const open = new Set((base.cards || []).filter((c) => !c.lchoices && pickOf(picks, c.key, c, false) === "none").map((c) => c.key));
+  return (result.cards || []).filter((c) => !c.lchoices && !open.has(c.key)).map((card) => ({ key: keys.has(card.key) ? "more:" + card.key : card.key, card }));
 }
 
 // What Add remembers on this phone: the items of the cells tapped out, the
-// file questions on Leave it out, the list questions on keep.
+// file questions tapped to Leave it out, the list questions tapped to keep.
+// A dot that was filled when the slip opened is never remembered (fix round
+// 1, Mo's call): only what he chose himself.
 export function skipsOf({ base, picks = new Map(), outs = new Set(), extras = [] }) {
   const items = (base.items || []).filter((it) => outs.has(placeKey(it))).map((it) => it.key);
   const cards = [];
   const keeps = [];
   for (const card of base.cards || []) {
-    const p = pickOf(picks, card.key, card, false);
+    const p = picks.get(card.key);
     if (card.lchoices) {
       if (p === "keep") keeps.push(card.key);
     } else if (p === "out") cards.push(card.key);
   }
-  for (const { key, card } of extras) if (pickOf(picks, key, card, true) === "out") cards.push(card.key);
+  for (const { key, card } of extras) if (picks.get(key) === "out") cards.push(card.key);
   return { items, cards: [...new Set(cards)], keeps };
 }
 
 // ---------- the slip ----------
 
-// The button's first line, by the review's counts.
-export function buttonText(n, offs) {
-  if (n && offs) return "Add " + plural(n, "ticket", "tickets") + ", take " + plural(offs, "picture", "pictures") + " off";
-  if (n) return "Add " + plural(n, "ticket", "tickets");
-  if (offs) return "Take " + plural(offs, "picture", "pictures") + " off";
-  return "Nothing to add";
+// The button's first line, by the review's counts; open: questions with no dot yet.
+export function buttonText(n, offs, open = 0) {
+  let t;
+  if (n && offs) t = "Add " + plural(n, "ticket", "tickets") + ", take " + plural(offs, "picture", "pictures") + " off";
+  else if (n) t = "Add " + plural(n, "ticket", "tickets");
+  else if (offs) t = "Take " + plural(offs, "picture", "pictures") + " off";
+  else t = "Nothing to add";
+  return open ? t + " · " + open + " to check" : t;
 }
 
 const placesText = (stops, stays) => [stops ? plural(stops, "stop", "stops") : "", stays ? plural(stays, "stay", "stays") : ""].filter(Boolean).join(" and ");
@@ -305,6 +316,12 @@ export function slipModel({ base, picks = new Map(), outs = new Set(), state = {
   // The tickets whose cell is in (and still go in as they are).
   const inKeys = new Set(cells.filter((c) => !c.out).flatMap((c) => c.itemKeys));
   const goes = (r.items || []).filter((i) => inKeys.has(i.key));
+  // A cell whose ticket a moved dot pushed out (its stop now full) shows a ring (fix round 1, M7).
+  const going = new Set((r.items || []).map((i) => i.key));
+  for (const c of cells) if (!c.out && !c.itemKeys.some((k) => going.has(k))) {
+    c.held = true;
+    c.aria = c.aria.replace(/will be added$/, "left out");
+  }
   const stops = new Set(goes.filter((i) => !isStay(i)).map(placeKey)).size;
   const stays = new Set(goes.filter(isStay).map(placeKey)).size;
   const will = cells.length ? { left: "Will add · " + (goes.length ? plural(goes.length, "ticket", "tickets") : "nothing"), right: goes.length ? "on " + placesText(stops, stays) : "" } : null;
@@ -320,6 +337,7 @@ export function slipModel({ base, picks = new Map(), outs = new Set(), state = {
       pickOn: !!picked,
     };
   });
+  const open = questions.filter((q) => !q.options.some((o) => o.on) && !q.pickOn).length;
   const check = questions.length ? { left: questions.length === 1 ? "Check this 1" : "Check these " + questions.length, right: "the likely answer is picked" } : null;
 
   // The notes: one short sentence each, only those that apply.
@@ -358,7 +376,7 @@ export function slipModel({ base, picks = new Map(), outs = new Set(), state = {
     at: isFinite(ms) ? "read at " + clock(ms) : "",
     cells, will, questions, check, notes, none, say,
     now: r.now, after: r.after, add, off,
-    button: buttonText(add, off), canAdd: add > 0 || off > 0,
+    open, button: buttonText(add, off, open), canAdd: add > 0 || off > 0,
   };
 }
 

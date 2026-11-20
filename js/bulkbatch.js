@@ -5,9 +5,10 @@
 // (js/takeback.js runs it; js/views/bulkadd.js and js/views/history.js show
 // the row).
 //
-// A batch: { at, n, off, tickets, removed, stops, stays, prints, back }:
+// A batch: { at, n, off, items, removed, stops, stays, prints, back }:
 // when it was added (ISO), how many tickets and how many old pictures it
 // took off, the ids of the pictures it added (saved or waiting on the phone),
+// one list per ticket (a PDF's pages are one ticket; fix round 1, M2),
 // of the old pictures it took off, of the stops and stays it added, a short
 // print of each stop it added as the batch left it (8 hex characters, so a
 // stop changed since is left alone), and when it was taken back ("" until
@@ -34,6 +35,14 @@ const PRINT = /^[0-9a-f]{8}$/;
 const plural = (n, one, many) => n + " " + (n === 1 ? one : many);
 const ids = (v) => [...new Set((Array.isArray(v) ? v : []).filter((x) => typeof x === "string" && ID.test(x)))].slice(0, 200);
 const count = (v) => (Number.isInteger(v) && v >= 0 && v <= 10000 ? v : 0);
+// Its tickets, each a list of picture ids; an older record's flat `tickets` is one picture each.
+const itemsOf = (o) => {
+  const seen = new Set();
+  const raw = Array.isArray(o.items) ? o.items : Array.isArray(o.tickets) ? o.tickets.map((id) => [id]) : [];
+  return raw.slice(0, 120).map((one) => ids(one).filter((id) => !seen.has(id) && seen.add(id))).filter((one) => one.length);
+};
+// Every picture id of a batch.
+export const picturesOf = (b) => b.items.flat();
 
 export function batchOf(o = {}) {
   const prints = {};
@@ -43,7 +52,7 @@ export function batchOf(o = {}) {
     at: typeof o.at === "string" && ISO.test(o.at) ? o.at : "",
     n: count(o.n),
     off: count(o.off),
-    tickets: ids(o.tickets),
+    items: itemsOf(o),
     removed: ids(o.removed),
     stops,
     stays: ids(o.stays),
@@ -108,29 +117,37 @@ export function stopFree(id, batch, state, { removing = [] } = {}) {
 // ones it took off are put back (from History), then the stops it added
 // that hold nothing else go. A stay it added is left on. With no signal and
 // anything of it already sent, nothing is tried (blocked).
+// Run again after a part failed (fix round 1, I1), it does only what is left:
+// the pictures still on, the old ones not back yet, the stops still there.
 export function planOf(batch, state, { unsent = new Set() } = {}) {
   const on = new Set(live(state).map((t) => t.id));
-  const remove = batch.tickets.filter((id) => on.has(id));
+  const remove = picturesOf(batch).filter((id) => on.has(id));
+  const putBack = batch.removed.filter((id) => !on.has(id));
   const stops = batch.stops.filter((id) => stopFree(id, batch, state, { removing: remove }));
   const stays = batch.stays.filter((id) => (state.stays || []).some((x) => x && x.id === id && !x.deleted)).length;
-  const sent = remove.some((id) => !unsent.has(id)) || batch.removed.length > 0 || stops.length > 0;
-  return { remove, putBack: batch.removed.slice(), stops, stays, blocked: state.online === false && sent };
+  const sent = remove.some((id) => !unsent.has(id)) || putBack.length > 0 || stops.length > 0;
+  return { remove, putBack, stops, stays, blocked: state.online === false && sent };
+}
+
+// The tickets of a batch now off the trip (every picture of each), counted in tickets.
+export function ticketsBack(batch, isOn) {
+  return batch.items.filter((one) => one.every((id) => !isOn(id))).length;
 }
 
 export const NO_SIGNAL = "No signal. Take it back from History when there is signal.";
+export const NOT_LOOKED_UP = "The old pictures couldn’t be looked up, so nothing was taken back. Try again.";
 
-// back: the batch's tickets now off the trip, of total; put: old pictures put back, of removed.
-export function resultText({ total = 0, back = 0, put = 0, removed = 0, stays = 0 } = {}) {
+// back: the batch's tickets now off the trip, of total (tickets, not pages);
+// put: old pictures put back; lost: old pictures History can no longer put
+// back; done: nothing is left to try (else the row keeps its button).
+export function resultText({ total = 0, back = 0, put = 0, lost = 0, stays = 0, done = true } = {}) {
   let t;
-  let rest = false;
   if (!total) t = "Taken back.";
   else if (back >= total) t = "Taken back: " + plural(total, "ticket", "tickets") + ".";
-  else {
-    t = "Taken back " + back + " of " + total + ". The rest have their own line in History.";
-    rest = true;
-  }
+  else t = "Taken back " + back + " of " + total + ".";
   if (put) t += " " + plural(put, "old picture", "old pictures") + " put back.";
-  if (put < removed && !rest) t += " The rest have their own line in History.";
+  if (!done) return t + " Try again for the rest.";
+  if (lost) t += " The rest have their own line in History.";
   if (stays) t += stays === 1 ? " The stay it added is left on." : " The stays it added are left on.";
   return t;
 }

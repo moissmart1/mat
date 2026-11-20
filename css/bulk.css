@@ -235,7 +235,9 @@
 .sl-batch{margin:10px 2px 0;padding:2px 12px;background:var(--grain), var(--paper);color:var(--print);border-radius:2px;box-shadow:var(--lift)}
 .sl-batch .tp-row{border-bottom:0}
 .tp-s small{display:block;font-size:12px;font-weight:700;opacity:.7;text-decoration:none}
-.tp-row.is-undone .tp-s small{text-decoration:none}
+/* Taken back: greyed, the title struck through, never the "taken back at" line (fix round 1). */
+.tp-batch.is-undone .tp-s,.sl-batch .tp-row.is-undone .tp-s{text-decoration:none}
+.tp-batch.is-undone .tp-s b,.sl-batch .tp-row.is-undone .tp-s b{text-decoration:line-through}
 /* A phone 320 wide: one column, the foot's two parts stacked. */
 @media (max-width:359px){
   .sl-grid{grid-template-columns:1fr}

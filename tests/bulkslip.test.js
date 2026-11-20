@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { sortFiles, placeOf, placeKey } from "../js/bulk.js";
-import { slipModel, toAnswers, extrasOf, defaultPick, skipsOf, buttonText, cellsOf, questionOf, addedSlip } from "../js/bulkslip.js";
+import { slipModel, toAnswers, extrasOf, defaultPick, skipsOf, buttonText, cellsOf, questionOf, addedSlip, GUESS } from "../js/bulkslip.js";
 
 const DAYS = Array.from({ length: 11 }, (_, i) => ({ date: "2026-12-" + String(10 + i).padStart(2, "0") }));
 const STOPS = [
@@ -55,7 +55,7 @@ function slip({ picks = new Map(), outs = new Set(), list = [chg()], st = state(
   const base = review({ files, st, list });
   let a = toAnswers({ base, picks, outs });
   const r1 = review({ files, st, list, ...a });
-  const extras = extrasOf(base, r1);
+  const extras = extrasOf(base, r1, picks);
   if (extras.length) a = toAnswers({ base, picks, outs, extras });
   const result = review({ files, st, list, ...a });
   return { base, result, extras, a, m: slipModel({ base, picks, outs, state: st, rows: ROWS, result, extras, aside, listAt }) };
@@ -96,6 +96,9 @@ test("buttonText: all four forms, singular and plural", () => {
   assert.equal(buttonText(0, 2), "Take 2 pictures off");
   assert.equal(buttonText(0, 1), "Take 1 picture off");
   assert.equal(buttonText(0, 0), "Nothing to add");
+  assert.equal(buttonText(9, 0, 1), "Add 9 tickets · 1 to check");
+  assert.equal(buttonText(1, 2, 2), "Add 1 ticket, take 2 pictures off · 2 to check");
+  assert.equal(buttonText(0, 0, 1), "Nothing to add · 1 to check");
 });
 
 test("a pick and an out change add, off, after, the heading and the button", () => {
@@ -153,9 +156,15 @@ test("picks and outs give exactly the answers the old taps gave", () => {
 
 test("the likely way, per kind: a file's first choice, else Leave it out; a line never loses pictures by default", () => {
   const card = (kind, choices) => ({ kind, choices });
-  for (const kind of ["nostop", "far", "close", "ref", "several", "split", "stranger", "norow", "stays", "newstay", "limit"]) {
+  for (const kind of ["nostop", "far", "stranger", "stays", "newstay", "limit"]) {
     assert.equal(defaultPick(card(kind, [{ stop: "s-aq" }, { stop: "s-mu" }])), "c0", kind);
     assert.equal(defaultPick(card(kind, [])), "out", kind + " with no choice");
+  }
+  // "Which stop is it for?": the stops are a guess, so no dot is filled (Mo, fix round 1).
+  for (const kind of ["close", "ref", "several", "split", "norow"]) {
+    assert.ok(GUESS.includes(kind));
+    assert.equal(defaultPick(card(kind, [{ stop: "s-aq" }])), "none", kind);
+    assert.equal(defaultPick(card(kind, [])), "none", kind + " with no choice");
   }
   assert.equal(defaultPick(card("outside", [])), "out");
   const L = (...acts) => ({ lchoices: acts.map((act) => ({ act })) });
@@ -289,9 +298,13 @@ test("a question that appears only because a dot moved: a stop now full, under t
   assert.equal(yes.m.button, "Add 6 tickets");
 });
 
-test("skipsOf: what Add remembers, the cells out, the questions on Leave it out, the lines kept; never the defaults that add", () => {
+test("skipsOf: what Add remembers, the cells out, the questions tapped to Leave it out, the lines tapped to keep; never a dot filled when the slip opened", () => {
   const base = review({ list: [chg(), off()] });
-  assert.deepEqual(skipsOf({ base }), { items: [], cards: [], keeps: ["off:T011"] });
+  assert.deepEqual(skipsOf({ base }), { items: [], cards: [], keeps: [] }, "the cancelled line opened on keep: not remembered");
+  const outside = { kind: "outside", key: "o#0", choices: [], short: "x" };
+  assert.deepEqual(skipsOf({ base: { items: [], cards: [outside] } }), { items: [], cards: [], keeps: [] }, "a question that opened on Leave it out: not remembered");
+  assert.deepEqual(skipsOf({ base: { items: [], cards: [outside] }, picks: new Map([["o#0", "out"]]) }).cards, ["o#0"], "tapped: remembered");
+  assert.deepEqual(skipsOf({ base, extras: [{ key: "more:f1#0", card: { key: "f1#0", choices: [] } }] }).cards, [], "an extra on its own Leave it out: not remembered");
   assert.deepEqual(skipsOf({ base, outs: new Set(["stop:s-aq"]), picks: new Map([["f10#0", "out"], ["chg:T009", "keep"], ["off:T011", "off"]]) }), { items: ["f1#0", "f2#0"], cards: ["f10#0"], keeps: ["chg:T009"] });
 });
 
@@ -360,4 +373,55 @@ test("addedSlip: one cell per place that got something, with what happened there
   ]);
   assert.match(d.at, /^added at \d\d:\d\d$/);
   assert.equal(placeKey(items[0]), "stop:s-aq");
+});
+
+test("a which-stop question opens with no dot; its ticket waits out of the count, and the key says one is left to check", () => {
+  // Two stops near T020's time on Dec 18: a "close" question.
+  const st = state({ stops: STOPS.concat([{ id: "s-f2", date: "2026-12-18", time: "10:00", title: "Pier cafe" }]) });
+  const rows = ROWS.concat([R({ ticket_id: "T020", start_date: "2026-12-18", start_time: "09:50", title: "Morning pass" })]);
+  const files = FILES.concat([png("f20", "T020 pass.png")]);
+  const base = sortFiles({ files, rows, state: st });
+  base.listDone = [];
+  const q = base.cards.find((c) => c.key === "f20#0");
+  assert.equal(q.kind, "close");
+  const a = toAnswers({ base });
+  assert.equal(a.answers.has("f20#0"), false, "no answer until he picks");
+  const r = sortFiles({ files, rows, state: st, answers: a.answers });
+  r.listDone = [];
+  assert.deepEqual(r.cards.map((c) => c.key), ["f20#0"], "still a card in the review");
+  assert.deepEqual(extrasOf(base, r), [], "an open question is not an extra");
+  const m = slipModel({ base, state: st, rows, result: r, extras: [] });
+  const mq = m.questions.find((x) => x.key === "f20#0");
+  assert.equal(mq.title, "Morning pass: which stop is it for?");
+  assert.deepEqual(mq.options.filter((o) => o.on), []);
+  assert.equal(m.open, 1);
+  assert.equal(m.button, "Add 5 tickets · 1 to check");
+  // Picked: in, and counted.
+  const picks = new Map([["f20#0", "c0"]]);
+  const a2 = toAnswers({ base, picks });
+  const r2 = sortFiles({ files, rows, state: st, answers: a2.answers });
+  r2.listDone = [];
+  const m2 = slipModel({ base, picks, state: st, rows, result: r2, extras: [] });
+  assert.equal(m2.open, 0);
+  assert.equal(m2.button, "Add 6 tickets");
+});
+
+test("a cell whose ticket a moved dot pushed out shows a ring and says so", () => {
+  // The museum holds 7; the boat is put there and sorts before the museum's own line, which no longer fits.
+  const st = state({ tickets: Array.from({ length: 7 }, (_, i) => ({ id: "t" + i, stop: "s-mu" })) });
+  const rows = ROWS.concat([R({ ticket_id: "T090", start_date: "2026-12-12", start_time: "10:00", title: "Aonami Museum" })]);
+  const files = [png("f90", "T090 museum.png"), png("f10", "T010 boat.png")];
+  const base = review({ files, rows, st });
+  const picks = new Map([["f10#0", "pick:s-mu"]]);
+  let a = toAnswers({ base, picks });
+  const r1 = review({ files, rows, st, ...a });
+  const extras = extrasOf(base, r1, picks);
+  assert.deepEqual(extras.map((e) => e.key), ["f90#0"]);
+  a = toAnswers({ base, picks, extras });
+  const result = review({ files, rows, st, ...a });
+  const m = slipModel({ base, picks, state: st, rows, result, extras });
+  const museum = m.cells.find((c) => c.key === "stop:s-mu");
+  assert.equal(museum.held, true);
+  assert.equal(museum.aria, "Aonami Museum, D3 Sat 10:00, left out");
+  assert.equal(m.will.left, "Will add · nothing");
 });
