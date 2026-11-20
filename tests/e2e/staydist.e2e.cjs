@@ -7,7 +7,7 @@ const fs = require("fs");
 const { WITH_PLAN, open, advance, until, text } = require("./helpers.cjs");
 const { geoStub, leaks, HERE } = require("./geostub.cjs");
 
-const SHOTS = "/private/tmp/claude-501/mat-shots/loc";
+const SHOTS = require("./shots.cjs")("loc");
 const shot = async (page, name) => {
   fs.mkdirSync(SHOTS, { recursive: true });
   await page.screenshot({ path: SHOTS + "/" + name + ".png" });
