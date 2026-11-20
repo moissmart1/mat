@@ -24,6 +24,7 @@
 // Reduced motion: no tear, it is simply there (css/tickets.css).
 
 import { header } from "../plan.js";
+import { fillSeal } from "../picture.js";
 import { dayHead } from "../format.js";
 import { ticketKinds, hasFacts, sniff, fromBase64 } from "../tickets.js";
 
@@ -272,7 +273,11 @@ export function mountStub(root, store, keep) {
           b.type = "button";
           b.dataset.k = String(i);
           b.setAttribute("aria-label", who ? (who === me ? "Your code" : who + "’s code") : "The code for everyone");
-          const seal = el("span", "seal" + (i === 0 ? " is-on" : ""), who ? [...who][0].toUpperCase() : "全");
+          const seal = el("span", "seal" + (i === 0 ? " is-on" : ""), who ? "" : "全");
+          if (who) {
+            const person = (store.state.people || []).find((x) => x && x.name === who);
+            fillSeal(seal, { ...person, initials: [...who][0].toUpperCase() }, who);
+          }
           b.append(seal, who === me ? "You" : who || "All");
           w3.append(b);
         });
@@ -299,6 +304,7 @@ export function mountStub(root, store, keep) {
     return JSON.stringify([
       stop && [stop.title, stop.time, stop.detail, stop.date, stop.tkRef, stop.tkName, stop.tkPeople, stop.tkSeat],
       pics.map((t) => [t.id, t.who, t.seat, t.page, keep.have(t.id)]),
+      (store.state.people || []).map((p) => [p.name, p.photo ? p.photo.length + ":" + p.photo.slice(-16) : ""]),
       store.state.me, online(),
     ]);
   }
