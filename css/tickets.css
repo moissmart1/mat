@@ -132,6 +132,7 @@
 .tkp .file-for{grid-column:2 / span 2;grid-row:2;display:flex;flex-wrap:wrap;align-items:center;gap:5px;font-size:12px;font-weight:700}
 .tkp .file-for button{height:30px;min-width:30px;padding:0 7px;border:1.5px solid rgba(21,18,15,.45);border-radius:15px;background:none;color:var(--print);font-size:12px;font-weight:900}
 .tkp .file-for button.is-on{background:var(--shu);border-color:var(--shu);color:#fff}
+.tkp .file-for .seal{width:30px;padding:0}
 .tkp .file-seat{grid-column:2 / span 2;grid-row:3}
 
 /* Held sideways, the bar is a rail on the right: the stub leaves it be. */

@@ -8,7 +8,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const { WITH_PLAN, makeBackend, open, advance, until, text, expectText } = require("./helpers.cjs");
-const { png } = require("./pictures.cjs");
+const { png, profileJpeg } = require("./pictures.cjs");
 
 const SHOTS = "/private/tmp/claude-501/mat-shots/tickets";
 const D12 = "2026-12-12";
@@ -127,6 +127,7 @@ for (const size of SIZES) {
     ...base,
     async run({ page }) {
       const backend = await ticketed();
+      backend.fake.primitives.updateWhere_("People", "name", "Ajen", { photo: await profileJpeg(page) });
       await ready(page, { backend, me: "Ajen" });
       await allKept(page);
       await expectText(page, row(SKY) + " .tk-mark", "券 3 codes · on this phone");
@@ -139,7 +140,8 @@ for (const size of SIZES) {
       assert.equal(await page.evaluate(() => document.getElementById("phone").classList.contains("stub-open")), true);
       // Opens on this phone's person (Ajen), then the others in trip order.
       assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll("#tix .pp-pg")].map((p) => p.dataset.who)), ["Ajen", "Mo", "Trenton"]);
-      assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll("#tix .who3 button")].map((b) => b.textContent)), ["AYou", "MMo", "TTrenton"]);
+      assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll("#tix .who3 button")].map((b) => b.textContent)), ["You", "MMo", "TTrenton"]);
+      assert.ok(await page.locator('#tix [aria-label="Your code"] .seal img').evaluate((img) => img.complete && img.naturalWidth > 0));
       await expectText(page, "#tix .pp-pg .stub-who", "AJENCar 7 · 10B");
       await expectText(page, "#tix .facts", /予約番号Booking refTEST-3001.*名義Name on bookingMO.*人数People3 adults.*座席SeatCar 7 · 10B/);
       await expectText(page, "#tix .kept", "保存済On this phone. Works with no signal.");

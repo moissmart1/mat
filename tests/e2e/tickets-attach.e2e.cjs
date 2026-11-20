@@ -6,7 +6,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const { WITH_PLAN, makeBackend, open, until, text, expectText } = require("./helpers.cjs");
-const { pngBytes, pdfBytes, SVG } = require("./pictures.cjs");
+const { pngBytes, pdfBytes, profileJpeg, SVG } = require("./pictures.cjs");
 
 const SHOTS = "/private/tmp/claude-501/mat-shots/tickets";
 const D12 = "2026-12-12";
@@ -50,10 +50,10 @@ async function edit(page, id) {
     return !!s && s.classList.contains("is-open") && Math.abs(s.getBoundingClientRect().bottom - innerHeight) < 1;
   }), "the stop sheet opens");
 }
-const picked = (page) => page.evaluate(() => [...document.querySelectorAll("#stTix .tkp-picked .file")].map((r) => ({
-  name: r.querySelector(".file-n").firstChild.textContent,
-  for: (r.querySelector(".file-for .is-on") || {}).textContent,
-})));
+const picked = (page) => page.evaluate(() => [...document.querySelectorAll("#stTix .tkp-picked .file")].map((r) => {
+  const who = r.querySelector(".file-for .is-on");
+  return { name: r.querySelector(".file-n").firstChild.textContent, for: who.getAttribute("aria-label") || who.textContent };
+}));
 const waitPicked = (page, n) => until(async () => (await picked(page)).length === n, n + " pictures picked", 15000);
 const sheetClosed = (page) => until(() => page.evaluate(() => !document.getElementById("stop").classList.contains("is-open")), "the sheet closes", 15000);
 const scrollTo = (page, sel) => page.evaluate((s) => document.querySelector(s).scrollIntoView({ block: "center" }), sel);
@@ -66,6 +66,7 @@ for (const size of SIZES) {
     ...(size.mobile === false ? { mobile: false } : {}),
     async run({ page, newPhone }) {
       const backend = makeBackend(WITH_PLAN, { now: NOON12 });
+      backend.fake.primitives.updateWhere_("People", "name", "Ajen", { photo: await profileJpeg(page) });
       await ready(page, { backend });
       await edit(page, SKY);
       assert.equal(await page.evaluate(() => document.getElementById("stTix").hidden), false);
@@ -74,10 +75,14 @@ for (const size of SIZES) {
       await shot(page, "attach-1-edit-" + size.tag);
       await page.setInputFiles("#stTkFile", [1, 2, 3].map((i) => file("IMG_" + i + ".PNG", "image/png", pngBytes(400, 400, 70 + i))));
       await waitPicked(page, 3);
-      assert.deepEqual((await picked(page)).map((p) => p.for), ["M", "A", "T"]);
+      assert.deepEqual((await picked(page)).map((p) => p.for), ["For Mo", "For Ajen", "For Trenton"]);
+      const choices = page.locator("#stTix .file-for").first();
+      assert.ok(await choices.locator('[aria-label="For Ajen"] img').count(), "the saved picture appears in the picker");
+      assert.equal(await choices.locator('[aria-label="For Mo"]').textContent(), "M");
+      assert.equal(await choices.getByRole("button", { name: "All three" }).textContent(), "All three");
       // One tap changes it: the third is Ajen's, then Trenton's again.
       await page.click('#stTix .tkp-picked .file:nth-child(3) [aria-label="For Ajen"]');
-      assert.deepEqual((await picked(page)).map((p) => p.for), ["M", "A", "A"]);
+      assert.deepEqual((await picked(page)).map((p) => p.for), ["For Mo", "For Ajen", "For Ajen"]);
       await page.click('#stTix .tkp-picked .file:nth-child(3) [aria-label="For Trenton"]');
       await page.fill('#stTix .tkp-picked .file:nth-child(1) [data-seat]', "Car 7 · 10A");
       await page.fill("#stTkRef", "TEST-4401");

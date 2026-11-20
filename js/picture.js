@@ -9,10 +9,11 @@
 // choosePicture(file, { shrink, save, notify }) -> true when saved
 //   Shrinks, then hands the address to save; a picture that cannot be used
 //   gets PICTURE_BAD through notify and nothing is sent.
-// fillSeal(node, person, name, { named }) -> node
+// fillSeal(node, person, name, { named, singleLetter }) -> node
 //   Puts the person's picture into a seal (an <img>, its address set as a
 //   property, alt="") or, with none, their initials. named: the seal is on
-//   its own (not inside a labelled button) and says whose it is.
+//   its own (not inside a labelled button) and says whose it is. Ticket
+//   selectors use singleLetter to keep their one-letter fallback.
 // isPicture(v): the same check the backend makes (validatePersonPatch):
 //   a JPEG data address of at most PICTURE_MAX characters whose base64 part
 //   is whole 4-character groups.
@@ -100,9 +101,9 @@ export async function choosePicture(file, { shrink = shrinkPicture, save, notify
 
 const initialsOf = (person, name) => (person && person.initials) || String((person && person.name) || name || "").slice(0, 2).toUpperCase();
 
-export function fillSeal(node, person, name, { named = false } = {}) {
+export function fillSeal(node, person, name, { named = false, singleLetter = false } = {}) {
   const pic = person && isPicture(person.photo) ? person.photo : "";
-  const letters = initialsOf(person, name);
+  const letters = singleLetter ? ([...String(name || person?.name || "")][0] || "").toUpperCase() : initialsOf(person, name);
   node.classList.toggle("has-pic", !!pic);
   if (!pic) {
     node.textContent = letters;

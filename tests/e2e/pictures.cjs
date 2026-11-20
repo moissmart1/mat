@@ -101,4 +101,22 @@ function pdfBytes(pages = 2) {
 
 const SVG = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><script>alert(1)</script><rect width="10" height="10"/></svg>');
 
-module.exports = { png, pngBytes, pdfBytes, SVG };
+// A sun over water, recognisable even on a 30 px person selector.
+function profileJpeg(page) {
+  return page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 64;
+    const g = canvas.getContext("2d");
+    g.fillStyle = "#8ed9ef";
+    g.fillRect(0, 0, 64, 64);
+    g.fillStyle = "#ffe294";
+    g.beginPath();
+    g.arc(33, 32, 14, 0, 2 * Math.PI);
+    g.fill();
+    g.fillStyle = "#17476b";
+    g.fillRect(0, 37, 64, 27);
+    return canvas.toDataURL("image/jpeg");
+  });
+}
+
+module.exports = { png, pngBytes, pdfBytes, profileJpeg, SVG };

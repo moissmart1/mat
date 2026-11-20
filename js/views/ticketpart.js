@@ -24,6 +24,7 @@
 
 import { LIMITS, NOT_A_TICKET, sniff, shrink, shrinkCanvas, pdfPages } from "../tickets.js";
 import { newId } from "../time.js";
+import { fillSeal } from "../picture.js";
 
 function el(tag, cls, text) {
   const n = document.createElement(tag);
@@ -97,7 +98,7 @@ export function mountTicketPart(box, store, keep) {
   let busy = false;
   let reading = 0; // files still being turned into pictures
 
-  const people = () => (store.state.people || []).map((p) => p.name).filter(Boolean);
+  const people = () => (store.state.people || []).filter((p) => p && p.name);
   const liveOn = (id) => (store.state.tickets || []).filter((t) => t && t.stop === id && !t.gone);
   const room = () => {
     const onStop = stop && stop.id ? liveOn(stop.id).length : 0;
@@ -161,14 +162,20 @@ export function mountTicketPart(box, store, keep) {
   function forRow(p) {
     const fr = el("div", "file-for");
     fr.append("For ");
-    const opts = [["", "All three"], ...people().map((name) => [name, [...name][0].toUpperCase()])];
-    if (people().length !== 3) opts[0][1] = "Everyone";
-    for (const [v, label] of opts) {
-      const b = el("button", p.who === v ? "is-on" : "", label);
+    const members = people();
+    for (const person of [null, ...members]) {
+      const v = person ? person.name : "";
+      const b = el("button", p.who === v ? "is-on" : "");
       b.type = "button";
       b.dataset.for = p.key + "|" + v;
       b.setAttribute("aria-pressed", String(p.who === v));
-      if (v) b.setAttribute("aria-label", "For " + v);
+      if (person) {
+        b.classList.add("seal");
+        b.setAttribute("aria-label", "For " + v);
+        fillSeal(b, person, v, { singleLetter: true });
+      } else {
+        b.textContent = members.length === 3 ? "All three" : "Everyone";
+      }
       b.disabled = busy;
       fr.append(b);
     }
@@ -220,7 +227,7 @@ export function mountTicketPart(box, store, keep) {
       for (let i = 0; i < list.length; i++) {
         const file = list[i];
         const type = await sniff(file);
-        const who = forEach ? ppl[i] : "";
+        const who = forEach ? ppl[i].name : "";
         const name = str(file.name).slice(0, 60) || "Picture";
         if (type === "application/pdf") {
           const space = room();
