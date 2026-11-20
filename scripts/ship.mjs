@@ -8,7 +8,9 @@
 //                                (to check something by hand against the new
 //                                backend; `npm run ship` again does the rest)
 //
-// 1. This commit is main, clean, and has the gate's receipt (npm run gate).
+// 1. This commit is main, clean, and has the gate's receipt (npm run gate),
+//    from either runner (GitHub, or this Mac with --local): the first line
+//    says which.
 // 2. If the live backend is not this commit's backend: clasp push, new version
 //    on the same deployment, then wait until the live backend answers with
 //    this commit's stamp.
@@ -34,7 +36,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
-import { ROOT, SITE, askUntil, call, checkKey, tripLoaded, git, gitOk, liveStamp, migrateUntilCurrent, privateEnv, readConfig, readReceipt, withoutKeys, writtenBackendStamp } from "./release-lib.mjs";
+import { ROOT, SITE, askUntil, call, checkKey, tripLoaded, git, gitOk, judgeReceipt, liveStamp, migrateUntilCurrent, privateEnv, readConfig, readReceipt, runnerText, withoutKeys, writtenBackendStamp } from "./release-lib.mjs";
 import { shellList } from "./stamp-sw.mjs";
 
 const check = process.argv.includes("--check");
@@ -52,8 +54,11 @@ const sha = (buf) => createHash("sha256").update(buf).digest("hex");
 if (git(["rev-parse", "--abbrev-ref", "HEAD"]) !== "main") stop("Releases go out from main.", "Merge the work into main first.");
 if (git(["status", "--porcelain"])) stop("There are uncommitted changes.", "Commit them, then `npm run gate`.");
 const head = git(["rev-parse", "HEAD"]);
-const receipt = readReceipt(git(["rev-parse", "HEAD^{tree}"]));
-if (!receipt) stop("This commit has not passed the gate.", "Run `npm run gate` (about 15 minutes).");
+const headTree = git(["rev-parse", "HEAD^{tree}"]);
+const receipt = readReceipt(headTree);
+const notReady = judgeReceipt(receipt, { tree: headTree, appVersion: readConfig().appVersion });
+if (notReady) stop(notReady, "Run `npm run gate` (browser tests on GitHub, about 15 minutes; `-- --local` runs them on this Mac).");
+step("gate passed on " + runnerText(receipt) + " at " + receipt.at);
 git(["fetch", "origin", "main"]);
 if (!gitOk(["merge-base", "--is-ancestor", "origin/main", "HEAD"])) stop("origin/main has commits this one does not.", "Merge them, then `npm run gate` again.");
 git(["fetch", "origin", "dev"]);
@@ -65,7 +70,7 @@ const env = privateEnv();
 const KEY = checkKey(env);
 if (!KEY) stop("No key to check the live trip with.", "Put MAT_CHECK_KEY=... in ~/.config/mat/env (never in the repository).");
 if (!env.MAT_CHECK_KEY) step("no MAT_CHECK_KEY: checking with the old shared MAT_KEY");
-step("commit " + head.slice(0, 7) + ", version " + cfg.appVersion + ", gate passed " + receipt.at + " (" + receipt.unit.pass + " unit, " + receipt.e2e.pass + " browser)");
+step("commit " + head.slice(0, 7) + ", version " + cfg.appVersion + ", gate passed " + receipt.at + " on " + (receipt.runner && receipt.runner.kind === "github" ? "GitHub" : "this Mac") + " (" + receipt.unit.pass + " unit, " + receipt.e2e.pass + " browser)");
 
 // 2 ---------------------------------------------------------------------------
 const want = writtenBackendStamp();

@@ -133,6 +133,32 @@ export function readReceipt(tree, root = ROOT) {
   }
 }
 
+// Where the gate's browser tests ran, in words: "GitHub (run …)" or "this Mac"
+// (a receipt from before issue 9 has no runner: it was this Mac).
+export function runnerText(receipt) {
+  const r = receipt && receipt.runner;
+  if (r && r.kind === "github") return "GitHub, run " + r.runId + (r.attempt > 1 ? " attempt " + r.attempt : "") + " (" + r.url + ")";
+  return "this Mac";
+}
+
+// Why a receipt does not let this commit out, or null when it does. The same
+// rules for a receipt from either runner: for this tree and version, and every
+// test counted and passed.
+export function judgeReceipt(receipt, { tree, appVersion }) {
+  if (!receipt) return "This commit has not passed the gate.";
+  if (receipt.tree !== tree) return "The gate's receipt is for other files (" + String(receipt.tree).slice(0, 7) + ").";
+  if (receipt.appVersion !== appVersion) return "The gate passed version " + receipt.appVersion + ", but this commit is version " + appVersion + ".";
+  const u = receipt.unit || {};
+  const e = receipt.e2e || {};
+  if (u.fail || e.fail) return "The gate's receipt for this commit records failing tests.";
+  if (!(u.pass > 0) || !(e.pass > 0)) return "The gate's receipt counts no unit or no browser tests.";
+  const r = receipt.runner;
+  if (r && r.kind === "github" && (!r.runId || !/^https:\/\/github\.com\//.test(String(r.url || "")) || r.headSha !== receipt.head)) {
+    return "The gate's receipt names no GitHub run for this commit.";
+  }
+  return null;
+}
+
 // --- the live backend --------------------------------------------------------
 
 // The stamp the live backend answers with ("" from a backend older than the
