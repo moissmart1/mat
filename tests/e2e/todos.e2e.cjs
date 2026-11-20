@@ -5,6 +5,7 @@
 // cannot: fake.planner.cellFails), and every write it receives is recorded.
 // Every item, note, link and id here is made up.
 
+const shotPath = require("./shots.cjs");
 const assert = require("node:assert/strict");
 const { SEED, NOON12, makeBackend, open, advance, until, text, expectText, visible } = require("./helpers.cjs");
 
@@ -685,8 +686,8 @@ module.exports.push(
         bold: 0, below: true, fits: true,
       });
       await page.evaluate(() => document.getElementById("bwProblems").scrollIntoView({ block: "end" }));
-      require("fs").mkdirSync("/private/tmp/claude-501/mat-shots/ticks", { recursive: true });
-      await page.screenshot({ path: "/private/tmp/claude-501/mat-shots/ticks/before-problems.png" });
+      require("fs").mkdirSync(shotPath("ticks"), { recursive: true });
+      await page.screenshot({ path: shotPath("ticks/before-problems.png") });
       // The planner put right: the next real pull clears the block.
       backend.fake.planner.tabs["Book Now"].splice(-2, 2);
       await advance(page, backend, 31 * 1000);
@@ -729,7 +730,8 @@ function railKeys(page) {
 
 // The bottom bar's keys, measured: on one line, apart, inside the bar, no text clipped or touching a key's edge, each at least 44 px tall.
 async function barShape(page) {
-  return page.evaluate(() => {
+  const ink = await page.evaluateHandle(require("./text-ink.cjs"));
+  return page.evaluate((ink) => {
     const navEl = document.getElementById("nav");
     const nav = navEl.getBoundingClientRect();
     const items = [...document.querySelectorAll("#nav button")].filter((b) => !b.hidden);
@@ -769,10 +771,8 @@ async function barShape(page) {
       const walker = document.createTreeWalker(document.getElementById("beforeBtn"), NodeFilter.SHOW_TEXT);
       for (let q = walker.nextNode(); q; q = walker.nextNode()) {
         if (!q.textContent.trim() || pill.contains(q)) continue;
-        const range = document.createRange();
-        range.selectNodeContents(q);
-        const w = range.getBoundingClientRect();
-        if (p.left < w.right - 0.5 && w.left < p.right - 0.5 && p.top < w.bottom - 0.5 && w.top < p.bottom - 0.5) cover.push(q.textContent.trim());
+        if (ink(q).some(w => p.left < w.right - 0.5 && w.left < p.right - 0.5 &&
+          p.top < w.bottom - 0.5 && w.top < p.bottom - 0.5)) cover.push(q.textContent.trim());
       }
     }
     const ring = document.getElementById("ring");
@@ -800,7 +800,7 @@ async function barShape(page) {
       ringHeight: rr.height,
       lamps: items.map(lamp),
     };
-  });
+  }, ink);
 }
 
 // The measured bar in its five-key or four-key state. Returns the id of the one lit lamp.
@@ -960,16 +960,14 @@ module.exports.push({
     const box = await page.locator('#nav [data-tab="money"]').boundingBox();
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await page.mouse.down();
-    // Measured once the key's own press transition has finished, not after a fixed wait: on a busy
-    // machine 250 ms of real time could still catch the .08 s transition mid-flight (it read 1.06 px).
-    await until(() => page.evaluate(() => {
-      const b = document.querySelector('#nav [data-tab="money"]');
-      return b.matches(":active") && b.getAnimations().length === 0;
-    }), "the key is down and still");
-    const pressed = await page.evaluate(() => {
-      const b = document.querySelector('#nav [data-tab="money"]');
-      return { y: b.getBoundingClientRect().y, shadow: getComputedStyle(b).boxShadow };
-    });
+    // A transition may not yet exist on the first frame after mouse-down.
+    // Observe the pressed geometry and the flattened shadow together.
+    const pressed = await until(async () => {
+      const state = await page.locator('#nav [data-tab="money"]').evaluate(b => ({
+        active: b.matches(":active"), y: b.getBoundingClientRect().y, shadow: getComputedStyle(b).boxShadow,
+      }));
+      return state.active && Math.abs(state.y - box.y - 1.5) < 0.3 && !state.shadow.includes("3px") && state;
+    }, "the key moves down 1.5 px and its drop shadow flattens");
     await page.mouse.move(2, 2);
     await page.mouse.up();
     assert.ok(Math.abs(pressed.y - box.y - 1.5) < 0.3, "moved down " + (pressed.y - box.y));

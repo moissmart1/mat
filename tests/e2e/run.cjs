@@ -12,7 +12,7 @@
 //
 // Each case gets a fresh browser context: 390x844, mobile, touch, Japan time,
 // clipboard allowed, service workers blocked unless the case allows them. Every request to a host other than localhost is answered
-// here (Google Fonts get a small stand-in stylesheet), so nothing needs the network.
+// here, including the real web fonts from local packages. No test needs the network.
 // That holds for a case that allows the service worker too: this Playwright
 // routes a service worker's own requests through context.route as well.
 // A case fails on a thrown error, a console error or an uncaught page error;
@@ -24,6 +24,7 @@ const http = require("http");
 const path = require("path");
 const { chromium } = require("playwright-core");
 const { PORT, ORIGIN } = require("./helpers.cjs");
+const { serveFont } = require("./font-routes.cjs");
 const { takeTurn } = require("./queue.cjs");
 const { parseShard, shardFiles } = require("./shard.cjs");
 
@@ -80,19 +81,11 @@ const CONTEXT = {
   serviceWorkers: "block",
 };
 
-// What the runner answers for the Google Fonts stylesheet: a marker a test can read.
-const FONT_CSS = ":root{--fonts-stand-in:1}";
-
 async function hermetic(context) {
   await context.route("**/*", (route) => {
     const url = new URL(route.request().url());
     if (url.hostname === "localhost") return route.continue();
-    // A small CORS stylesheet in place of Google's (the app asks for it with
-    // crossorigin, so the service worker can keep it); no @font-face, so no
-    // font files are asked for.
-    if (url.hostname === "fonts.googleapis.com") {
-      return route.fulfill({ status: 200, contentType: "text/css", headers: { "Access-Control-Allow-Origin": "*" }, body: FONT_CSS });
-    }
+    if (url.hostname === "fonts.googleapis.com" || url.hostname === "fonts.gstatic.com") return serveFont(route, url);
     return route.fulfill({ status: 200, body: "" });
   });
 }

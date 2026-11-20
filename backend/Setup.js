@@ -367,3 +367,28 @@ function checkPlannerTodos_() {
     Logger.log("Change Log: couldn’t read it.");
   }
 }
+
+// ---- the ticket shelf (auto-add): the key the newsletter desk answers to ----
+// The desk (another script of the owner's, which can read Drive) hands the
+// ticket files to this backend only with this key. Run once from the script
+// editor: it makes a random key (64 hex characters: two random UUIDs joined, about 244 random bits), keeps it only
+// in this script's Script Properties (TICKET_DESK_KEY) and logs only its
+// SHA-256, to paste into the desk's Script Property MAT_KEY_HASH. Running it
+// again logs the same hash and changes nothing. To replace the key, delete
+// TICKET_DESK_KEY and run it again, then paste the new hash into the desk.
+// The desk's web address goes in the Script Property TICKET_DESK_URL by hand.
+function ticketDeskKey() {
+  var key = getProp_("TICKET_DESK_KEY");
+  var made = false;
+  if (!key) {
+    key = newPersonKey_();
+    setProp_("TICKET_DESK_KEY", key);
+    made = true;
+  }
+  // Only the hash is ever logged.
+  var hash = sha256Hex_(key);
+  key = null;
+  Logger.log((made ? "Made the ticket desk key. " : "The ticket desk key is already there. ") + "Paste this into the desk’s Script Property MAT_KEY_HASH: " + hash);
+  var url = getProp_("TICKET_DESK_URL");
+  Logger.log(url ? (/^https:\/\/script\.google\.com\//.test(url) ? "TICKET_DESK_URL is set." : "TICKET_DESK_URL is set but is not a script.google.com address: the desk won’t be asked.") : "Set the Script Property TICKET_DESK_URL to the desk’s web app address.");
+}

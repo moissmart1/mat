@@ -9,7 +9,7 @@ const assert = require("node:assert/strict");
 const fs = require("fs");
 const { SEED, makeBackend, open, advance, until, text, expectText, visible } = require("./helpers.cjs");
 
-const SHOTS = "/private/tmp/claude-501/mat-shots/picks";
+const SHOTS = require("./shots.cjs")("picks");
 const PLANNER_ID = "fakePlannerSheet_0123456789abcdefXYZ";
 const BHEAD = ["#", "Item", "Who", "Book by", "Status", "Notes", "Booking link"];
 const brow = (o) => BHEAD.map((h) => (o[h] === undefined ? "" : o[h]));

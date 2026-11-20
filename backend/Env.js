@@ -220,3 +220,43 @@ function plannerAppendRow_(tab, headerRow, firstCol, values) {
 function torontoNow_() {
   return Utilities.formatDate(new Date(), "America/Toronto", "yyyy-MM-dd HH:mm") + " ET";
 }
+
+// ---- the ticket shelf: the newsletter desk, another script of the owner's (auto-add) ----
+// The desk can read Drive; this script cannot (and must not gain the
+// permission). Its address is the Script Property TICKET_DESK_URL and the key
+// it answers to TICKET_DESK_KEY (made by ticketDeskKey, Setup.js; the desk
+// keeps only its SHA-256). The key travels in the body, never in the address,
+// and is never logged. -> the desk's answer as an object; null when the desk
+// is not set up, can't be reached, or answers something that is not JSON.
+// UrlFetchApp needs only script.external_request, which this script has.
+function deskPost_(payload) {
+  var url = getProp_("TICKET_DESK_URL");
+  var key = getProp_("TICKET_DESK_KEY");
+  if (!url || !key || !/^https:\/\/script\.google\.com\//.test(url)) return null;
+  var body = {};
+  Object.keys(payload).forEach(function (k) { body[k] = payload[k]; });
+  body.k = key;
+  try {
+    var res = UrlFetchApp.fetch(url, { method: "post", contentType: "text/plain;charset=utf-8", payload: JSON.stringify(body), muteHttpExceptions: true, followRedirects: true });
+    if (res.getResponseCode() !== 200) return null;
+    var got = JSON.parse(res.getContentText("UTF-8"));
+    return got && typeof got === "object" ? got : null;
+  } catch (e) {
+    // Never rethrown: an error's text could hold the address.
+    return null;
+  }
+}
+
+// Whether the desk is set up here (both properties there; never their values).
+function deskReady_() {
+  return !!getProp_("TICKET_DESK_URL") && !!getProp_("TICKET_DESK_KEY");
+}
+
+// The script cache, for the desk's list of files between two looks (auto-add).
+function cacheGet_(key) {
+  return CacheService.getScriptCache().get(key);
+}
+
+function cachePut_(key, value, seconds) {
+  CacheService.getScriptCache().put(key, value, seconds);
+}
