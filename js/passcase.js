@@ -12,10 +12,11 @@
 // ones of their day (stopsFor) and are used only once their day is over.
 //
 // passCase(state, nowMs, { have, here }) ->
-//   { on, date, next, today, later, used, toCome, todayLeft, empty }
-// - on: the trip's first day has begun (tripStarted): the Tickets key is in
-//   the bar in Before's place.
-// - date: today in the trip's zone.
+//   { on, date, next, today, later, used, toCome, todayLeft, empty, hook }
+// - on: the trip has begun (tripStarted: from the eve when there is one): the
+//   Tickets key is in the bar in Before's place.
+// - date: today by the Days clock (plan.js tripNow: a day in its own zone
+//   is that place's). An eve's tickets stand by date as any other (day 0).
 // - next: the next ticket not yet used (soonest first), or null.
 // - today / later: the other tickets not yet used, today's and later days',
 //   soonest first (the window's is in neither).
@@ -30,20 +31,24 @@
 //   on this phone, else null.
 // - lead: the window's only: the leave line the departure board prints for
 //   today's next stop (travel minutes, or where the phone is), else null.
+// - hook: the stay shown tonight (stayShownFor, so before 04:00 last night's)
+//   when it has a booking (stayMark), as { id, name, ref, n, total, state,
+//   mark } (nightOf), else null. It changes nothing else: a stay's pictures
+//   are never in the window, a pocket or a count.
 
-import { dateIn } from "./time.js";
-import { nowIn, stopsFor, nextStopId, isPast, minutesOf, nextLine, hereLine, header } from "./plan.js";
-import { ticketMark, ticketKinds } from "./tickets.js";
+import { tripNow, stopsFor, nextStopId, isPast, minutesOf, nextLine, hereLine, header, stayShownFor, nightOf } from "./plan.js";
+import { ticketMark, ticketKinds, stayMark } from "./tickets.js";
 import { tidyLine } from "./board.js";
 
 const str = (v) => (typeof v === "string" ? v.trim() : "");
 const list = (v) => (Array.isArray(v) ? v : []);
-const tzOf = (s) => (s && s.trip && s.trip.tz) || "Asia/Tokyo";
-
-// The trip's first day has begun in the trip's own zone (and the trip is loaded).
+// The trip has begun by the Days clock (tripNow): from the evening before
+// the first day when there is one (state.eves), else from the first day
+// (and the trip is loaded).
 export function tripStarted(s, nowMs) {
   if (!s || s.status !== "ready" || !s.trip || typeof s.trip.start !== "string" || !s.trip.start) return false;
-  return dateIn(tzOf(s), nowMs) >= s.trip.start;
+  const eve = list(s.eves).find((d) => d && typeof d.date === "string" && d.date);
+  return tripNow(s, nowMs).date >= (eve ? eve.date : s.trip.start);
 }
 
 // The status line of a ticket, from its 券 mark.
@@ -62,14 +67,22 @@ function firstPicture(pics, me, have) {
 }
 
 export function passCase(s, nowMs, { have = () => false, here = null } = {}) {
-  const tz = tzOf(s);
-  const now = nowIn(tz, nowMs);
-  const out = { on: tripStarted(s, nowMs), date: now.date, next: null, today: [], later: [], used: [], toCome: 0, todayLeft: 0, empty: true };
+  const now = tripNow(s, nowMs);
+  const out = { on: tripStarted(s, nowMs), date: now.date, next: null, today: [], later: [], used: [], toCome: 0, todayLeft: 0, empty: true, hook: null };
   if (!s || s.status !== "ready" || s.ticketsReady !== true) return out;
 
   const days = list(s.days).filter((d) => d && typeof d.date === "string");
   const stops = list(s.stops).filter((x) => x && typeof x.id === "string" && x.id && typeof x.date === "string" && x.date && !x.deleted);
   const tickets = list(s.tickets).filter((t) => t && typeof t.id === "string" && t.id);
+
+  // The hook: tonight's stay, when it has a booking (before the case's own tickets, so it shows with none).
+  const clock = { today: now.date, minutes: now.minutes };
+  const stay = stayShownFor(list(s.stays).filter((x) => x && typeof x.id === "string" && x.id), now.date, clock);
+  const stayM = stay ? stayMark(stay, tickets, have) : null;
+  if (stayM) {
+    const night = nightOf(stay, clock);
+    out.hook = { id: stay.id, name: str(stay.name) || str(stay.nameJp), ref: str(stay.tkRef), n: night.n, total: night.total, state: night.state, mark: stayM };
+  }
   const dates = [...new Set(stops.map((x) => x.date))].sort();
 
   // Every ticket, in the order of the trip: by day, then the Days screen's order.

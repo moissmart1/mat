@@ -66,6 +66,7 @@ const MARKUP = `
   <label class="st-f"><span>Japanese name on signs</span><input id="stSign" maxlength="20" lang="ja" autocomplete="off" enterkeyhint="done"></label>
   <div id="stTix" hidden></div>
   <p class="st-msg" id="stMsg" role="status"></p>
+  <button type="button" id="stDiscard" hidden>Discard draft</button>
   <div class="st-btns"><button type="button" id="stDel" hidden>Remove</button><button type="button" id="stSave" disabled>Add stop</button></div>
 </div>`;
 
@@ -167,6 +168,7 @@ export function mountStopSheet(root, store, { keep = null, storage = null } = {}
   const msg = $("stMsg");
   const save = $("stSave");
   const del = $("stDel");
+  const discard = $("stDiscard");
   const f = {
     title: $("stWhat"), time: $("stTime"), detail: $("stDetail"), gettingThere: $("stGo"), travelMin: $("stMin"),
     fixed: $("stFixed"), place: $("stPlace"), link: $("stLink"), signJp: $("stSign"),
@@ -194,7 +196,6 @@ export function mountStopSheet(root, store, { keep = null, storage = null } = {}
   let drafts = null;
   let originalInputs = {};
   let draft = null;
-  let openingDraft = null;
 
   // Only editable text, checkbox values and the retry id belong here. Ticket
   // files use the separate ticket store. Preserve the raw text as typed.
@@ -207,14 +208,16 @@ export function mountStopSheet(root, store, { keep = null, storage = null } = {}
 
   function captureDraft() {
     if (!drafts || !mode) return;
-    const next = updateStopDraft(openingDraft, originalInputs, formValues(), addId);
+    const next = updateStopDraft(null, originalInputs, formValues(), addId);
     if (!next) {
       drafts.clear(draft);
       draft = null;
+      discard.hidden = true;
       return;
     }
     draft = next;
     drafts.write(draft);
+    discard.hidden = false;
   }
 
   const isOpen = () => sheet.classList.contains("is-open");
@@ -322,6 +325,7 @@ export function mountStopSheet(root, store, { keep = null, storage = null } = {}
   function update() {
     if (!isOpen()) return;
     const busy = phase !== null;
+    discard.disabled = busy;
     for (const field of Object.values(f)) field.disabled = busy;
     pin.disabled = busy;
     if (withTix) part.setBusy(busy);
@@ -359,10 +363,24 @@ export function mountStopSheet(root, store, { keep = null, storage = null } = {}
       ? stopDrafts(storage, [trip.name, trip.start, store.state.me, mode, ...(stopId ? [stopId] : [day, addId])])
       : null;
     draft = drafts ? drafts.read() : null;
-    openingDraft = draft;
+    discard.hidden = !draft;
+    if (draft) {
+      // Restore only fields whose saved baseline still matches this stop.
+      // A newer value from another phone wins over that draft field.
+      for (const [id, initial] of Object.entries(originalInputs)) {
+        if (draft.base?.[id] !== initial || !(id in draft.fields)) continue;
+        const input = $(id);
+        if (input.type === "checkbox") input.checked = draft.fields[id] === true;
+        else if (typeof draft.fields[id] === "string") input.value = draft.fields[id];
+      }
+      showAt();
+    }
     head.textContent = title;
     const dh = dayHead(day);
-    dayLine.replaceChildren(el("b", "", dh.en), el("i", "", dh.jp));
+    // A stop on the evening before the first day (前夜) keeps that day: it reads so.
+    const eve = (store.state.eves || []).some((d) => d && d.date === day);
+    if (eve) dayLine.replaceChildren(el("b", "", "前夜 " + dh.en));
+    else dayLine.replaceChildren(el("b", "", dh.en), el("i", "", dh.jp));
     saveWord = word;
     del.hidden = mode !== "edit";
     sheet.classList.add("is-open");
@@ -411,7 +429,6 @@ export function mountStopSheet(root, store, { keep = null, storage = null } = {}
     mode = null;
     drafts = null;
     draft = null;
-    openingDraft = null;
     stopId = null;
     addId = null;
     refused = "";
@@ -596,6 +613,18 @@ export function mountStopSheet(root, store, { keep = null, storage = null } = {}
     if (digits !== f.travelMin.value) f.travelMin.value = digits;
   });
   save.addEventListener("click", onSave);
+  discard.addEventListener("click", () => {
+    if (!drafts || phase) return;
+    drafts.clear(draft);
+    draft = null;
+    fill(current() || {});
+    originalInputs = formValues();
+    discard.hidden = true;
+    refused = "";
+    unsaved = false;
+    update();
+    done.focus({ preventScroll: true });
+  });
   del.addEventListener("click", onRemove);
   done.addEventListener("click", () => close());
   // A tap outside closes the sheet only when nothing was changed (R33).

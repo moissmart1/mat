@@ -35,6 +35,10 @@ export function privateStrings(d, env = {}) {
     add(s.addressJp, 6);
     add(s.link, 12);
     add(s.photo, 20);
+    // The booking on a stay: its reference, the name on it and the room (same rules as a stop's).
+    add(s.tkRef, 4);
+    if (typeof s.tkName === "string" && !first.has(s.tkName.trim().toLowerCase())) add(s.tkName, 4);
+    add(s.tkRoom);
   }
   for (const s of d.stops || []) {
     add(s.link, 12);

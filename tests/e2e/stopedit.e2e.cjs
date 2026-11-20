@@ -170,6 +170,30 @@ function reach(page, selector, scroll = false) {
 
 module.exports = [
   {
+    name: "a failed stop edit survives closing and reloading until Discard draft",
+    async run({ page }) {
+      const backend = await ready(page);
+      await openEdit(page, SKY);
+      const original = await value(page, "#stDetail");
+      await page.fill("#stDetail", "Draft meeting point");
+      backend.failWith = "network";
+      await page.click("#stSave");
+      await until(async () => !(await disabled(page, "#stDone")), "Done is available after the failed save");
+      await page.click("#stDone");
+      await waitSheetClosed(page);
+      backend.failWith = null;
+      await page.reload();
+      await until(() => visible(page, row(SKY)), "the stop is back");
+      await openEdit(page, SKY);
+      assert.equal(await value(page, "#stDetail"), "Draft meeting point");
+      await page.click("#stDiscard");
+      assert.equal(await value(page, "#stDetail"), original);
+      await page.click("#stDone");
+      await openEdit(page, SKY);
+      assert.equal(await visible(page, "#stDiscard"), false);
+    },
+  },
+  {
     name: "unsent new stops on the same day have separate drafts after a reload",
     async run({ page }) {
       await ready(page);

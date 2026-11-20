@@ -6,7 +6,7 @@ const fs = require("node:fs");
 const { SEED, NOON12, open, until } = require("./helpers.cjs");
 
 const PLANNER_ID = "fakePlannerSheet_0123456789abcdefXYZ";
-const SHOTS = "/private/tmp/claude-501/mat-shots/problems";
+const SHOTS = require("./shots.cjs")("problems");
 const JUST_PULLED = new Date(NOON12).toISOString();
 
 const TWO = {
