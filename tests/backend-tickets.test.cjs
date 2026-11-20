@@ -298,7 +298,7 @@ test("an un-migrated Sheet: load has no tickets, the stop has empty facts, and t
   const m = await call("migrate");
   assert.deepEqual(m.data.added.filter((a) => /^Stops\.tk_|^Tickets\.|^TicketData\./.test(a)), [
     "Stops.tk_ref", "Stops.tk_name", "Stops.tk_people", "Stops.tk_seat",
-    "Tickets.id", "Tickets.stop", "Tickets.who", "Tickets.seat", "Tickets.page", "Tickets.mime", "Tickets.w", "Tickets.h", "Tickets.size", "Tickets.chunks", "Tickets.by", "Tickets.at", "Tickets.gone",
+    "Tickets.id", "Tickets.stop", "Tickets.who", "Tickets.seat", "Tickets.page", "Tickets.mime", "Tickets.w", "Tickets.h", "Tickets.size", "Tickets.chunks", "Tickets.by", "Tickets.at", "Tickets.gone", "Tickets.planner_id", "Tickets.stay",
     "TicketData.ticket", "TicketData.n", "TicketData.data",
   ]);
   assert.deepEqual((await call("migrate")).data.added, []);
@@ -478,4 +478,155 @@ test("minor 6: pictures on a removed stop are left out of load and do not count 
   assert.equal((await add(call)).ok, true, "the removed stop's 8 do not count");
   await call("restoreStop", { id: LUNCH });
   assert.equal((await call("load")).data.tickets.filter((t) => t.stop === LUNCH).length, 8);
+});
+
+// ---------- a ticket on a stay (its booking, S2 鍵札) ----------
+
+const STAY = "planstay0001"; // Asakusa hotel, nights of Dec 10 to 12
+const STAY2 = "planstay0002";
+const stayPic = (over = {}) => pic({ stop: undefined, stay: STAY, ...over });
+const addStay = (call, over = {}, actor) => call("addTicket", { ticket: stayPic(over) }, actor);
+
+test("a stay carries its booking's four facts through saveStay (merge), load, History and undo", async () => {
+  const call = trip();
+  const r = await call("saveStay", { stay: { id: STAY, tkRef: "TSB-4827-KQ", tkName: "M. EXAMPLE", tkPeople: "3", tkRoom: "Tatami room for 3" }, merge: true });
+  assert.equal(r.ok, true, r.message);
+  assert.deepEqual([r.data.stay.tkRef, r.data.stay.tkName, r.data.stay.tkPeople, r.data.stay.tkRoom], ["TSB-4827-KQ", "M. EXAMPLE", "3", "Tatami room for 3"]);
+  // Only the patch is written: the name, address and nights are as they were.
+  const row = call.fake.tables.Stays.find((s) => s.id === STAY);
+  assert.equal(row.name, "Asakusa hotel");
+  assert.equal(row.tk_room, "Tatami room for 3");
+  const sy = (await call("load")).data.stays.find((s) => s.id === STAY);
+  assert.equal(sy.tkRef, "TSB-4827-KQ");
+  assert.equal(sy.addressJp, "東京都台東区浅草1-1-1");
+  const h = (await call("history")).data.entries;
+  assert.equal(h[0].summary, "changed the stay Asakusa hotel: ticket");
+  assert.equal(JSON.stringify(h[0].summary).includes("TSB"), false);
+  const u = await call("undo", { logId: h[0].id });
+  assert.equal(u.ok, true, u.message);
+  assert.deepEqual([u.data.stay.tkRef, u.data.stay.tkRoom], ["", ""]);
+  // Over 60 letters is refused with the booking's sentence.
+  const long = await call("saveStay", { stay: { id: STAY, tkRoom: "x".repeat(61) }, merge: true });
+  assert.equal(long.error, "bad_input");
+  assert.equal(long.message, "Keep each booking detail under 60 letters.");
+});
+
+test("before migrate: a stay's booking is refused with needs_migrate, never dropped; other stay edits still work", async () => {
+  const call = trip({ missingColumns: ["Stays.tk_ref", "Stays.tk_name", "Stays.tk_people", "Stays.tk_room", "Tickets.stay"] });
+  for (const f of ["tkRef", "tkName", "tkPeople", "tkRoom"]) {
+    const r = await call("saveStay", { stay: { id: STAY, [f]: "x" }, merge: true });
+    assert.equal(r.error, "needs_migrate", f);
+  }
+  assert.equal((await call("saveStay", { stay: { id: STAY, note: "late" }, merge: true })).ok, true);
+  // A picture on a stay needs the Tickets.stay column; a stop's still goes in, and load still shows it.
+  assert.equal((await addStay(call)).error, "needs_migrate");
+  const onStop = await add(call);
+  assert.equal(onStop.ok, true, onStop.message);
+  const load = (await call("load")).data;
+  assert.deepEqual(load.tickets.map((t) => t.id), [onStop.data.ticket.id]);
+  assert.equal("stay" in load.tickets[0], false);
+  const m = await call("migrate");
+  assert.deepEqual(m.data.added, ["Stays.tk_ref", "Stays.tk_name", "Stays.tk_people", "Stays.tk_room", "Tickets.stay"]);
+  assert.equal((await addStay(call)).ok, true);
+  assert.equal((await call("saveStay", { stay: { id: STAY, tkRoom: "Tatami" }, merge: true })).ok, true);
+});
+
+test("addTicket on a stay: written with stay set and stop empty; History names the stay; load lists it with stay", async () => {
+  const call = trip();
+  const r = await addStay(call, { who: "Ajen" });
+  assert.equal(r.ok, true, r.message);
+  assert.equal(r.data.ticket.stay, STAY);
+  assert.equal(r.data.ticket.stop, "");
+  const row = call.fake.tables.Tickets[0];
+  assert.equal(row.stay, STAY);
+  assert.equal(row.stop, "");
+  const load = (await call("load")).data;
+  assert.equal(load.tickets[0].stay, STAY);
+  const h = (await call("history")).data.entries;
+  assert.equal(h[0].summary, "added Ajen’s ticket to Asakusa hotel");
+  const plain = await addStay(call, { page: 2 });
+  assert.equal(plain.ok, true);
+  assert.equal((await call("history")).data.entries[0].summary, "added a ticket to Asakusa hotel");
+  // A stop's picture never carries stay.
+  const s = await add(call);
+  assert.equal("stay" in s.data.ticket, false);
+  // A picture naming both, or neither, is refused.
+  assert.equal((await call("addTicket", { ticket: pic({ stay: STAY }) })).error, "bad_input");
+  assert.equal((await call("addTicket", { ticket: pic({ stop: undefined }) })).error, "bad_input");
+});
+
+test("a stay: unknown or removed is not_found; 8 pictures at most per stay; the trip's 120 is shared with stops", async () => {
+  const call = trip();
+  const none = await addStay(call, { stay: "planstay9999" });
+  assert.equal(none.error, "not_found");
+  assert.equal(none.message, "That stay isn’t there any more.");
+  for (let i = 0; i < 8; i++) assert.equal((await addStay(call, { page: i + 1 })).ok, true);
+  const ninth = await addStay(call);
+  assert.equal(ninth.error, "bad_input");
+  assert.equal(ninth.message, "A stay can hold at most 8 ticket pictures.");
+  // The stay's 8 do not use up a stop's 8, nor another stay's.
+  assert.equal((await add(call)).ok, true);
+  assert.equal((await addStay(call, { stay: STAY2 })).ok, true);
+  // The trip's 120 counts stays too: 110 on stops by hand makes 120 in all.
+  for (let i = 0; i < 110; i++) call.fake.tables.Tickets.push({ id: "hand" + String(i).padStart(6, "0"), stop: SKY + "x" + (i % 20), who: "", seat: "", page: "1", mime: "image/png", w: "1", h: "1", size: "4", chunks: "1", by: "Mo", at: "2026-12-01T00:00:00.000Z", gone: "", stay: "" });
+  const full = await addStay(call, { stay: STAY2 });
+  assert.equal(full.message, "The trip can hold at most 120 ticket pictures.");
+  await call("deleteStay", { id: STAY2 });
+  assert.equal((await addStay(call, { stay: STAY2 })).error, "not_found");
+});
+
+test("a removed stay's pictures neither show nor count; putting it back brings them back", async () => {
+  const call = trip();
+  for (let i = 0; i < 3; i++) assert.equal((await addStay(call, { page: i + 1 })).ok, true);
+  await call("deleteStay", { id: STAY });
+  assert.deepEqual((await call("load")).data.tickets, []);
+  for (let i = 0; i < 117; i++) call.fake.tables.Tickets.push({ id: "hand" + String(i).padStart(6, "0"), stop: SKY + "x" + (i % 20), who: "", seat: "", page: "1", mime: "image/png", w: "1", h: "1", size: "4", chunks: "1", by: "Mo", at: "2026-12-01T00:00:00.000Z", gone: "", stay: "" });
+  assert.equal((await add(call)).ok, true, "the removed stay's 3 do not count");
+  await call("restoreStay", { id: STAY });
+  assert.equal((await call("load")).data.tickets.filter((t) => t.stay === STAY).length, 3);
+});
+
+test("remove and undo a stay's picture: the History sentences, and the per-stay limit when one comes back", async () => {
+  const call = trip();
+  const t = (await addStay(call, { who: "Mo" })).data.ticket;
+  const rm = await call("removeTicket", { id: t.id });
+  assert.equal(rm.ok, true);
+  let h = (await call("history")).data.entries;
+  assert.equal(h[0].summary, "removed Mo’s ticket from Asakusa hotel");
+  // Fill the stay while that one is removed; undoing the remove is then refused.
+  for (let i = 0; i < 8; i++) assert.equal((await addStay(call, { page: i + 1 })).ok, true);
+  const refused = await call("undo", { logId: h[0].id });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.message, "A stay can hold at most 8 ticket pictures.");
+  // Make room, then undo: it comes back on the stay, and History says so.
+  const last = call.fake.tables.Tickets[call.fake.tables.Tickets.length - 1];
+  assert.equal((await call("removeTicket", { id: last.id })).ok, true);
+  h = (await call("history")).data.entries;
+  const back = await call("undo", { logId: h.find((e) => e.ref === t.id && e.summary.startsWith("removed")).id });
+  assert.equal(back.ok, true, back.message);
+  assert.equal(back.data.ticket.stay, STAY);
+  assert.equal(back.data.entry.summary, "undid: removed Mo’s ticket from Asakusa hotel");
+});
+
+test("the check key reads no booking ref or name on a stay; the connector cannot add a picture to a stay", async () => {
+  const call = trip();
+  await call("saveStay", { stay: { id: STAY, tkRef: "TSB-4827-KQ", tkName: "M. EXAMPLE", tkPeople: "3", tkRoom: "Tatami" }, merge: true });
+  const sy = (await call.fake({ key: call.fake.CHECK_KEY, action: "load", args: {} })).data.stays.find((s) => s.id === STAY);
+  assert.deepEqual([sy.tkRef, sy.tkName, sy.tkPeople, sy.tkRoom], ["", "", "3", "Tatami"]);
+  const mine = (await call.fake({ key: call.fake.personKey("Mo"), action: "load", args: {} })).data.stays.find((s) => s.id === STAY);
+  assert.deepEqual([mine.tkRef, mine.tkName], ["TSB-4827-KQ", "M. EXAMPLE"]);
+  const viaClaude = await call.fake.claude("addTicket", { ticket: stayPic() });
+  assert.equal(viaClaude.ok, false);
+  assert.equal(call.fake.tables.Tickets.length, 0);
+});
+
+test("from the list (auto-add) on a stay: the tie is kept and a second of the same line is refused", async () => {
+  const call = trip();
+  const owner = (over) => call.fake({ key: call.fake.personKey("Mo"), action: "addTicket", args: { ticket: stayPic(over) } });
+  const first = await owner({ from: "T014:abc" });
+  assert.equal(first.ok, true, first.message);
+  assert.equal(first.data.ticket.from, "T014:abc");
+  assert.equal(first.data.ticket.stay, STAY);
+  const twice = await owner({ from: "T014:abc" });
+  assert.equal(twice.message, "That ticket from the list is already on this stop.");
 });

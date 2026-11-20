@@ -5,6 +5,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { boardFor, tidyLine, closedDate, isClosed, BOARD_KEY } from "../js/board.js";
+import { tripNow } from "../js/plan.js";
+import { dec9State, et } from "./fixtures/dec9.js";
 
 const TZ = "Asia/Tokyo";
 const TRIP = { name: "Trip", start: "2026-12-10", end: "2026-12-20", tz: TZ };
@@ -124,26 +126,57 @@ test("tidyLine: one line, the board's own words", () => {
 });
 
 // ---- closed until tomorrow ----
-test("a closed board is kept as the date it was closed on, in the trip's zone", () => {
+// The date kept and compared is the Days clock's (tripNow): the trip's zone,
+// or a zoned day's own.
+const day = (s, ms) => tripNow(s, ms).date;
+
+test("a closed board is kept as the date it was closed on, by the Days clock", () => {
   assert.equal(BOARD_KEY, "mat.board");
   // 23:50 on Dec 12 in Japan is 09:50 on Dec 12 in Toronto: same date there. 00:10 on the 13th in Japan is still Dec 12 in Toronto.
-  assert.equal(closedDate(TZ, at("2026-12-12T23:50:00+09:00")), "2026-12-12");
-  assert.equal(closedDate(TZ, at("2026-12-13T00:10:00+09:00")), "2026-12-13");
-  assert.equal(closedDate(undefined, at("2026-12-13T00:10:00+09:00")), "2026-12-13", "no zone: Japan");
+  assert.equal(closedDate(day(state(), at("2026-12-12T23:50:00+09:00"))), "2026-12-12");
+  assert.equal(closedDate(day(state(), at("2026-12-13T00:10:00+09:00"))), "2026-12-13");
+  assert.equal(closedDate(day(state({ trip: { ...TRIP, tz: "" } }), at("2026-12-13T00:10:00+09:00"))), "2026-12-13", "no zone: Japan");
+  assert.equal(closedDate(undefined), "");
 });
 
 test("closed today, back tomorrow: the board is back across the trip zone's midnight, not the phone's", () => {
-  const kept = closedDate(TZ, at("2026-12-12T22:00:00+09:00"));
-  assert.equal(isClosed(kept, TZ, at("2026-12-12T22:00:01+09:00")), true);
-  assert.equal(isClosed(kept, TZ, at("2026-12-12T23:59:59+09:00")), true);
-  assert.equal(isClosed(kept, TZ, at("2026-12-13T00:00:00+09:00")), false, "midnight in Japan: back");
+  const s = state();
+  const kept = closedDate(day(s, at("2026-12-12T22:00:00+09:00")));
+  assert.equal(isClosed(kept, day(s, at("2026-12-12T22:00:01+09:00"))), true);
+  assert.equal(isClosed(kept, day(s, at("2026-12-12T23:59:59+09:00"))), true);
+  assert.equal(isClosed(kept, day(s, at("2026-12-13T00:00:00+09:00"))), false, "midnight in Japan: back");
   // A phone still on Toronto time at 11 am on Dec 12 (01:00 on the 13th in Japan): the trip's day has turned, so the board is back.
-  assert.equal(isClosed(kept, TZ, at("2026-12-12T11:00:00-05:00")), false);
-  assert.equal(isClosed(kept, TZ, at("2026-12-12T08:00:00-05:00")), true, "22:00 in Japan on the 12th, still closed");
+  assert.equal(isClosed(kept, day(s, at("2026-12-12T11:00:00-05:00"))), false);
+  assert.equal(isClosed(kept, day(s, at("2026-12-12T08:00:00-05:00"))), true, "22:00 in Japan on the 12th, still closed");
 });
 
 test("what was kept that is not today's date never closes the board", () => {
-  const now = at("2026-12-12T12:00:00+09:00");
-  for (const kept of [null, undefined, "", "yes", 20261212, "2026-12-11", "2026-12-13", "2026-12-12 "]) assert.equal(isClosed(kept, TZ, now), false, String(kept));
-  assert.equal(isClosed("2026-12-12", TZ, now), true);
+  const today = day(state(), at("2026-12-12T12:00:00+09:00"));
+  for (const kept of [null, undefined, "", "yes", 20261212, "2026-12-11", "2026-12-13", "2026-12-12 "]) assert.equal(isClosed(kept, today), false, String(kept));
+  assert.equal(isClosed("2026-12-12", today), true);
+  assert.equal(isClosed("", ""), false, "no date: never closed");
+});
+
+// ---- a day in its own zone (Dec 9, T1 現地時刻) ----
+test("on a day in its own zone the board says 次 Next · 現地, with that place's times", () => {
+  const s = dec9State({ todos: [], plannerLinked: true });
+  const b = boardFor(s, et("2026-12-09T07:00"));
+  assert.deepEqual(b, { kind: "trip", small: "次 Next · 現地", big: "07:30", unit: "", l1: "Hotel shuttle to the airport", l2: "Leave by 07:25 · in 25 min" });
+  const late = boardFor(s, et("2026-12-09T11:45"));
+  assert.deepEqual([late.small, late.big, late.l1, late.l2], ["次 Next · 現地", "12:20", "Flight ZZ 7 to Tokyo", "In 35 min"], "still Day 1 after Japan's midnight");
+  const after = boardFor(s, et("2026-12-09T12:50"));
+  assert.deepEqual([after.small, after.big, after.l1], ["次 Next", "16:35", "Land in Tokyo, Terminal 3"], "Day 2, on Japan's clock");
+  // The evening before: the before-the-trip board, one day to go.
+  const eve = boardFor(dec9State({ plannerLinked: true, todos: [todo({ item: "Rail seats" })] }), et("2026-12-08T17:00"));
+  assert.deepEqual([eve.kind, eve.big, eve.small], ["before", "1", "出発まで"]);
+  assert.equal(boardFor(dec9State({ plannerLinked: true }), et("2026-12-08T17:00")), null, "nothing to book: no board");
+});
+
+test("closed on Day 1 in its own zone: closed until the Days clock's day turns, not Japan's midnight", () => {
+  const s = dec9State();
+  const kept = closedDate(day(s, et("2026-12-09T07:05")));
+  assert.equal(kept, "2026-12-09");
+  assert.equal(isClosed(kept, day(s, et("2026-12-09T10:01"))), true, "Japan's midnight passed at 10:00: still Day 1, still closed");
+  assert.equal(isClosed(kept, day(s, et("2026-12-09T12:49"))), true);
+  assert.equal(isClosed(kept, day(s, et("2026-12-09T12:50"))), false, "Day 2: back");
 });

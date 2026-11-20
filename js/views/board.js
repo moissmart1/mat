@@ -3,18 +3,18 @@
 // lettering on black, the second line green (mock-up 4B). What it says comes
 // from js/board.js; this only draws it.
 //
-// mountBoard({ storage, now }) -> { el, update(model, tz), clear() }
+// mountBoard({ storage }) -> { el, update(model, today), clear() }
 // - el: the board's box (place it in Days, between the bar and the rail).
-// - update(model, tz): model is what boardFor gives, or null (no board). The
-//   board is there when there is a model and it was not closed today (the trip
-//   zone's date, by the real clock: mat.board keeps only the date it was
-//   closed on). Called on every Days redraw: a text that is the same is left
+// - update(model, today): model is what boardFor gives, or null (no board);
+//   today: the Days clock's date (plan.js tripNow, by the real clock). The
+//   board is there when there is a model and it was not closed on that date
+//   (mat.board keeps only the date it was closed on). Called on every Days redraw: a text that is the same is left
 //   alone, so the lines fill in once, when the board appears, and never on a
 //   minute's change. Under reduced motion there is no fill and no fold.
 // - clear(): the trip was taken off the phone: out of the page at once with
 //   every word taken off it (update(null) leaves the last words in the page).
 // - The × closes it for today (44 px wide). A closed board is not in the
-//   page's tab order. now(): the real time, never the demo's.
+//   page's tab order.
 // Every word on it is set with textContent.
 
 import { BOARD_KEY, closedDate, isClosed } from "../board.js";
@@ -28,7 +28,7 @@ function el(tag, cls, text) {
 const calm = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 const FOLD_MS = 220;
 
-export function mountBoard({ storage = null, now = () => Date.now() } = {}) {
+export function mountBoard({ storage = null } = {}) {
   const store = storage || (() => {
     try {
       return globalThis.localStorage;
@@ -79,7 +79,7 @@ export function mountBoard({ storage = null, now = () => Date.now() } = {}) {
   wrap.append(clip);
 
   let shown = false;
-  let tzNow = "Asia/Tokyo";
+  let todayNow = ""; // the Days clock's date at the last update
   let foldTimer = null;
 
   function fill() {
@@ -120,9 +120,9 @@ export function mountBoard({ storage = null, now = () => Date.now() } = {}) {
     if (node.textContent !== text) node.textContent = text;
   };
 
-  function update(model, tz) {
-    tzNow = tz || "Asia/Tokyo";
-    if (!model || isClosed(get(), tzNow, now())) {
+  function update(model, today) {
+    todayNow = typeof today === "string" ? today : "";
+    if (!model || isClosed(get(), todayNow)) {
       show(false);
       return;
     }
@@ -138,7 +138,7 @@ export function mountBoard({ storage = null, now = () => Date.now() } = {}) {
   }
 
   x.addEventListener("click", () => {
-    set(closedDate(tzNow, now()));
+    set(closedDate(todayNow));
     // Focus goes to Days' own first control, not into the page's end.
     const next = wrap.closest("section, .view");
     const count = next && next.querySelector("#dayCount");

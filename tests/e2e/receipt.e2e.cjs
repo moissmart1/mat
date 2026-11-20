@@ -302,7 +302,7 @@ module.exports = [
       await page.exposeFunction("__matBridge", (body) => backend.handle(body));
       const outside = [];
       page.on("request", (r) => {
-        if (new URL(r.url()).hostname !== "localhost" && !r.url().includes("fonts.googleapis.com")) outside.push(r.url());
+        if (!["localhost", "fonts.googleapis.com", "fonts.gstatic.com"].includes(new URL(r.url()).hostname)) outside.push(r.url());
       });
       await page.goto(ORIGIN + "/");
       await expectText(page, "#gate p", "This app isn’t connected yet.");

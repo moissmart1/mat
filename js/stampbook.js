@@ -239,12 +239,13 @@ export function bookStampSVG(seed, def, defs) {
 // time: { total, n, openToday } where total is the stamps the book has (0:
 // nothing to show), n how many of them this person has, and openToday the
 // date of today's stamp when it is open and not pressed yet (else "").
-// Today is the Japan calendar day, whatever zone the phone is in.
-export function summary(s, nowMs) {
+// Today is `today` when given (the Days clock's day, plan.js tripNow: on a day
+// in its own zone, that place's), else the Japan calendar day, whatever zone
+// the phone is in. The stamp's window is Japan time either way (windowOf).
+export function summary(s, nowMs, today = japanDay(nowMs)) {
   const defs = usableDefs(s && s.stampDefs);
   const mine = new Set();
   for (const x of Array.isArray(s && s.stamps) ? s.stamps : []) if (x && x.who === s.me && !x.gone) mine.add(x.def);
-  const today = japanDay(nowMs);
   const day = defs.find((d) => dateOf(d) === today);
   return {
     total: defs.length,

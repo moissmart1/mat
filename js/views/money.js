@@ -7,6 +7,7 @@
 
 import { standing, jpyOf, cadCents, shares } from "../money.js";
 import { tripDay } from "../time.js";
+import { tripNow } from "../plan.js";
 import { mountSlip, viewerOwed } from "./slip.js";
 import { yen, dollars, typed, dayHead, issuer, pt, freshText, sentence, tripSpan } from "../format.js";
 import { fillSeal } from "../picture.js";
@@ -52,7 +53,7 @@ function isNewStamp(p, me, seenAt) {
 // Each trip day up to today (all of them after the trip) and any later day
 // that already has a line, newest first; then "pre", the oldest, at the bottom.
 function receiptDays(s, live, nowMs) {
-  const today = tripDay(s.trip, nowMs);
+  const today = tripDay(s.trip, nowMs, tripNow(s, nowMs).date);
   const dates = new Set();
   for (const d of s.days) {
     if (d.date && (today === "post" || (today !== "pre" && d.date <= today))) dates.add(d.date);

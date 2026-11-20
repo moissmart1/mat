@@ -8,7 +8,7 @@ const assert = require("node:assert/strict");
 const fs = require("fs");
 const { SEED, NOON12, open, advance, until, text, expectText, visible } = require("./helpers.cjs");
 
-const SHOTS = "/private/tmp/claude-501/mat-shots/money-trio";
+const SHOTS = require("./shots.cjs")("money-trio");
 const shot = async (page, name) => {
   fs.mkdirSync(SHOTS, { recursive: true });
   await page.screenshot({ path: SHOTS + "/" + name + ".png" });
