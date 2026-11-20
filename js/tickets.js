@@ -35,9 +35,10 @@
 //   one it shows instead). Bytes that are not what their type says are not kept.
 // - ticketKinds / ticketMark: what a stop's tickets are ("pp" per-person
 //   codes, "one" code for everyone, "pages", "ref" facts only) and whether
-//   every picture is on this phone.
+//   every picture is on this phone. stayMark: the same for a stay's booking
+//   ("pics" or "ref"; a picture on a stay has `stay` instead of `stop`).
 
-import { dateIn } from "./time.js";
+import { tripNow } from "./plan.js";
 
 export const LIMITS = { maxSide: 1500, maxChars: 450000, perStop: 8, perTrip: 120, chunk: 45000, fact: 60 };
 export const NOT_A_TICKET = "Only a photo, a screenshot or a PDF can be a ticket.";
@@ -466,30 +467,51 @@ export const fetchesAll = (storage) => fetchMode(storage) === "all";
 
 const live = (t) => t && typeof t.id === "string" && t.id && !t.gone;
 
-// The live pictures in the order they are fetched: upcoming stops first
-// (soonest first), then past ones (most recent first); none whose stop is
-// removed or not on the plan.
+const nextDay = (date) => {
+  const [y, m, d] = String(date).split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10);
+};
+
+// The live pictures in the order they are fetched: the pictures of the stay
+// you are in first of all (from its first night to the morning after its
+// last), then upcoming stops and stays (soonest first; a stay's at its first
+// night, 15:00), then past ones (most recent first); none whose stop or stay
+// is removed or not on the plan.
 export function fetchOrder(s, nowMs) {
-  const tz = (s.trip && s.trip.tz) || "Asia/Tokyo";
-  const today = dateIn(tz, nowMs);
+  // Today by the Days clock (a day in its own zone is that place's).
+  const today = tripNow(s, nowMs).date;
   const stops = new Map((Array.isArray(s.stops) ? s.stops : []).filter((x) => x && !x.deleted).map((x) => [x.id, x]));
+  const stays = new Map((Array.isArray(s.stays) ? s.stays : []).filter((x) => x && !x.deleted && /^\d{4}-\d{2}-\d{2}$/.test(String(x.firstNight || ""))).map((x) => [x.id, x]));
   const when = (t) => {
+    if (t.stay) {
+      const sy = stays.get(t.stay);
+      return sy ? sy.firstNight + " 15:00" : null;
+    }
     const st = stops.get(t.stop);
     return st ? String(st.date || "") + " " + (st.time || "99:99") : null;
   };
+  // The stay you are in: from its first night to the morning after its last.
+  const inNow = (t) => {
+    const sy = t.stay ? stays.get(t.stay) : null;
+    return !!sy && sy.firstNight <= today && today <= nextDay(sy.lastNight || sy.firstNight);
+  };
   const list = (Array.isArray(s.tickets) ? s.tickets : []).filter((t) => live(t) && !t.pending && !t.failed);
+  const first = [];
   const ahead = [];
   const past = [];
   for (const t of list) {
     const w = when(t);
-    // A picture whose stop is removed or not on the plan is never fetched (minor 6).
+    // A picture whose stop or stay is removed or not on the plan is never fetched (minor 6).
     if (w === null) continue;
+    else if (inNow(t)) first.push([w, t]);
     else if (w.slice(0, 10) >= today) ahead.push([w, t]);
     else past.push([w, t]);
   }
-  ahead.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  const up = (a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
+  first.sort(up);
+  ahead.sort(up);
   past.sort((a, b) => (a[0] > b[0] ? -1 : a[0] < b[0] ? 1 : 0));
-  return [...ahead.map((x) => x[1]), ...past.map((x) => x[1])];
+  return [...first.map((x) => x[1]), ...ahead.map((x) => x[1]), ...past.map((x) => x[1])];
 }
 
 // After a load: pictures the trip no longer has (removed, refused, on a stop
@@ -572,4 +594,27 @@ export function ticketMark(stop, tickets, have) {
   const k = ticketKinds((Array.isArray(tickets) ? tickets : []).filter((t) => t && t.stop === stop.id));
   if (!k.kind) return hasFacts(stop) ? { kind: "ref", label: "Reference", saved: true } : null;
   return { kind: k.kind, label: k.label, saved: k.list.every((t) => have(t.id)) };
+}
+
+// ---------- a stay's booking (S2 鍵札) ----------
+
+export const STAY_FACTS = ["tkRef", "tkName", "tkPeople", "tkRoom"];
+export const hasStayFacts = (stay) => !!stay && STAY_FACTS.some((k) => typeof stay[k] === "string" && stay[k].trim() !== "");
+
+// A stay's live pictures, in order of person then page.
+export function stayPictures(stay, tickets) {
+  if (!stay) return [];
+  return (Array.isArray(tickets) ? tickets : [])
+    .filter((t) => live(t) && t.stay === stay.id)
+    .sort((a, b) => String(a.who || "").localeCompare(String(b.who || "")) || (Number(a.page) || 0) - (Number(b.page) || 0));
+}
+
+// The key tag's mark for a stay: null (no booking at all), or { kind, label,
+// saved }: "pics" ("1 page", "N pages"; saved when every one is on this
+// phone) or "ref" (the facts alone).
+export function stayMark(stay, tickets, have) {
+  if (!stay) return null;
+  const pics = stayPictures(stay, tickets);
+  if (!pics.length) return hasStayFacts(stay) ? { kind: "ref", label: "Reference", saved: true } : null;
+  return { kind: "pics", label: pics.length === 1 ? "1 page" : pics.length + " pages", saved: pics.every((t) => have(t.id)) };
 }

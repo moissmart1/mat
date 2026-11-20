@@ -6,7 +6,8 @@
 //   getProp_, setProp_, delProp_, withLock_, getRate_, getRateInfo_, tripKey_, nowIso_, sheetUrl_,
 //   claudeToken_, ensureClaudeToken_, newId_, plannerId_, plannerRows_, holderOf_ (Keys.js),
 //   hasTab_, plannerTab_, plannerSetCell_, plannerAppendRow_, torontoNow_, withPlannerLock_,
-//   appendObjs_, columnValues_, cellsAt_, deleteRowsAt_ (ticket pictures)
+//   appendObjs_, columnValues_, cellsAt_, deleteRowsAt_ (ticket pictures),
+//   deskPost_, deskReady_, cacheGet_, cachePut_ (tickets from the planner's list)
 // It also uses the pure helpers from Pure.js.
 
 var MSG_ = {
@@ -56,6 +57,7 @@ var MSG_ = {
   notYourStamp: "You can only change your own stamp.",
   noTicket: "That ticket picture isn’t there any more.",
   ticketsPerStop: "A stop can hold at most 8 ticket pictures.",
+  ticketsPerStay: "A stay can hold at most 8 ticket pictures.",
   ticketsPerTrip: "The trip can hold at most 120 ticket pictures.",
   claudeTicket: "Ticket pictures are added and removed in the app.",
   ticketNeverSent: "That ticket picture never reached the trip sheet. Add it again.",
@@ -65,6 +67,15 @@ var MSG_ = {
   notYours: "You can only change your own settings.",
   ownLink: "Open your own link to change an e-Transfer address.",
   notYourClaim: "Someone else is on this one. Ask them to hand it back first.",
+  // Tickets from the planner's list (auto-add).
+  listOwnerOnly: "Only {owner} can bring in tickets from the list.",
+  noDesk: "The list’s ticket files aren’t set up yet. Ask Mo to set up the ticket shelf.",
+  listTooSoon: "The list was looked at a moment ago. Try again in half a minute.",
+  deskUnreachable: "The list’s ticket files can’t be reached right now. Try again later.",
+  noListTab: "The planner has no Tickets tab.",
+  listFileTooBig: "That file is too big to fetch: add it by hand.",
+  listFileGone: "That file isn’t with the list’s tickets any more.",
+  listTwice: "That ticket from the list is already on this stop.",
 };
 var STAMP_REFUSALS_ = { not_open: "stampNotOpen", closed: "stampClosed", late: "stampLate", future: "stampFuture" };
 
@@ -94,7 +105,7 @@ function planKind_(kind) {
   if (kind === "stay") {
     return {
       tab: "Stays", key: "id", deletable: true, fromRow: stayFromRow, toRow: stayToRow, missing: MSG_.noStay,
-      fields: ["name", "nameJp", "addressJp", "firstNight", "lastNight", "note", "place", "link", "photo", "lat", "lng"],
+      fields: ["name", "nameJp", "addressJp", "firstNight", "lastNight", "note", "place", "link", "photo", "lat", "lng", "tkRef", "tkName", "tkPeople", "tkRoom"],
     };
   }
   if (kind === "day") return { tab: "Days", key: "date", deletable: false, fromRow: dayFromRow, toRow: dayToRow, missing: MSG_.noDay, fields: DAY_PATCH_KEYS.concat(["lat", "lng"]) };
@@ -196,6 +207,15 @@ function dispatch_(body, holder) {
     return token ? ok_({ token: token }, rev_()) : err_("not_found", MSG_.noClaude);
   }
   // (linkPlanner is gone: the owner sets PLANNER_ID in Script Properties.)
+  // Tickets from the planner's list (auto-add): reads, for the owner on their
+  // own key only (the claudeLink rule); never the check key, the shared key
+  // or the connector (neither list names them). No lock: nothing is written
+  // but the time of the last look.
+  if (action === "listTickets" || action === "listTicketFile") {
+    var first = peopleNames_()[0];
+    if (!ownerOnly_(holder)) return err_("bad_input", MSG_.listOwnerOnly.replace("{owner}", first || "the trip’s organiser"));
+    return action === "listTickets" ? listTickets_(args) : listTicketFile_(args);
+  }
 
   var write;
   switch (action) {
@@ -235,6 +255,8 @@ function dispatch_(body, holder) {
   // Only the connector's own path is "through Claude" (fix round 1).
   var via = holder.kind === "claude" ? "claude" : "app";
   var ctx = { actor: actor, via: via, names: names, holder: holder.kind };
+  // The trip's first person on their own key: only they may tie a picture to the planner's list (addTicket).
+  if (action === "addTicket") ctx.owner = ownerOnly_(holder);
   // Reads the planner first, then takes the lock itself.
   if (action === "syncPayments") return syncPayments_(args, ctx);
   if (action === "syncTodos") return syncTodos_(args, ctx);
@@ -378,7 +400,14 @@ function load_(holder) {
       }
       return st;
     }),
-    stays: readTable_("Stays").filter(function (r) { return cellText_(r.id) !== ""; }).map(stayFromRow),
+    stays: readTable_("Stays").filter(function (r) { return cellText_(r.id) !== ""; }).map(stayFromRow).map(function (sy) {
+      // The same for a stay's booking.
+      if (holder && holder.kind === "check") {
+        sy.tkRef = "";
+        sy.tkName = "";
+      }
+      return sy;
+    }),
     expenses: readTable_("Expenses").filter(function (r) { return cellText_(r.id) !== ""; }).map(expenseFromRow),
     payments: readTable_("Settlements").filter(function (r) { return cellText_(r.id) !== ""; }).map(paymentFromRow),
     rateToday: rate.rate,
@@ -395,11 +424,18 @@ function load_(holder) {
   };
   // The ticket pictures (never their data), once migrate has made the tabs;
   // until then the key is left out and the phones show no tickets.
-  // Not those on a removed stop (minor 6): putting the stop back brings them back.
+  // Not those on a removed stop (minor 6) or a removed stay: putting it back brings them back.
   var removed = {};
   data.stops.forEach(function (st) { if (st.deleted) removed[st.id] = true; });
-  var tickets = ticketsShown_(removed);
+  var removedStays = {};
+  data.stays.forEach(function (sy) { if (sy.deleted) removedStays[sy.id] = true; });
+  var tickets = ticketsShown_(removed, removedStays);
   if (tickets !== null) data.tickets = tickets;
+  // Tickets from the planner's list (auto-add): only the owner's own phone
+  // is told it can look, once the planner, the desk and the planner_id
+  // column are there. Everyone else's load has no such key.
+  if (tickets !== null && holder && holder.kind === "person" && data.people.length && data.people[0].name === holder.name &&
+      plannerId_() !== null && deskReady_() && hasColumn_("Tickets", "planner_id")) data.ticketList = true;
   return ok_(data, rev);
 }
 
@@ -584,7 +620,7 @@ function plannerProblemsToStore_(at, problems) {
 }
 
 function pullPayments_(read, ctx) {
-  var dayDates = tripDates_();
+  var dayDates = moneyDates_();
   var inPlanner = {};
   read.payments.forEach(function (p) { inPlanner[p.id] = true; });
   // The Expenses tab, read once: each line with the payment it is tied to.
@@ -820,6 +856,14 @@ function tripDates_() {
   return readTable_("Days").map(function (r) { return cellDate_(r.date); }).filter(function (d) { return d !== ""; });
 }
 
+// The days money can be on: every trip day except the evening before the
+// first (Days.kind "eve"), so a payment or expense dated on the eve is "pre",
+// as the register shows it. A stop may still be dated on the eve (tripDates_).
+function moneyDates_() {
+  return readTable_("Days").filter(function (r) { return dayFromRow(r).kind !== "eve"; })
+    .map(function (r) { return cellDate_(r.date); }).filter(function (d) { return d !== ""; });
+}
+
 // Appends a new stop or stay, or returns the one already there with the id
 // of the Log row that added it (a repeated add).
 function addPlanItem_(kind, value, ctx) {
@@ -1046,6 +1090,8 @@ function saveStay_(args, ctx) {
   if (!v.ok) return err_("bad_input", v.message);
   // An older Sheet has no photo column until migrate: refuse a photo rather than drop it.
   if (v.value.photo !== "" && !hasColumn_("Stays", "photo")) return err_("needs_migrate", MSG_.needsMigrate);
+  // The same for the booking's four facts.
+  if (stayFactsNeedMigrate_(v.value)) return err_("needs_migrate", MSG_.needsMigrate);
   var row = findPlanRow_(plan, v.value.id);
   if (!row) return addPlanItem_("stay", v.value, ctx);
   var cur = plan.fromRow(row);
@@ -1962,13 +2008,28 @@ function factsNeedMigrate_(stop) {
   return any && !hasColumn_("Stops", "tk_seat");
 }
 
+// A stay with any booking fact filled on a Sheet whose Stays tab lacks the columns: refused rather than dropped.
+function stayFactsNeedMigrate_(stay) {
+  var any = stay.tkRef !== "" || stay.tkName !== "" || stay.tkPeople !== "" || stay.tkRoom !== "";
+  return any && !hasColumn_("Stays", "tk_room");
+}
+
+// Whether a Tickets row is on one of the removed stops or stays (a row with
+// no stay column, before migrate, is on a stop).
+function onRemoved_(r, removedStops, removedStays) {
+  var has = Object.prototype.hasOwnProperty;
+  var stay = cellText_(r.stay);
+  if (stay !== "") return has.call(removedStays || {}, stay);
+  return has.call(removedStops || {}, cellText_(r.stop));
+}
+
 // What load shows: every picture not removed, or null before migrate. One lookup and one read.
-function ticketsShown_(removedStops) {
+// The stay column is not asked for: a Sheet before migrate still shows its stops' pictures.
+function ticketsShown_(removedStops, removedStays) {
   var rows = readTableOrNull_("Tickets", ["id", "stop", "chunks", "gone"]);
   if (rows === null) return null;
-  var off = removedStops || {};
   return rows.filter(function (r) {
-    return cellText_(r.id) !== "" && cellText_(r.gone) !== "yes" && !Object.prototype.hasOwnProperty.call(off, cellText_(r.stop));
+    return cellText_(r.id) !== "" && cellText_(r.gone) !== "yes" && !onRemoved_(r, removedStops, removedStays);
   }).map(ticketFromRow);
 }
 
@@ -1979,15 +2040,33 @@ function removedStops_() {
   return out;
 }
 
-// Pictures that count: not removed, and not on a removed stop.
-function countedTickets_(rows, removed) {
+// The ids of removed stays: the same for the pictures of a booking.
+function removedStays_() {
+  var out = {};
+  readTable_("Stays").forEach(function (r) { if (cellText_(r.id) !== "" && cellSet_(r.deleted_at)) out[cellText_(r.id)] = true; });
+  return out;
+}
+
+// Pictures that count: not removed, and not on a removed stop or stay.
+function countedTickets_(rows, removed, removedStays) {
   return rows.filter(function (r) {
-    return cellText_(r.id) !== "" && cellText_(r.gone) !== "yes" && !Object.prototype.hasOwnProperty.call(removed, cellText_(r.stop));
+    return cellText_(r.id) !== "" && cellText_(r.gone) !== "yes" && !onRemoved_(r, removed, removedStays);
   });
 }
 
 function liveTickets_() {
-  return countedTickets_(readTable_("Tickets"), removedStops_());
+  return countedTickets_(readTable_("Tickets"), removedStops_(), removedStays_());
+}
+
+// Whether one more live picture fits where t is (its stop, or its stay): the
+// refusal, or null. live: the pictures that count.
+function ticketRoomRefusal_(live, t) {
+  if (t.stay) {
+    if (live.filter(function (r) { return cellText_(r.stay) === t.stay; }).length >= TICKET_LIMITS.perStop) return err_("bad_input", MSG_.ticketsPerStay);
+    return null;
+  }
+  if (live.filter(function (r) { return cellText_(r.stay) === "" && cellText_(r.stop) === t.stop; }).length >= TICKET_LIMITS.perStop) return err_("bad_input", MSG_.ticketsPerStop);
+  return null;
 }
 
 // Deletes TicketData rows whose ticket no Tickets row names (a failed add's), bottom up.
@@ -2023,23 +2102,126 @@ function addTicket_(args, ctx) {
   var v = validateTicket(given, ctx.names);
   if (!v.ok) return err_("bad_input", v.message);
   var t = v.value;
-  var stopRow = findPlanRow_(planKind_("stop"), t.stop);
-  if (!stopRow || cellSet_(stopRow.deleted_at)) return err_("not_found", MSG_.noStop);
-  var live = countedTickets_(all, removedStops_());
+  // The tie (from) is the owner's phone's own mark: another traveller's is refused, nothing stored.
+  if (t.from !== "" && !ctx.owner) return err_("bad_input", MSG_.listOwnerOnly.replace("{owner}", peopleNames_()[0] || "the trip’s organiser"));
+  // On a stay (its booking): the Sheet needs the stay column first, and the stay has to be there.
+  var placeTitle;
+  if (t.stay !== "") {
+    if (!hasColumn_("Tickets", "stay")) return err_("needs_migrate", MSG_.needsMigrate);
+    var stayRow = findPlanRow_(planKind_("stay"), t.stay);
+    if (!stayRow || cellSet_(stayRow.deleted_at)) return err_("not_found", MSG_.noStay);
+    placeTitle = cellText_(stayRow.name);
+  } else {
+    var stopRow = findPlanRow_(planKind_("stop"), t.stop);
+    if (!stopRow || cellSet_(stopRow.deleted_at)) return err_("not_found", MSG_.noStop);
+    placeTitle = cellText_(stopRow.title);
+  }
+  var live = countedTickets_(all, removedStops_(), removedStays_());
+  // From the list (auto-add): a second live picture of the same line, page
+  // and person is refused under the lock, so two phones, or a run repeated
+  // after a lost reply, never add it twice.
+  if (t.from !== "") {
+    if (!hasColumn_("Tickets", "planner_id")) return err_("needs_migrate", MSG_.needsMigrate);
+    var twice = live.some(function (r) { return cellText_(r.planner_id) === t.from && cellNum_(r.page) === t.page && cellText_(r.who) === t.who; });
+    if (twice) return err_("bad_input", MSG_.listTwice);
+  }
   if (live.length >= TICKET_LIMITS.perTrip) return err_("bad_input", MSG_.ticketsPerTrip);
-  if (live.filter(function (r) { return cellText_(r.stop) === t.stop; }).length >= TICKET_LIMITS.perStop) return err_("bad_input", MSG_.ticketsPerStop);
+  var full = ticketRoomRefusal_(live, t);
+  if (full) return full;
 
   sweepTicketChunks_(known);
   var chunks = ticketChunks(t.data);
   appendObjs_("TicketData", chunks.map(function (c, i) { return { ticket: t.id, n: String(i), data: c }; }));
-  appendObj_("Tickets", {
+  var row = {
     id: t.id, stop: t.stop, who: t.who, seat: t.seat, page: String(t.page), mime: t.mime, w: String(t.w), h: String(t.h),
     size: String(t.data.length), chunks: String(chunks.length), by: ctx.actor, at: nowIso_(), gone: "",
-  });
+  };
+  if (t.from !== "") row.planner_id = t.from;
+  if (t.stay !== "") row.stay = t.stay;
+  appendObj_("Tickets", row);
   var saved = ticketFromRow(findRow_("Tickets", t.id));
-  var after = ticketSnap_(saved, cellText_(stopRow.title));
+  var after = ticketSnap_(saved, placeTitle);
   var log = appendLog_(ctx, "add", "ticket", t.id, summarize("add", "ticket", null, after), null, after);
   return ok_({ ticket: saved, logId: log.id }, bumpRev_());
+}
+
+// ---- tickets from the planner's list (auto-add) ----
+// listTickets { force } -> { rows, files, at, stored }: the planner's Tickets
+// tab (listRowsFrom: only the columns the phone matches with) and the desk's
+// list of the ticket files (deskFilesFrom: handles, never a Drive id). The
+// desk is asked at most once in 10 minutes unless forced, and never twice in
+// 30 seconds (LIST_TICKETS_AT); between, its last list comes from the script
+// cache (stored: true), the planner is read afresh. listTicketFile { handle }
+// -> { handle, name, mime, data }: one file's bytes, one per request.
+var LIST_GAP_MS_ = 10 * 60 * 1000;
+var LIST_FORCE_GAP_MS_ = 30 * 1000;
+var LIST_CACHE_KEY_ = "LIST_TICKET_FILES";
+var LIST_CACHE_S_ = 600;
+
+// The trip's first person on their own key (the claudeLink rule).
+function ownerOnly_(holder) {
+  var owner = peopleNames_()[0];
+  return !!holder && holder.kind === "person" && !!owner && holder.name === owner;
+}
+
+function cachedDeskFiles_() {
+  try {
+    var v = JSON.parse(cacheGet_(LIST_CACHE_KEY_) || "null");
+    return v && Array.isArray(v.files) ? deskFilesFrom({ ok: true, files: v.files }) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function listTickets_(args) {
+  if (args.force !== undefined && typeof args.force !== "boolean") return err_("bad_input", MSG_.badRequest);
+  if (!plannerId_()) return err_("no_planner", MSG_.noPlanner);
+  if (!ticketsReady_() || !hasColumn_("Tickets", "planner_id")) return err_("needs_migrate", MSG_.needsMigrate);
+  if (!deskReady_()) return err_("no_desk", MSG_.noDesk);
+  var rows;
+  try {
+    rows = plannerTab_("Tickets");
+  } catch (e) {
+    return err_("planner_unreadable", MSG_.plannerUnreadable);
+  }
+  if (rows === null) return err_("planner_columns", MSG_.noListTab);
+  var read = listRowsFrom(rows, tripYear_());
+  if (read.missing) return err_("planner_columns", read.missing);
+  var last = getProp_("LIST_TICKETS_AT") || "";
+  var since = Date.parse(nowIso_()) - Date.parse(last);
+  var files = null;
+  if (since >= 0 && (since < LIST_FORCE_GAP_MS_ || (args.force !== true && since < LIST_GAP_MS_))) files = cachedDeskFiles_();
+  var stored = files !== null;
+  var at = last;
+  // Never twice in 30 seconds, even with no list in the cache (too big, or dropped): the phone is told to wait.
+  if (files === null && since >= 0 && since < LIST_FORCE_GAP_MS_) return err_("bad_input", MSG_.listTooSoon);
+  if (files === null) {
+    var answer = deskPost_({ action: "tickets" });
+    if (answer && answer.ok === false && answer.why === "no folder") return err_("no_desk", MSG_.noDesk);
+    files = deskFilesFrom(answer);
+    if (files === null) return err_("desk_unreachable", MSG_.deskUnreachable);
+    at = nowIso_();
+    setProp_("LIST_TICKETS_AT", at);
+    try {
+      cachePut_(LIST_CACHE_KEY_, JSON.stringify({ at: at, files: files }), LIST_CACHE_S_);
+    } catch (e) {
+      // too big for the cache: the next look asks the desk again
+    }
+  }
+  return ok_({ rows: read.rows, files: files, at: at, stored: stored }, rev_());
+}
+
+function listTicketFile_(args) {
+  var h = args.handle;
+  if (typeof h !== "string" || !DESK_HANDLE_RE_.test(h)) return err_("bad_input", MSG_.badRequest);
+  if (!deskReady_()) return err_("no_desk", MSG_.noDesk);
+  var answer = deskPost_({ action: "ticketFile", h: h });
+  var why = answer && answer.ok === false ? answer.why : "";
+  if (why === "too big") return err_("too_big", MSG_.listFileTooBig);
+  if (why === "not found" || why === "bad request") return err_("not_found", MSG_.listFileGone);
+  var file = deskFileFrom(answer, h);
+  if (!file) return err_("desk_unreachable", MSG_.deskUnreachable);
+  return ok_({ handle: h, name: file.name, mime: file.mime, data: file.data }, rev_());
 }
 
 // { id } -> { id, mime, data }: the chunks joined in order. Refused for a removed or unknown one.
@@ -2066,6 +2248,15 @@ function stopTitle_(stopId) {
   return row ? cellText_(row.title) : "";
 }
 
+// The name History gives a picture's place: its stay's name, or its stop's title.
+function ticketPlaceTitle_(t) {
+  if (t.stay) {
+    var row = findPlanRow_(planKind_("stay"), t.stay);
+    return row ? cellText_(row.name) : "";
+  }
+  return stopTitle_(t.stop);
+}
+
 function removeTicket_(args, ctx) {
   if (ctx.via === "claude") return err_("bad_input", MSG_.claudeTicket);
   if (!ticketsReady_()) return err_("needs_migrate", MSG_.needsMigrate);
@@ -2076,13 +2267,13 @@ function removeTicket_(args, ctx) {
   var cur = ticketFromRow(row);
   if (cur.gone) return ok_({ ticket: cur, logId: null }, rev_());
   var saved = ticketFromRow(updateById_("Tickets", id, { gone: "yes" }));
-  var title = stopTitle_(cur.stop);
+  var title = ticketPlaceTitle_(cur);
   var log = appendLog_(ctx, "remove", "ticket", id, summarize("remove", "ticket", ticketSnap_(cur, title), ticketSnap_(saved, title)), ticketSnap_(cur, title), ticketSnap_(saved, title));
   return ok_({ ticket: saved, logId: log.id }, bumpRev_());
 }
 
 // Undoing an add or a remove (or an undo) puts the picture where the entry
-// found it: removed, or back. Coming back, it still has to fit on its stop.
+// found it: removed, or back. Coming back, it still has to fit on its stop (or stay).
 function undoTicket_(entry, rows, ctx) {
   if (ctx.via === "claude") return err_("bad_input", MSG_.claudeTicket);
   if (entry.undoneBy !== null) return err_("stale", MSG_.undone);
@@ -2096,10 +2287,11 @@ function undoTicket_(entry, rows, ctx) {
   if (!gone && cur.gone) {
     var others = liveTickets_();
     if (others.length >= TICKET_LIMITS.perTrip) return err_("bad_input", MSG_.ticketsPerTrip);
-    if (others.filter(function (r) { return cellText_(r.stop) === cur.stop; }).length >= TICKET_LIMITS.perStop) return err_("bad_input", MSG_.ticketsPerStop);
+    var full = ticketRoomRefusal_(others, { stop: cur.stop, stay: cur.stay || "" });
+    if (full) return full;
   }
   var saved = ticketFromRow(updateById_("Tickets", entry.ref, { gone: gone ? "yes" : "" }));
-  var title = stopTitle_(cur.stop) || cellText_(entry.after.stopTitle);
+  var title = ticketPlaceTitle_(cur) || cellText_(entry.after.stopTitle);
   var log = appendLog_(ctx, "undo", "ticket", entry.ref, "undid: " + entry.summary, ticketSnap_(cur, title), ticketSnap_(saved, title), entry.id);
   updateById_("Log", entry.id, { undone_by: log.id });
   var shown = logShape_(log);
