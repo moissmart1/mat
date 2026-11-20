@@ -74,8 +74,52 @@ export function scanTree(root = ROOT, { patternsOnly = false } = {}) {
   return out;
 }
 
-// Scan Git objects, including intermediate versions no longer in the checkout.
-// A blob shared by many commits needs only one content scan.
+// [{ commit, file, rule, line }] for every commit in `commits`: its message,
+// every path in its tree, and the contents of every file in its tree, read
+// from Git's objects (not from a diff, which a NUL byte or a `-diff`/`binary`
+// attribute, even one in .git/info/attributes, turns into "Binary files
+// differ" with nothing to read). So an intermediate version that is no longer
+// in the checkout is read as well. A file shared by many commits is read once,
+// and a finding is said once. Fails closed: a shallow repository or a git
+// error throws, and with no private list the answer is a finding. It never
+// says what it found, only where. Used by the push check (scanOutgoing) and by
+// the gate before it pushes a ci/ branch.
+export function scanCommits(commits, root = ROOT, { words, deployId } = {}) {
+  const list = words === undefined ? privateWords() : words;
+  if (list === null) return [{ commit: "(setup)", file: "(setup)", rule: "the private list is missing: run `npm run private` (it needs ~/.config/mat/env)", line: 0 }];
+  const rules = { words: list, deployId: deployId === undefined ? readConfig(root).deployId : deployId };
+  const read = (...args) => execFileSync("git", ["--no-replace-objects", ...args], {
+    cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 256 * 1024 * 1024,
+  });
+  if (read("rev-parse", "--is-shallow-repository").trim() !== "false") throw new Error("Incomplete history (a shallow clone)");
+  const out = [];
+  const seenBlob = new Set();
+  const seenPath = new Set();
+  for (const sha of commits) {
+    const commit = sha.slice(0, 7);
+    for (const f of findings(read("show", "-s", "--format=%B", sha), rules)) out.push({ commit, file: "(commit message)", ...f });
+    for (const entry of read("ls-tree", "-rz", sha).split("\0").filter(Boolean)) {
+      const tab = entry.indexOf("\t");
+      const [, type, oid] = entry.slice(0, tab).split(" ");
+      const path = entry.slice(tab + 1);
+      // A path that holds something private is never said, not even for its contents.
+      const named = findings(path, rules);
+      const where = named.length ? "(a file name)" : path;
+      if (!seenPath.has(path)) {
+        seenPath.add(path);
+        for (const f of named) out.push({ commit, file: where, rule: f.rule, line: 0 });
+      }
+      if (type !== "blob" || BINARY.test(path) || seenBlob.has(oid)) continue;
+      seenBlob.add(oid);
+      for (const f of findings(read("cat-file", "blob", oid), rules)) out.push({ commit, file: where, ...f });
+    }
+  }
+  return out;
+}
+
+// For the push check: how many findings in every commit the push sends (a new
+// branch: everything not already on origin's dev or main). Throws when there
+// is no private list or the history is incomplete.
 export function scanOutgoing(root, localSha, remoteSha) {
   const read = (...args) => execFileSync("git", ["--no-replace-objects", ...args], {
     cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024,
@@ -83,73 +127,11 @@ export function scanOutgoing(root, localSha, remoteSha) {
   if (read("rev-parse", "--is-shallow-repository").trim() !== "false") throw new Error("Incomplete history");
   const words = privateWords();
   if (words === null) throw new Error("Missing private list");
-  const rules = { words, deployId: readConfig(root).deployId };
   const exclude = /^0+$/.test(remoteSha)
     ? read("for-each-ref", "--format=%(objectname)", "refs/remotes/origin/dev", "refs/remotes/origin/main").trim().split(/\s+/).filter(Boolean)
     : [remoteSha];
   const commits = read("rev-list", localSha, "--not", ...exclude).trim().split(/\s+/).filter(Boolean);
-  const seen = new Set();
-  for (const commit of commits) {
-    if (findings(read("show", "-s", "--format=%B", commit), rules).length) return 1;
-    for (const entry of read("ls-tree", "-rz", commit).split("\0").filter(Boolean)) {
-      const tab = entry.indexOf("\t");
-      const [, type, oid] = entry.slice(0, tab).split(" ");
-      const path = entry.slice(tab + 1);
-      if (findings(path, rules).length) return 1;
-      if (type !== "blob" || BINARY.test(path) || seen.has(oid)) continue;
-      if (findings(read("cat-file", "blob", oid), rules).length) return 1;
-      seen.add(oid);
-    }
-  }
-  return 0;
-}
-
-// [{ commit, file, rule, line }] for what each commit adds and for its
-// message: every commit a push would make public, not only the last one (a
-// private string added in one commit and taken out in the next is still in
-// the history). Merges are read against every parent (-m), the first commit
-// against nothing (--root). Fails closed: a git error throws, and with no
-// private list the answer is a finding.
-export function scanCommits(shas, root = ROOT, { words, deployId } = {}) {
-  const list = words === undefined ? privateWords() : words;
-  if (list === null) return [{ commit: "(setup)", file: "(setup)", rule: "the private list is missing: run `npm run private` (it needs ~/.config/mat/env)", line: 0 }];
-  const id = deployId === undefined ? readConfig(root).deployId : deployId;
-  const run = (args) => execFileSync("git", args, { cwd: root, encoding: "utf8", maxBuffer: 512 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
-  const out = [];
-  for (const sha of shas) {
-    const commit = sha.slice(0, 7);
-    for (const f of findings(run(["log", "-1", "--format=%B", sha]), { deployId: id, words: list })) out.push({ commit, file: "(commit message)", ...f });
-    // Added lines only, per file, with their line numbers in the new file.
-    // A file's header (`+++ b/name`) is read only between its `diff --git`
-    // line and its first hunk: an added line `++ /dev/null` comes out as
-    // `+++ /dev/null` and must not switch the rest of the file off.
-    const added = new Map();
-    let file = "";
-    let header = false;
-    let at = 0;
-    for (const l of run(["diff-tree", "-p", "-m", "--root", "--no-commit-id", "--no-color", "--no-ext-diff", "--no-renames", "-U0", sha]).split("\n")) {
-      if (l.startsWith("diff --git ")) {
-        header = true;
-        file = "";
-      } else if (header) {
-        if (l.startsWith("+++ ")) file = l === "+++ /dev/null" ? "" : l.replace(/^\+\+\+ (b\/)?/, "");
-        else if (l.startsWith("@@")) {
-          header = false;
-          at = Number((l.match(/\+(\d+)/) || [])[1] || 0);
-        }
-      } else if (l.startsWith("@@")) {
-        at = Number((l.match(/\+(\d+)/) || [])[1] || 0);
-      } else if (l.startsWith("+") && file && !BINARY.test(file)) {
-        if (!added.has(file)) added.set(file, { text: [], lines: [] });
-        added.get(file).text.push(l.slice(1));
-        added.get(file).lines.push(at++);
-      }
-    }
-    for (const [f, a] of added) {
-      for (const x of findings(a.text.join("\n"), { deployId: id, words: list })) out.push({ commit, file: f, rule: x.rule, line: a.lines[x.line - 1] || 0 });
-    }
-  }
-  return out;
+  return scanCommits(commits, root, { words, deployId: readConfig(root).deployId }).length;
 }
 
 function main() {
