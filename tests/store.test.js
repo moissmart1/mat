@@ -44,7 +44,7 @@ function memStorage(init = {}) {
 //   net.garble         actions that reach the backend but get a non-envelope reply
 //   net.knownOffline   the phone itself says it has no network: nothing is sent
 //   timeoutMs          how long the api waits for a reply (the app's own 30 s by default)
-function phone({ seed, fake, storage, me = "Mo", nowMs = NOW, clock, timeoutMs, ticketData } = {}) {
+function phone({ seed, fake, storage, me = "Mo", nowMs = NOW, clock, timeoutMs, ticketData, isHidden } = {}) {
   fake = fake || createFakeBackend(seed);
   storage = storage || memStorage({ "mat.key": KEY, "mat.me": me });
   const net = { offline: false, knownOffline: false, failing: new Set(), lose: new Set(), garble: new Set(), override: null, holds: [], sent: [] };
@@ -71,7 +71,7 @@ function phone({ seed, fake, storage, me = "Mo", nowMs = NOW, clock, timeoutMs, 
   };
   const api = createApi({ url: URL, getKey: () => storage.getItem("mat.key"), getActor: () => storage.getItem("mat.me"), fetchImpl, isOnline: () => !net.knownOffline, ...(timeoutMs ? { timeoutMs } : {}) });
   const waits = [];
-  const store = createStore({ api, storage, now: clock || (() => nowMs), wait: async (ms) => { waits.push(ms); }, ...(ticketData ? { ticketData } : {}) });
+  const store = createStore({ api, storage, now: clock || (() => nowMs), wait: async (ms) => { waits.push(ms); }, ...(ticketData ? { ticketData } : {}), ...(isHidden ? { isHidden } : {}) });
   return { fake, storage, net, api, store, waits };
 }
 
@@ -136,22 +136,34 @@ test("api rejects with the backend's error code, network when fetch fails, serve
   }
 });
 
-test("api gives up after its timeout: a request that never settles is a network failure", async () => {
+test("api gives up after its timeout: a request that never settles is a network failure", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   let signal = null;
   const never = (url, init) => { signal = init.signal; return new Promise(() => {}); }; // ignores the signal, never settles
   const api = createApi({ url: URL, getKey: () => "sekret-key", getActor: () => "Mo", fetchImpl: never, timeoutMs: 20 });
-  const started = Date.now();
-  const err = await api("rev").then(() => null, (e) => e);
+  const request = api("rev").then(() => null, (e) => e);
+  t.mock.timers.tick(19);
+  assert.equal(signal.aborted, false, "the request gets its full timeout");
+  t.mock.timers.tick(1);
+  const err = await request;
   assert.ok(err instanceof Error);
   assert.equal(err.code, "network");
-  assert.ok(Date.now() - started < 1000, "gave up at the timeout");
   assert.ok(signal && signal.aborted, "the request was aborted");
   assert.equal(String(err.message).includes("sekret"), false);
 
   // A body that never finishes counts the same.
-  const slowBody = async () => ({ ok: true, status: 200, text: () => new Promise(() => {}) });
-  const err2 = await createApi({ url: URL, getKey: () => KEY, getActor: () => "Mo", fetchImpl: slowBody, timeoutMs: 20 })("rev").then(() => null, (e) => e);
-  assert.equal(err2.code, "network");
+  let reading = false;
+  const slowBody = async () => ({
+    text() {
+      reading = true;
+      return new Promise(() => {});
+    },
+  });
+  const body = createApi({ url: URL, getKey: () => KEY, getActor: () => "Mo", fetchImpl: slowBody, timeoutMs: 20 })("rev").then(() => null, (e) => e);
+  await Promise.resolve(); // fetch answered, but reading its body is still pending
+  assert.equal(reading, true);
+  t.mock.timers.tick(20);
+  assert.equal((await body).code, "network");
 });
 
 test("api waits 30 seconds by default before giving up", async () => {
@@ -278,6 +290,75 @@ test("a failed load keeps the cached loadedAt and goes offline; the next good ca
   p.net.offline = false;
   await p.store.checkRev();
   assert.equal(p.store.state.online, true);
+});
+
+test("a request that fails while the page is hidden does not mark the phone offline; back on screen it asks again and is online", async () => {
+  let hidden = false;
+  const p = phone({ seed: SEED, isHidden: () => hidden });
+  await p.store.boot();
+  assert.equal(p.store.state.online, true);
+  hidden = true;
+  p.store.pageHidden();
+  p.net.failing.add("rev");
+  await p.store.checkRev();
+  assert.equal(p.store.state.online, true, "cut off in the background is not no signal");
+  hidden = false;
+  p.net.failing.delete("rev");
+  const before = sent(p.fake, "rev");
+  await p.store.checkRev(); // what the app does at once on visible
+  assert.equal(sent(p.fake, "rev"), before + 1);
+  assert.equal(p.store.state.online, true);
+});
+
+test("a request that was running when the page went hidden, and fails after it is back, is not no signal either", async () => {
+  const p = phone({ seed: SEED });
+  await p.store.boot();
+  const release = p.net.hold("rev");
+  p.net.failing.add("rev");
+  const pending = p.store.checkRev();
+  p.store.pageHidden(); // the page went to the background mid-request
+  release();
+  await pending;
+  assert.equal(p.store.state.online, true);
+});
+
+test("a request that fails while the page is visible still marks the phone offline", async () => {
+  const p = phone({ seed: SEED, isHidden: () => false });
+  await p.store.boot();
+  p.net.failing.add("rev");
+  await p.store.checkRev();
+  assert.equal(p.store.state.online, false);
+  p.net.failing.delete("rev");
+  await p.store.checkRev();
+  assert.equal(p.store.state.online, true);
+});
+
+test("the first check after coming back is retried once before it counts: fails once then answers -> never offline", async () => {
+  const p = phone({ seed: SEED, isHidden: () => false });
+  await p.store.boot();
+  p.store.pageHidden();
+  p.store.pageShown();
+  let failsLeft = 1;
+  p.net.failing = { has: (a) => a === "rev" && failsLeft-- > 0 };
+  const seen = [];
+  p.store.subscribe(() => seen.push(p.store.state.online));
+  await p.store.checkRev();
+  assert.equal(p.store.state.online, true);
+  assert.equal(seen.includes(false), false, "never marked offline");
+  assert.ok(p.waits.includes(1500));
+});
+
+test("the first check after coming back fails twice -> No signal; later failures are not retried", async () => {
+  const p = phone({ seed: SEED, isHidden: () => false });
+  await p.store.boot();
+  p.store.pageHidden();
+  p.store.pageShown();
+  p.net.failing.add("rev");
+  await p.store.checkRev();
+  assert.equal(p.store.state.online, false);
+  p.waits.length = 0;
+  await p.store.checkRev();
+  assert.equal(p.waits.includes(1500), false, "only the first check after return retries");
 });
 
 test("with no cache and no signal, boot ends in error", async () => {
@@ -3118,13 +3199,17 @@ test("wave A 3: a tick whose reply comes after the phone stopped waiting: one ti
   assert.equal(byId(p.store.state.todos, "1").tickedBy, "Mo");
 });
 
-test("wave A 3: a re-send while the first tick's reply is still out: refused as done, and the phone still ends up showing the tick", async () => {
+test("wave A 3: a re-send while the first tick's reply is still out: refused as done, and the phone still ends up showing the tick", async (t) => {
   const p = phone({ seed: bookSeed(2), timeoutMs: 40 });
   await p.store.boot();
   await p.store.syncTodos();
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const release = p.net.hold("tickTodo");
   p.store.tickTodo("1");
   p.store.tickTodo("1"); // a second tap, sent once the first has given up
+  await new Promise(setImmediate); // let the first request reach the backend and hold its reply
+  assert.equal(p.net.holds[0].used, true);
+  t.mock.timers.tick(40);
   await p.store.idle();
   release();
   assert.equal(p.fake.tables.Log.filter((r) => r.kind === "todo" && r.action === "tick").length, 1);
