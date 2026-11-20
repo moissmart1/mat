@@ -304,13 +304,17 @@ function stayForRow(row, s) {
   const near = new Set([...words(row.title), ...words(row.provider)]);
   // The line as its card shows it: its name and its night.
   const line = { title: str(row.title) || str(row.provider), date: DATE.test(date) ? date : "" };
-  const on = DATE.test(date) ? stays.filter((x) => x.firstNight === date) : [];
+  const starts = DATE.test(date) ? stays.filter((x) => x.firstNight === date) : [];
+  // No stay starts that night: a stay that covers it (first night <= date <= last night) is the one.
+  const covers = DATE.test(date) && !starts.length ? stays.filter((x) => DATE.test(String(x.firstNight)) && DATE.test(String(x.lastNight)) && x.firstNight <= date && date <= x.lastNight) : [];
+  const on = starts.length ? starts : covers;
+  const verb = starts.length ? "start" : "cover";
   if (on.length === 1) return { sure: { stay: on[0].id } };
   if (on.length > 1) {
     const named = on.filter((x) => shares(new Set([...words(x.name), ...words(x.nameJp)]), near));
     if (named.length === 1) return { sure: { stay: named[0].id } };
     const offer = named.length ? named : on;
-    return { card: { kind: "stays", ask: (offer.length === 2 ? "Two stays" : offer.length + " stays") + " start that night.", hint: "The list dates it " + monthDay(date) + ".", short: offer.length + " stays start " + monthDay(date), choices: offer.map((x) => ({ stay: x.id })), line } };
+    return { card: { kind: "stays", ask: (offer.length === 2 ? "Two stays" : offer.length + " stays") + " " + verb + " that night.", hint: "The list dates it " + monthDay(date) + ".", short: offer.length + " stays " + verb + " " + monthDay(date), choices: offer.map((x) => ({ stay: x.id })), line } };
   }
   const ns = newStayFrom(row);
   const nights = ns ? nightsOf(ns) : 0;

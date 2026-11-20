@@ -524,3 +524,19 @@ test("stayFactsFor: tkRef from the confirmation else ticket_ref, tkName from the
   // The stops' facts never take a stay's line.
   assert.deepEqual(factsFor([{ stay: "y-tsb", rowIds: ["T014"] }], rows, STOPS), {});
 });
+
+test("lodging: a line dated the second night of a 3-night stay is on that stay, not an add card; a date no stay covers still gets the card; a stay starting that date wins", () => {
+  const three = [{ id: "y-three", name: "Pine Lodge", firstNight: "2026-12-10", lastNight: "2026-12-12" }];
+  const mid = sortFiles({ files: [png("f", "T040 x.png")], rows: [L({ ticket_id: "T040", start_date: "2026-12-11", title: "Pine Lodge extension" })], state: state({ stays: three }) });
+  assert.deepEqual(mid.cards, []);
+  assert.deepEqual(mid.items.map((i) => i.stay), ["y-three"]);
+  const last = sortFiles({ files: [png("f", "T041 x.png")], rows: [L({ ticket_id: "T041", start_date: "2026-12-12", title: "Anything" })], state: state({ stays: three }) });
+  assert.deepEqual(last.items.map((i) => i.stay), ["y-three"], "the last night is covered too");
+  const after = sortFiles({ files: [png("f", "T042 x.png")], rows: [L({ ticket_id: "T042", start_date: "2026-12-13", title: "Elsewhere inn" })], state: state({ stays: three }) });
+  assert.equal(after.cards[0].kind, "newstay");
+  assert.equal(after.items.length, 0);
+  const both = [...three, { id: "y-new", name: "Cedar Inn", firstNight: "2026-12-11", lastNight: "2026-12-13" }];
+  const wins = sortFiles({ files: [png("f", "T043 x.png")], rows: [L({ ticket_id: "T043", start_date: "2026-12-11", title: "Booking" })], state: state({ stays: both }) });
+  assert.deepEqual(wins.cards, []);
+  assert.deepEqual(wins.items.map((i) => i.stay), ["y-new"]);
+});
