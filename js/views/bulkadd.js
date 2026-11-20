@@ -992,6 +992,8 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
       const to = stays ? [stops ? plural(stops, "stop", "stops") : "", plural(stays, "stay", "stays")].filter(Boolean).join(" and ") : plural(stops, "stop", "stops");
       nodes.push(el("p", "ba-done-h", ok.length ? plural(ok.length, "ticket", "tickets") + " added to " + to + "." : a.off ? plural(a.off, "picture", "pictures") + " taken off." : "No ticket was added."));
       if (ok.length && a.off) nodes.push(el("p", "ba-done-s", plural(a.off, "old picture", "old pictures") + " taken off. History puts them back."));
+      // A stop added from the list, said by name (fix round 2, R4).
+      for (const s of a.stopsMade || []) nodes.push(el("p", "ba-done-s", "Added the stop " + s.title + (s.day ? " on Day " + s.day : "") + "."));
       if (ok.length) {
         const s = el("p", "ba-done-s");
         s.append(el("b", "", plural(pics, "picture", "pictures")), ", kept in the trip. Every phone shows them on its stubs the next time it opens MAT with signal.");
@@ -1637,6 +1639,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     if (listing && takeBack) {
       const on = (id) => (store.state.tickets || []).some((t) => t && t.id === id && !t.gone);
       const stopsMade = [...madeStops.values()].filter((v) => typeof v === "string");
+      adding.stopsMade = stopsMade.map((id) => ({ title: (stopOf(id) || {}).title || "A stop", day: dayNum((stopOf(id) || {}).date) }));
       const prints = {};
       for (const id of stopsMade) if (stopOf(id)) prints[id] = printOf(stopOf(id));
       adding.batch = takeBack.record({

@@ -290,3 +290,22 @@ test("fix round 2, R3: a picture the backend refuses to take off for good is sai
   assert.notEqual(tb.list()[0].back, "", "the button does not stay for ever");
   assert.equal(resultText({ total: 3, back: 1, stuck: 2 }), "Taken back 1 of 3. 2 pictures couldn’t be taken off.");
 });
+
+test("fix round 2, R4: an Add that only added a stop keeps a row; Take all back removes the stop if unchanged, else says it is left on", async () => {
+  const st = { ...STOP };
+  const store = fakeStore({ tickets: [], stops: [st] });
+  const tb = createTakeBack(store, { storage: memory() });
+  assert.equal(tb.record({ at: AT, n: 0, off: 0, stops: [], items: [] }), null, "nothing at all: no row");
+  const b = tb.record({ at: AT, n: 0, off: 0, items: [], removed: [], stops: [STOP.id], stays: [], prints: { [STOP.id]: printOf(STOP) } });
+  assert.equal(rowText(b).title, "1 stop added from the list");
+  assert.equal(await tb.run(AT), "Taken back.");
+  assert.deepEqual(store.calls.filter((c) => c.startsWith("deleteStop")), ["deleteStop:" + STOP.id]);
+  // Changed since: left on, said, and the batch is done.
+  const store2 = fakeStore({ tickets: [], stops: [{ ...STOP, note: "bring cash" }] });
+  const tb2 = createTakeBack(store2, { storage: memory() });
+  tb2.record({ at: AT, n: 0, off: 0, items: [], stops: [STOP.id], prints: { [STOP.id]: printOf(STOP) } });
+  assert.equal(await tb2.run(AT), "Taken back. The stop it added is left on: it changed since.");
+  assert.notEqual(tb2.list()[0].back, "");
+  assert.equal(store2.calls.some((c) => c.startsWith("deleteStop")), false);
+  assert.equal(resultText({ total: 2, back: 2, stopsKept: 2 }), "Taken back: 2 tickets. The stops it added are left on: they changed since.");
+});

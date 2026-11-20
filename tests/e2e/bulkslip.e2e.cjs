@@ -251,7 +251,7 @@ cases.push({
     // The added screen.
     await expectText(page, "#bulk .sheet-top", "Add ticketsaddedDone");
     await expectText(page, "#bulk .ba-done-h", "10 tickets added to 8 stops.");
-    assert.deepEqual(await texts(page, "#bulk .ba-done-s"), ["2 old pictures taken off. History puts them back.", "10 pictures, kept in the trip. Every phone shows them on its stubs the next time it opens MAT with signal."]);
+    assert.deepEqual(await texts(page, "#bulk .ba-done-s"), ["2 old pictures taken off. History puts them back.", "Added the stop Lantern boat on Day 7.", "10 pictures, kept in the trip. Every phone shows them on its stubs the next time it opens MAT with signal."]);
     await expectText(page, "#bulk .sl.is-done .sl-hd", /^From the planner’s listadded at \d\d:\d\d$/);
     await expectText(page, "#bulk .sl.is-done .sl-h", "Added · 10 ticketson 8 stops");
     const cells = await texts(page, "#bulk .sl.is-done .sl-c");
@@ -501,6 +501,31 @@ cases.push({
     await slipUp(page);
     await expectText(page, '#bulk [data-card="chg:T012"] .sl-qt b', "Ferry lunch: the list has one more file");
     assert.deepEqual(live(backend).map((r) => r.id).sort(), ["oldlunch0001", "oldlunch0002"]);
+  },
+});
+
+// Fix round 2, R4: an Add whose only effect was a new stop says so and can be taken back.
+cases.push({
+  name: "the new stop is added but its ticket refused: the stop is said by name, the row can take it back",
+  async run({ page }) {
+    const backend = await tripWith({ old: false, lines: [LINES[9]], folder: [FOLDER()[10]] });
+    const real = backend.handle;
+    backend.handle = async (body) => {
+      if (body.action === "addTicket" && body.args && body.args.ticket && body.args.ticket.from === "T010:aaaaaaaaaa10") return { ok: false, error: "bad_input", message: "That picture can’t go on this stop." };
+      return real.call(backend, body);
+    };
+    await ready(page, backend);
+    await addTickets(page);
+    await slipUp(page);
+    await page.click("#bulkPunch");
+    await added(page);
+    const stopId = calls(backend, "addStop")[0].args.stop.id;
+    await expectText(page, "#bulk .ba-done-h", "No ticket was added.");
+    assert.ok((await texts(page, "#bulk .ba-done-s")).includes("Added the stop Lantern boat on Day 7."));
+    await expectText(page, "#bulk .sl-batch", /^\d\d:\d\d1 stop added from the listalso in HistoryTake all back$/);
+    await page.click("#bulkTakeBack");
+    await until(() => page.evaluate(() => /taken back at \d\d:\d\d/.test(document.querySelector("#bulk .sl-batch").textContent)), "the row reads taken back", 20000);
+    assert.equal(backend.fake.tables.Stops.find((x) => x.id === stopId).deleted_at !== "", true, "the stop is removed");
   },
 });
 

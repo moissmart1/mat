@@ -52,7 +52,8 @@ export function createTakeBack(store, { storage = null, now = () => Date.now() }
 
   function record(fields) {
     const b = batchOf(fields);
-    if (!b.at || (!b.n && !b.off)) return null;
+    // A batch that only added a stop (its ticket refused) is kept too, so the stop can be taken back (fix round 2, R4).
+    if (!b.at || (!b.n && !b.off && !b.stops.length)) return null;
     batches = addBatch(batches, b);
     saveBatches(st(), batches);
     emit();
@@ -135,9 +136,14 @@ export function createTakeBack(store, { storage = null, now = () => Date.now() }
       // 3. The stops it added that hold nothing now and are as it left them;
       //    never one whose picture did not surely come off (fix round 1, M4).
       let stopsLeft = 0;
+      let stopsKept = 0; // changed since, or holding another picture: left on for good, and said (R4)
       for (const id of b.stops) {
         if (store.state.status === "nokey") return "";
-        if (!stopFree(id, b, store.state)) continue;
+        if (!stopFree(id, b, store.state)) {
+          const there = (store.state.stops || []).find((x) => x && x.id === id && !x.deleted);
+          if (there) stopsKept += 1;
+          continue;
+        }
         const mine = (store.state.tickets || []).filter((t) => t && t.stop === id).map((t) => t.id);
         if (mine.some((tid) => unsure.has(tid))) {
           stopsLeft += 1;
@@ -154,7 +160,7 @@ export function createTakeBack(store, { storage = null, now = () => Date.now() }
       const settled = b.items.every((one) => one.every((id) => stuck.has(id) || !isOn(id)));
       const done = settled && oldBack + lost >= b.removed.length && stopsLeft === 0;
       const stays = b.stays.filter((id) => (store.state.stays || []).some((x) => x && x.id === id && !x.deleted)).length;
-      const text = resultText({ total, back, put: Math.min(put, oldBack), lost, stays, done, stuck: stuck.size });
+      const text = resultText({ total, back, put: Math.min(put, oldBack), lost, stays, done, stuck: stuck.size, stopsKept });
       if (done) {
         const iso = new Date(now()).toISOString();
         batches = batches.map((x) => (x.at === at ? { ...x, back: iso } : x));
