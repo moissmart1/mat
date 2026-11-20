@@ -40,15 +40,21 @@ read `AGENTS.md` as well.
 ## The release gate (owner only)
 
 `npm run gate` checks the release candidate on the owner's Mac (clean tree,
-stamps, version number, the privacy scan, the unit tests), then pushes exactly
-that commit to a branch of its own, `ci/release-<commit>`, and waits for the
-`check` run on GitHub for that commit (about 15 minutes; it asks once a
-minute, for up to 40). Every job must pass: the unit tests, the four browser
-slices and `browser-all`. A slice GitHub cancelled or timed out is run once
-more; a test that failed, or one that passed only on a second try, fails the
-gate. The receipt it writes names the GitHub run, and `npm run ship` shows it
-on its first line. The branch is removed afterwards (left on GitHub after a
-failure, to look at; the next gate replaces it).
+stamps, version number, the privacy scan, the unit tests). It also scans every
+commit the next step makes public: each commit's added lines and its message.
+Then it pushes exactly that commit to a branch of its own,
+`ci/release-<commit>`, and waits for the `check` run on GitHub for that
+commit (about 15 minutes; it asks once a minute, for up to 40). Every job must
+pass: the unit tests, the four browser slices and `browser-all`. The gate
+counts the browser cases itself from the commit's test files, and each
+slice's log must show every one of its cases run and passed; what the
+workflow says it ran is not enough. A slice GitHub cancelled well before its
+time limit (a lost runner) is run once more. A slice that timed out or ran to
+its limit hung, and fails the gate, as does a test that failed or passed only
+on a second try. The receipt it writes names the GitHub run, and
+`npm run ship` shows it on its first line. The branch is removed afterwards
+(left on GitHub after a failure, to look at; the next gate replaces it). The
+slice logs it read are kept in `.git/mat-gate/e2e.log`.
 
 `npm run gate -- --local` runs the browser tests on the Mac instead, as the
 gate did before (about 15 minutes, in the local test queue). If `gh` is not

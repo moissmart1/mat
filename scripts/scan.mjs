@@ -12,6 +12,7 @@
 //
 // It never prints what it found, only where.
 
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -69,6 +70,43 @@ export function scanTree(root = ROOT, { patternsOnly = false } = {}) {
     if (BINARY.test(file) || !existsSync(join(root, file))) continue;
     const text = readFileSync(join(root, file), "utf8");
     for (const f of findings(text, { deployId, words })) out.push({ file, ...f });
+  }
+  return out;
+}
+
+// [{ commit, file, rule, line }] for what each commit adds and for its
+// message: every commit a push would make public, not only the last one (a
+// private string added in one commit and taken out in the next is still in
+// the history). Merges are read against every parent (-m), the first commit
+// against nothing (--root). Fails closed: a git error throws, and with no
+// private list the answer is a finding.
+export function scanCommits(shas, root = ROOT, { words, deployId } = {}) {
+  const list = words === undefined ? privateWords() : words;
+  if (list === null) return [{ commit: "(setup)", file: "(setup)", rule: "the private list is missing: run `npm run private` (it needs ~/.config/mat/env)", line: 0 }];
+  const id = deployId === undefined ? readConfig(root).deployId : deployId;
+  const run = (args) => execFileSync("git", args, { cwd: root, encoding: "utf8", maxBuffer: 512 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
+  const out = [];
+  for (const sha of shas) {
+    const commit = sha.slice(0, 7);
+    for (const f of findings(run(["log", "-1", "--format=%B", sha]), { deployId: id, words: list })) out.push({ commit, file: "(commit message)", ...f });
+    // Added lines only, per file, with their line numbers in the new file.
+    const added = new Map();
+    let file = "";
+    let at = 0;
+    for (const l of run(["diff-tree", "-p", "-m", "--root", "--no-commit-id", "--no-color", "--no-ext-diff", "--no-renames", "-U0", sha]).split("\n")) {
+      if (l.startsWith("+++ ")) {
+        file = l === "+++ /dev/null" ? "" : l.replace(/^\+\+\+ (b\/)?/, "");
+      } else if (l.startsWith("@@")) {
+        at = Number((l.match(/\+(\d+)/) || [])[1] || 0);
+      } else if (l.startsWith("+") && file && !BINARY.test(file)) {
+        if (!added.has(file)) added.set(file, { text: [], lines: [] });
+        added.get(file).text.push(l.slice(1));
+        added.get(file).lines.push(at++);
+      }
+    }
+    for (const [f, a] of added) {
+      for (const x of findings(a.text.join("\n"), { deployId: id, words: list })) out.push({ commit, file: f, rule: x.rule, line: a.lines[x.line - 1] || 0 });
+    }
   }
   return out;
 }

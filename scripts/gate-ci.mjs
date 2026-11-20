@@ -11,13 +11,23 @@
 import { spawnSync } from "node:child_process";
 
 export const WAIT_MS = 40 * 60 * 1000; // the whole run: four slices take about 12 minutes
-export const RERUN_WAIT_MS = 30 * 60 * 1000; // a slice GitHub abandoned, run again once
+export const RERUN_WAIT_MS = 30 * 60 * 1000; // a slice GitHub lost, run again once
 export const POLL_MS = 60 * 1000; // never asks GitHub more often than this
 export const MAX_API_MISSES = 5; // asks in a row that GitHub does not answer
 
 export const ciBranch = (head) => "ci/release-" + head.slice(0, 7);
 const sliceName = (n) => "browser (" + n + ")";
-const ABANDONED = new Set(["cancelled", "timed_out"]);
+// A job GitHub cancelled well before its time limit (check.yml: unit 10
+// minutes, a slice 25) most likely lost its runner: worth one more try. One
+// cancelled near the limit hung, and a hang is a fault in the code under test,
+// not something to re-run around; so is `timed_out`.
+export const LOST_BEFORE_MS = { unit: 8 * 60 * 1000, slice: 20 * 60 * 1000, "browser-all": 4 * 60 * 1000 };
+const ranMs = (j) => {
+  const a = Date.parse(j.started_at || "");
+  const b = Date.parse(j.completed_at || "");
+  return Number.isFinite(a) && Number.isFinite(b) ? Math.max(0, b - a) : 0;
+};
+const limitOf = (name) => LOST_BEFORE_MS[name] || LOST_BEFORE_MS.slice;
 
 // How many slices check.yml runs. It must be exactly 1..N and the runner must
 // be told /N, or part of the suite would never run and still look green.
@@ -29,6 +39,13 @@ export function sliceCount(checkYml) {
   const n = shards.length;
   if (Number(d[1]) !== n || shards.some((v, i) => v !== i + 1)) return 0;
   return n;
+}
+
+// Whether a push of a ci/ branch starts check.yml at all (else the gate would
+// wait 40 minutes for a run that never comes).
+export function startsOnCi(checkYml) {
+  const m = String(checkYml).match(/^\s*push:\s*\n\s*branches:\s*\[([^\]]*)\]/m);
+  return !!m && /["']?ci\/\*\*["']?/.test(m[1]);
 }
 
 // owner/repo of a github.com remote address, or "".
@@ -51,8 +68,9 @@ export function pickRun(runs, { head, branch, before = [] }) {
   return mine[0] || null;
 }
 
-// What the jobs of a finished run say: "success", "abandoned" (GitHub gave up
-// on a slice: cancelled or timed out, so worth one more try) or "failed".
+// What the jobs of a finished run say: "success", "abandoned" (GitHub lost a
+// runner: a job cancelled well before its limit, worth one more try) or
+// "failed" (anything else that is not a success, a hang included).
 export function judgeJobs(jobs, slices) {
   const by = new Map((jobs || []).map((j) => [j.name, j]));
   const needed = ["unit", ...Array.from({ length: slices }, (_, i) => sliceName(i + 1))];
@@ -60,16 +78,19 @@ export function judgeJobs(jobs, slices) {
   const abandoned = [];
   const missing = needed.filter((n) => !by.has(n));
   if (!by.has("browser-all")) missing.push("browser-all");
+  const lost = (name, j) => j.conclusion === "cancelled" && ranMs(j) < limitOf(name);
   for (const n of needed) {
-    const c = by.has(n) ? by.get(n).conclusion : null;
-    if (c === "success" || !by.has(n)) continue;
-    (ABANDONED.has(c) ? abandoned : failed).push(n + " (" + (c || "no result") + ")");
+    const j = by.get(n);
+    if (!j || j.conclusion === "success") continue;
+    if (lost(n, j)) abandoned.push(n + " (cancelled after " + Math.round(ranMs(j) / 60000) + " min)");
+    else if (j.conclusion === "cancelled") failed.push(n + " (hung: cancelled after " + Math.round(ranMs(j) / 60000) + " min, at its time limit)");
+    else failed.push(n + " (" + (j.conclusion || "no result") + ")");
   }
   const all = by.get("browser-all");
   if (all && all.conclusion !== "success") {
     // browser-all only says whether every slice passed: when a slice was
-    // abandoned it fails with it, and comes back with the re-run.
-    if (ABANDONED.has(all.conclusion) || (abandoned.length && !failed.length)) abandoned.push("browser-all (" + all.conclusion + ")");
+    // lost it fails with it, and comes back with the re-run.
+    if ((abandoned.length && !failed.length && all.conclusion !== "timed_out") || lost("browser-all", all)) abandoned.push("browser-all (" + all.conclusion + ")");
     else failed.push("browser-all (" + (all.conclusion || "no result") + ")");
   }
   for (const j of jobs || []) {
@@ -83,7 +104,7 @@ export function judgeJobs(jobs, slices) {
 // A slice's log, as GitHub keeps it: a timestamp before every line.
 export function readSlice(text) {
   const lines = String(text || "")
-    .replace(/^﻿/, "")
+    .replace(/^\uFEFF/, "")
     .split(/\r?\n/)
     .map((l) => l.replace(/^\d{4}-\d\d-\d\dT[\d:.]+Z ?/, ""));
   let summary = null;
@@ -92,7 +113,40 @@ export function readSlice(text) {
     if (m) summary = { pass: Number(m[1]), fail: Number(m[2]) };
   }
   const secondTry = lines.filter((l) => l.startsWith("second try: ")).map((l) => l.slice(12));
-  return { found: !!summary, pass: summary ? summary.pass : 0, fail: summary ? summary.fail : 0, secondTry };
+  const ok = lines.filter((l) => l.startsWith("ok   ")).map((l) => l.slice(5));
+  const failLines = lines.filter((l) => l.startsWith("FAIL ")).map((l) => l.slice(5));
+  return { found: !!summary, pass: summary ? summary.pass : 0, fail: summary ? summary.fail : 0, secondTry, ok, failLines };
+}
+
+// What each slice must run: every case of every file (listed here, from this
+// commit's files: tests/e2e/cases.cjs), dealt into slices exactly as the
+// runner deals them (tests/e2e/shard.cjs). Not what the workflow under test
+// says it runs. [[ "file > case", ... ] per slice]
+export function expectedSlices(list, slices, shardFiles) {
+  const byFile = new Map(list.map((f) => [f.file, f.cases]));
+  const out = [];
+  for (let n = 1; n <= slices; n++) {
+    out.push(shardFiles([...byFile.keys()], n, slices).flatMap((file) => byFile.get(file).map((c) => file.replace(/\.e2e\.cjs$/, "") + " > " + c)));
+  }
+  return out;
+}
+
+// Why a slice's log does not show that slice of the suite run and passed, or
+// null. Every case must have its own `ok` line, as often as it is listed, and
+// nothing else: so a narrowed run, an echoed summary or an empty slice fail.
+export function checkSlice(s, expected) {
+  if (!s.found) return "its log has no summary line";
+  if (s.fail || s.failLines.length) return s.fail + " failed (" + s.failLines.slice(0, 3).join("; ") + ")";
+  if (!(s.pass > 0)) return "it ran no tests";
+  if (s.ok.length !== s.pass) return "its summary says " + s.pass + " passed but it shows " + s.ok.length + " ok lines";
+  const want = new Map();
+  for (const c of expected) want.set(c, (want.get(c) || 0) + 1);
+  for (const c of s.ok) want.set(c, (want.get(c) || 0) - 1);
+  const missing = [...want].filter(([, v]) => v > 0).map(([k]) => k);
+  const extra = [...want].filter(([, v]) => v < 0).map(([k]) => k);
+  if (missing.length) return missing.length + " of its " + expected.length + " cases did not run (" + missing.slice(0, 3).join("; ") + ")";
+  if (extra.length) return "it ran cases that are not in this commit's slice (" + extra.slice(0, 3).join("; ") + ")";
+  return null;
 }
 
 // GitHub through the gh command line. run(args) -> { code, stdout, stderr }.
@@ -138,11 +192,12 @@ const minutes = (ms) => Math.round(ms / 60000);
 //   { ok: true, run: { id, url, attempt }, e2e: { pass, fail, secondTry }, logs }
 //   { ok: false, why, fix, run }
 export async function waitForCheck({
-  head, branch, slices, api, before = [],
+  head, branch, slices, expected, api, before = [],
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)), now = () => Date.now(), log = () => {},
   waitMs = WAIT_MS, rerunWaitMs = RERUN_WAIT_MS, pollMs = POLL_MS,
 }) {
   if (!(slices > 0)) return { ok: false, why: "check.yml does not split the browser tests into slices 1..N with a matching /N.", fix: "Fix .github/workflows/check.yml, or run `npm run gate -- --local`." };
+  if (!Array.isArray(expected) || expected.length !== slices) return { ok: false, why: "There is no local list of the cases each slice must run.", fix: "Check `node tests/e2e/cases.cjs`, or run `npm run gate -- --local`." };
   const started = now();
   let deadline = started + waitMs;
   let run = null;
@@ -150,7 +205,8 @@ export async function waitForCheck({
   let reran = false;
   let misses = 0;
   let lastState = "";
-  const fail = (why, fix) => ({ ok: false, why, fix, run: run && { id: run.id, url: run.html_url } });
+  const logs = {};
+  const fail = (why, fix) => ({ ok: false, why, fix, logs, run: run && { id: run.id, url: run.html_url } });
   for (;;) {
     let r = null;
     try {
@@ -170,7 +226,10 @@ export async function waitForCheck({
       if (state !== lastState) log("GitHub: " + state);
       lastState = state;
     }
-    if (r && r.status === "completed" && Number(r.run_attempt) >= wantAttempt) {
+    // Only the attempts this gate started count: one run again by hand while
+    // the gate waited could have been re-run around a real failure.
+    if (r && Number(r.run_attempt) > wantAttempt) return fail("GitHub's run is at attempt " + r.run_attempt + ", but this gate started " + wantAttempt + ": it was run again by hand.", "Run the gate again (a fresh run), or `npm run gate -- --local`.");
+    if (r && r.status === "completed" && Number(r.run_attempt) === wantAttempt) {
       let jobs;
       try {
         jobs = api.jobs(r.id);
@@ -182,19 +241,28 @@ export async function waitForCheck({
         try {
           api.rerun(r.id);
         } catch (e) {
-          return fail("GitHub abandoned " + v.abandoned.join(", ") + " and would not run it again (" + firstLine(e.message) + ").", "See " + r.html_url);
+          return fail("GitHub lost " + v.abandoned.join(", ") + " and would not run it again (" + firstLine(e.message) + ").", "See " + r.html_url);
         }
         reran = true;
         wantAttempt = Number(r.run_attempt) + 1;
         deadline = Math.max(deadline, now() + rerunWaitMs);
-        log("GitHub abandoned " + v.abandoned.join(", ") + ": running it once more");
+        log("GitHub lost " + v.abandoned.join(", ") + ": running it once more");
       } else if (v.state !== "success") {
+        // The logs of the slices that failed are kept for reading here (GitHub's expire).
+        for (const j of jobs) {
+          if (/^browser \(\d+\)$/.test(j.name) && j.conclusion !== "success") {
+            try {
+              logs[j.name] = api.log(j.id);
+            } catch {
+              // the run's address is in the message
+            }
+          }
+        }
         const what = [...v.failed, ...v.missing.map((n) => n + " (missing)"), ...v.abandoned.map((n) => n + (reran ? ", again" : ""))];
         return fail("The check run on GitHub did not pass: " + what.join(", ") + ".", "See " + r.html_url);
       } else {
         // Every required job passed: the count comes from each slice's own log.
         const e2e = { pass: 0, fail: 0, secondTry: [] };
-        const logs = {};
         for (let n = 1; n <= slices; n++) {
           const job = jobs.find((j) => j.name === sliceName(n));
           let text;
@@ -205,7 +273,9 @@ export async function waitForCheck({
           }
           logs[sliceName(n)] = text;
           const s = readSlice(text);
-          if (!s.found) return fail(sliceName(n) + " passed but its log has no summary line.", "See " + r.html_url);
+          if (s.secondTry.length) return fail("Passed only on a second try (a fault, not a pass): " + s.secondTry.join("; ") + ".", "See " + r.html_url);
+          const why = checkSlice(s, expected[n - 1]);
+          if (why) return fail(sliceName(n) + " is not this commit's slice " + n + " run and passed: " + why + ".", "See " + r.html_url + ". The gate counts the cases itself; check.yml must run the whole suite.");
           e2e.pass += s.pass;
           e2e.fail += s.fail;
           e2e.secondTry.push(...s.secondTry);

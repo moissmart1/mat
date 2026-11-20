@@ -153,7 +153,7 @@ export function judgeReceipt(receipt, { tree, appVersion }) {
   if (u.fail || e.fail) return "The gate's receipt for this commit records failing tests.";
   if (!(u.pass > 0) || !(e.pass > 0)) return "The gate's receipt counts no unit or no browser tests.";
   const r = receipt.runner;
-  if (r && r.kind === "github" && (!r.runId || !/^https:\/\/github\.com\//.test(String(r.url || "")) || (r.headSha && r.headSha !== receipt.head))) {
+  if (r && r.kind === "github" && (!r.runId || !/^https:\/\/github\.com\//.test(String(r.url || "")) || r.headSha !== receipt.head)) {
     return "The gate's receipt names no GitHub run for this commit.";
   }
   return null;

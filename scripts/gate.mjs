@@ -16,10 +16,11 @@
 
 import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { join } from "node:path";
 import { ROOT, backendHash, config, git, gitOk, needsBump, readConfig, receiptDir, runnerText, writtenBackendStamp } from "./release-lib.mjs";
-import { ciBranch, githubCli, repoOf, sliceCount, waitForCheck } from "./gate-ci.mjs";
-import { scanTree } from "./scan.mjs";
+import { ciBranch, expectedSlices, githubCli, repoOf, sliceCount, startsOnCi, waitForCheck } from "./gate-ci.mjs";
+import { scanCommits, scanTree } from "./scan.mjs";
 import { readSw, shellHash, shellList, writtenVersion } from "./stamp-sw.mjs";
 
 const quick = process.argv.includes("--quick");
@@ -120,8 +121,49 @@ if (local) {
   // Exactly this commit goes to its own ci/ branch (public, so only after the
   // scan above; the push check scans it again). The run is GitHub's `check`
   // workflow from this commit, started by that push.
-  const slices = sliceCount(git(["show", head + ":.github/workflows/check.yml"]));
+  let yml = "";
+  try {
+    yml = git(["show", head + ":.github/workflows/check.yml"]);
+  } catch {
+    stop("This commit has no .github/workflows/check.yml, so GitHub would run no browser tests.", "Put it back, or run `npm run gate -- --local`.");
+  }
+  if (!startsOnCi(yml)) stop("check.yml does not run on a push to a ci/ branch, so no run would start.", "Keep \"ci/**\" under on.push.branches, or run `npm run gate -- --local`.");
+  const slices = sliceCount(yml);
   if (!slices) stop("check.yml does not split the browser tests into slices 1..N with a matching /N.", "Fix .github/workflows/check.yml, or run `npm run gate -- --local`.");
+  // What each slice must show it ran, counted here from this commit's test
+  // files (no browser, no queue), not taken from the workflow under test.
+  const listed = spawnSync("node", ["tests/e2e/cases.cjs"], { cwd: ROOT, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+  let expected;
+  try {
+    if (listed.status !== 0) throw new Error((listed.stderr || "").trim().split("\n")[0] || "exit " + listed.status);
+    const { shardFiles } = createRequire(import.meta.url)("../tests/e2e/shard.cjs");
+    expected = expectedSlices(JSON.parse(listed.stdout), slices, shardFiles);
+  } catch (e) {
+    stop("Could not list the browser-test cases here (" + String(e.message).split("\n")[0] + ").", "Run `node tests/e2e/cases.cjs` to see why.");
+  }
+  if (expected.some((x) => !x.length)) stop("A slice of " + slices + " would hold no browser tests.", "Fewer slices in check.yml, or run `npm run gate -- --local`.");
+  step("browser tests: " + expected.flat().length + " cases here, in " + slices + " slices");
+  // Everything the push makes public, not only this commit: each commit's
+  // added lines and its message, against the private list.
+  let range = [];
+  try {
+    git(["fetch", "-q", "--prune", "origin"]);
+    range = git(["rev-list", "HEAD", "--not", "--remotes=origin"]).split("\n").filter(Boolean);
+  } catch (e) {
+    stop("Could not ask GitHub which commits are new (" + String(e.message).split("\n")[0] + ").", "Run the gate again, or `npm run gate -- --local`.");
+  }
+  let inRange;
+  try {
+    inRange = scanCommits(range);
+  } catch (e) {
+    stop("The scan of the commits to be pushed did not finish (" + String(e.message).split("\n")[0] + "). Nothing was pushed.", "Run the gate again.");
+  }
+  if (inRange.length) {
+    for (const f of inRange) console.error("gate: " + f.commit + " " + f.file + ":" + f.line + "  " + f.rule);
+    stop("The private-data scan found " + inRange.length + " problem(s) in the " + range.length + " commit(s) the push would make public. Nothing was pushed.",
+      "Take them out of the history (they are in commits not yet on GitHub), or ask the owner.");
+  }
+  step("nothing private in the " + range.length + " commit(s) the push makes public");
   const branch = ciBranch(head);
   let before = [];
   try {
@@ -144,9 +186,10 @@ if (local) {
   const push = spawnSync("git", ["push", "-q", "origin", head + ":refs/heads/" + branch], { cwd: ROOT, stdio: "inherit" });
   if (push.status !== 0) stop("The push to " + branch + " was refused.", "Read the message above. Nothing else was pushed.");
   step("browser tests: waiting for GitHub (" + slices + " slices, about 15 minutes; asked once a minute, up to 40)");
-  const ci = await waitForCheck({ head, branch, slices, api: gh, before, log: (s) => step(s) });
-  if (ci.ok) writeFileSync(join(dir, "e2e.log"), Object.entries(ci.logs).map(([k, v]) => "=== " + k + "\n" + v).join("\n"));
-  if (!ci.ok) stop("Browser tests on GitHub: " + ci.why, ci.fix + "\n      The branch " + branch + " is left on GitHub to look at; the next gate replaces it.");
+  const ci = await waitForCheck({ head, branch, slices, expected, api: gh, before, log: (s) => step(s) });
+  // What was read of the slices' logs is kept here, pass or fail (GitHub's expire).
+  writeFileSync(join(dir, "e2e.log"), Object.entries(ci.logs || {}).map(([k, v]) => "=== " + k + "\n" + v).join("\n"));
+  if (!ci.ok) stop("Browser tests on GitHub: " + ci.why, ci.fix + "\n      Slice logs: " + join(dir, "e2e.log") + "\n      The branch " + branch + " is left on GitHub to look at; the next gate replaces it.");
   e2ePass = ci.e2e.pass;
   e2eFail = ci.e2e.fail;
   secondTry = ci.e2e.secondTry;
