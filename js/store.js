@@ -87,6 +87,8 @@ const STAMP_DROPPED = "That stamp’s day has closed.";
 
 // A stop as the backend gives it back, before the fields are filled in.
 const STOP_BLANK = { date: "", time: "", title: "", detail: "", gettingThere: "", travelMin: 0, fixed: false, place: "", signJp: "", booked: false, link: "", photo: "", note: "", lat: "", lng: "" };
+// The same for a stay (bulk add's "Add the stay").
+const STAY_BLANK = { name: "", nameJp: "", addressJp: "", firstNight: "", lastNight: "", note: "", place: "", link: "", photo: "", lat: "", lng: "", tkRef: "", tkName: "", tkPeople: "", tkRoom: "" };
 
 const copy = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
 const defaultWait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -917,6 +919,28 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
     });
   }
 
+  // A stay's booking and note (Edit stay): only the fields given, sent as
+  // saveStay with merge: true, so the backend lays them over the row as it is
+  // under the lock and nothing typed in the Sheet is overwritten. Not queued:
+  // like a stop's edit it needs a connection, and with no reply it is rolled back.
+  function saveStay(id, patch, opts = {}) {
+    return change("stay", id, "edit", "saveStay", patch, { ...opts, args: { stay: { id, ...copy(patch) }, merge: true } });
+  }
+
+  // A new stay, as addStop: shown at once, sent as saveStay { stay } (a new
+  // id adds it). Bulk add's "Add the stay" only.
+  function addStay(draft, { id, quiet = false, onUnsure = null } = {}) {
+    const stay = { ...copy(draft), id: typeof id === "string" && id ? id : newId() };
+    const after = { ...STAY_BLANK, ...copy(stay), deleted: false };
+    return begin({
+      token: newId(), kind: "stay", id: stay.id, action: "add", api: "saveStay",
+      args: { stay: copy(stay) }, before: null, after,
+      view: (cur) => ({ ...(cur || {}), ...after }),
+      status: "sending", undone: false, logId: null, inFlight: false, lost: false, actor: myName,
+      quiet, onUnsure,
+    });
+  }
+
   // How a write made with opts.quiet ended: { saved: true, item } (item as
   // the backend has it), or { saved: false, reason } with reason "refused"
   // (and the backend's message), "notSent" (it provably never left the
@@ -963,7 +987,10 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
   // no undo bar line per picture (the stop sheet shows each one's progress);
   // History has each one.
   function ticketOp(t, { by, at, size } = {}) {
-    const meta = { id: t.id, stop: t.stop, who: t.who || "", seat: t.seat || "", page: t.page, mime: t.mime, w: t.w, h: t.h };
+    // On a stay (its booking): stay instead of stop, kept through mat.queue and a reload.
+    const onStay = typeof t.stay === "string" && t.stay !== "";
+    const meta = { id: t.id, stop: onStay ? "" : t.stop, who: t.who || "", seat: t.seat || "", page: t.page, mime: t.mime, w: t.w, h: t.h };
+    if (onStay) meta.stay = t.stay;
     // From the planner's list (auto-add): the line it came from, so the backend never takes it twice.
     if (typeof t.from === "string" && t.from) meta.from = t.from;
     const chars = typeof t.data === "string" ? t.data.length : Number(size) || 0;
@@ -1001,7 +1028,7 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
     return true;
   }
 
-  // t: { id?, stop, who, seat, page, mime, w, h, data }. Returns the token
+  // t: { id?, stop or stay, who, seat, page, mime, w, h, data }. Returns the token
   // (ticketOutcome(token) says how it went); the caller keeps the picture in
   // the keep first, under t.id, so a resend after a reload can find it.
   function addTicket(t) {
@@ -1732,6 +1759,7 @@ export function createStore({ api, storage, now = () => Date.now(), wait = defau
     restorePayment: (id) => change("payment", id, "restamp", "restorePayment", { removed: false }),
     addStop,
     updateStop: (id, patch, opts) => change("stop", id, "edit", "updateStop", patch, opts),
+    saveStay, addStay,
     outcome,
     deleteStop: (id) => change("stop", id, "delete", "deleteStop", { deleted: true }),
     restoreStop: (id) => change("stop", id, "restore", "restoreStop", { deleted: false }),

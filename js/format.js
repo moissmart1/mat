@@ -113,6 +113,16 @@ export function changeText(c) {
       default: return "Undone.";
     }
   }
+  // A stay: its booking edited (Edit stay), or one added by bulk add.
+  if (c.kind === "stay") {
+    switch (c.action) {
+      case "add": return "Added " + item.name + ".";
+      case "edit": return "Changed " + item.name + ".";
+      case "delete": return "Removed " + item.name + ".";
+      case "restore": return "Put back " + item.name + ".";
+      default: return "Undone.";
+    }
+  }
   // A ticket picture on a stop (js/tickets.js).
   if (c.kind === "ticket") {
     if (c.action === "add") return "Added a ticket picture.";
