@@ -25,7 +25,7 @@ export const LOST_BEFORE_MS = { unit: 8 * 60 * 1000, slice: 20 * 60 * 1000, "bro
 const ranMs = (j) => {
   const a = Date.parse(j.started_at || "");
   const b = Date.parse(j.completed_at || "");
-  return Number.isFinite(a) && Number.isFinite(b) ? Math.max(0, b - a) : 0;
+  return Number.isFinite(a) && Number.isFinite(b) ? Math.max(0, b - a) : null; // null: GitHub did not say
 };
 const limitOf = (name) => LOST_BEFORE_MS[name] || LOST_BEFORE_MS.slice;
 
@@ -78,11 +78,13 @@ export function judgeJobs(jobs, slices) {
   const abandoned = [];
   const missing = needed.filter((n) => !by.has(n));
   if (!by.has("browser-all")) missing.push("browser-all");
-  const lost = (name, j) => j.conclusion === "cancelled" && ranMs(j) < limitOf(name);
+  // A job with no times is not known to be lost: it counts as hung.
+  const lost = (name, j) => j.conclusion === "cancelled" && ranMs(j) !== null && ranMs(j) < limitOf(name);
   for (const n of needed) {
     const j = by.get(n);
     if (!j || j.conclusion === "success") continue;
     if (lost(n, j)) abandoned.push(n + " (cancelled after " + Math.round(ranMs(j) / 60000) + " min)");
+    else if (j.conclusion === "cancelled" && ranMs(j) === null) failed.push(n + " (cancelled, and GitHub gives no times: counted as hung)");
     else if (j.conclusion === "cancelled") failed.push(n + " (hung: cancelled after " + Math.round(ranMs(j) / 60000) + " min, at its time limit)");
     else failed.push(n + " (" + (j.conclusion || "no result") + ")");
   }

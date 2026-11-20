@@ -7,7 +7,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -245,6 +245,11 @@ test("a timed-out slice, or one cancelled at its time limit, is a hang: the gate
     assert.equal(api.calls.rerun, 0, "never re-run around a hang");
   }
   assert.equal(judgeJobs(jobsOf({ "browser (2)": ["cancelled", 19], "browser-all": "failure" }), 4).state, "abandoned");
+  // A cancelled job GitHub gives no times for is not known to be lost: it fails.
+  const noTimes = jobsOf({ "browser (2)": ["cancelled", 3], "browser-all": "failure" }).map((j) => (j.name === "browser (2)" ? { ...j, started_at: null, completed_at: undefined } : j));
+  const v = judgeJobs(noTimes, 4);
+  assert.equal(v.state, "failed");
+  assert.match(v.failed.join(), /browser \(2\) \(cancelled, and GitHub gives no times: counted as hung\)/);
   assert.equal(judgeJobs(jobsOf({ "browser-all": "timed_out" }), 4).state, "failed");
 });
 
@@ -343,6 +348,18 @@ test("check.yml's slices and triggers, the branch name and the repository are re
   assert.equal(repoOf("https://example.com/x/y.git"), "");
 });
 
+test("no browser test behaves differently on GitHub (the gate's count there must mean what it means here)", () => {
+  // A case that returns early when it sees CI would still print its ok line,
+  // and the GitHub gate would count a test that never ran.
+  const dir = join(ROOT, "tests", "e2e");
+  const hits = [];
+  for (const f of readdirSync(dir).filter((x) => /\.(c|m)?js$/.test(x))) {
+    const text = readFileSync(join(dir, f), "utf8");
+    if (/GITHUB_ACTIONS|process\.env\.CI\b|env\[\s*["']CI["']\s*\]|RUNNER_/.test(text)) hits.push(f);
+  }
+  assert.deepEqual(hits, [], "CI-dependent code in tests/e2e: " + hits.join(", "));
+});
+
 // A throwaway repository for the history scan; the private word is made up.
 const WORD = "ZEBRA" + "QUILT77";
 function repoWith(commits) {
@@ -372,6 +389,18 @@ test("the push's history is scanned: a private string only in a middle commit, o
     assert.deepEqual(scanCommits([middle.shas[0], middle.shas[2]], middle.dir, opts), [], "the clean commits are clean");
   } finally {
     middle.cleanup();
+  }
+  // An added line that looks like a diff header must not hide the lines after it.
+  const crafted = repoWith([
+    { file: "a.txt", text: "one\n", message: "first" },
+    { file: "a.txt", text: "one\n++ /dev/null\n++ b/x.png\n" + WORD + "\n", message: "second" },
+  ]);
+  try {
+    const found = scanCommits(crafted.shas, crafted.dir, opts);
+    assert.equal(found.length, 1, JSON.stringify(found));
+    assert.deepEqual(found[0], { commit: crafted.shas[0].slice(0, 7), file: "a.txt", rule: "a string from the private list", line: 4 });
+  } finally {
+    crafted.cleanup();
   }
   const message = repoWith([
     { file: "a.txt", text: "one\n", message: "first" },

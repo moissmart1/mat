@@ -90,12 +90,23 @@ export function scanCommits(shas, root = ROOT, { words, deployId } = {}) {
     const commit = sha.slice(0, 7);
     for (const f of findings(run(["log", "-1", "--format=%B", sha]), { deployId: id, words: list })) out.push({ commit, file: "(commit message)", ...f });
     // Added lines only, per file, with their line numbers in the new file.
+    // A file's header (`+++ b/name`) is read only between its `diff --git`
+    // line and its first hunk: an added line `++ /dev/null` comes out as
+    // `+++ /dev/null` and must not switch the rest of the file off.
     const added = new Map();
     let file = "";
+    let header = false;
     let at = 0;
     for (const l of run(["diff-tree", "-p", "-m", "--root", "--no-commit-id", "--no-color", "--no-ext-diff", "--no-renames", "-U0", sha]).split("\n")) {
-      if (l.startsWith("+++ ")) {
-        file = l === "+++ /dev/null" ? "" : l.replace(/^\+\+\+ (b\/)?/, "");
+      if (l.startsWith("diff --git ")) {
+        header = true;
+        file = "";
+      } else if (header) {
+        if (l.startsWith("+++ ")) file = l === "+++ /dev/null" ? "" : l.replace(/^\+\+\+ (b\/)?/, "");
+        else if (l.startsWith("@@")) {
+          header = false;
+          at = Number((l.match(/\+(\d+)/) || [])[1] || 0);
+        }
       } else if (l.startsWith("@@")) {
         at = Number((l.match(/\+(\d+)/) || [])[1] || 0);
       } else if (l.startsWith("+") && file && !BINARY.test(file)) {
