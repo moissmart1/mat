@@ -217,6 +217,32 @@ export function nextLine(stop, minutes) {
   return "Next, in " + span(at - minutes) + ".";
 }
 
+// The zone's word for people: its long generic name without " Time"
+// ("Eastern"); failing that, the zone id's last part with spaces.
+export function zoneWord(zone) {
+  try {
+    const part = new Intl.DateTimeFormat("en", { timeZone: zone, timeZoneName: "longGeneric" }).formatToParts(new Date(0)).find((p) => p.type === "timeZoneName");
+    const name = part ? part.value.replace(/ Time$/, "").trim() : "";
+    if (name && !/^(GMT|UTC)/.test(name)) return name;
+  } catch {
+    // an engine without longGeneric: the id
+  }
+  return String(zone || "").split("/").pop().replace(/_/g, " ");
+}
+
+// The two clocks over a hotel desk on a day in its own zone:
+// { local, japan, japanDate } (local and japan in minutes past midnight).
+export function zoneClocks(s, nowMs, zone) {
+  const home = homeOf(s && s.trip);
+  const j = nowIn(home, nowMs);
+  return { local: nowIn(zone, nowMs).minutes, japan: j.minutes, japanDate: j.date };
+}
+
+// The eve whose next day is `date` (the evening before it), or null.
+export function eveBefore(eves, date) {
+  return list(eves).find((e) => e && typeof e.date === "string" && DATE_RE.test(e.date) && dayAfter(e.date) === date) || null;
+}
+
 // ---- where you are (js/where.js gives the position; it never leaves the phone) ----
 
 // Past this a straight line says nothing (you would take a train): the

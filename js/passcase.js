@@ -13,9 +13,10 @@
 //
 // passCase(state, nowMs, { have, here }) ->
 //   { on, date, next, today, later, used, toCome, todayLeft, empty, hook }
-// - on: the trip's first day has begun (tripStarted): the Tickets key is in
-//   the bar in Before's place.
-// - date: today in the trip's zone.
+// - on: the trip has begun (tripStarted: from the eve when there is one): the
+//   Tickets key is in the bar in Before's place.
+// - date: today by the Days clock (plan.js tripNow: a day in its own zone
+//   is that place's). An eve's tickets stand by date as any other (day 0).
 // - next: the next ticket not yet used (soonest first), or null.
 // - today / later: the other tickets not yet used, today's and later days',
 //   soonest first (the window's is in neither).
@@ -35,19 +36,19 @@
 //   mark } (nightOf), else null. It changes nothing else: a stay's pictures
 //   are never in the window, a pocket or a count.
 
-import { dateIn } from "./time.js";
-import { nowIn, stopsFor, nextStopId, isPast, minutesOf, nextLine, hereLine, header, stayShownFor, nightOf } from "./plan.js";
+import { tripNow, stopsFor, nextStopId, isPast, minutesOf, nextLine, hereLine, header, stayShownFor, nightOf } from "./plan.js";
 import { ticketMark, ticketKinds, stayMark } from "./tickets.js";
 import { tidyLine } from "./board.js";
 
 const str = (v) => (typeof v === "string" ? v.trim() : "");
 const list = (v) => (Array.isArray(v) ? v : []);
-const tzOf = (s) => (s && s.trip && s.trip.tz) || "Asia/Tokyo";
-
-// The trip's first day has begun in the trip's own zone (and the trip is loaded).
+// The trip has begun by the Days clock (tripNow): from the evening before
+// the first day when there is one (state.eves), else from the first day
+// (and the trip is loaded).
 export function tripStarted(s, nowMs) {
   if (!s || s.status !== "ready" || !s.trip || typeof s.trip.start !== "string" || !s.trip.start) return false;
-  return dateIn(tzOf(s), nowMs) >= s.trip.start;
+  const eve = list(s.eves).find((d) => d && typeof d.date === "string" && d.date);
+  return tripNow(s, nowMs).date >= (eve ? eve.date : s.trip.start);
 }
 
 // The status line of a ticket, from its 券 mark.
@@ -66,8 +67,7 @@ function firstPicture(pics, me, have) {
 }
 
 export function passCase(s, nowMs, { have = () => false, here = null } = {}) {
-  const tz = tzOf(s);
-  const now = nowIn(tz, nowMs);
+  const now = tripNow(s, nowMs);
   const out = { on: tripStarted(s, nowMs), date: now.date, next: null, today: [], later: [], used: [], toCome: 0, todayLeft: 0, empty: true, hook: null };
   if (!s || s.status !== "ready" || s.ticketsReady !== true) return out;
 

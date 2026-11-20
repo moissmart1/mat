@@ -46,7 +46,7 @@
 // ground under it), it goes back to the top. Never
 // on a minute tick, a sync or a redraw.
 
-import { openDayIndex, dayState, daysToGo, nowIn, stopsFor, nextStopId, header, dayTotalYen, stayShownFor, hereLine, nearStops, nightOf, NIGHT_ENDS_MIN } from "../plan.js";
+import { openDayIndex, dayState, daysToGo, tripNow, zoneOf, zoneWord, zoneClocks, eveBefore, stopsFor, nextStopId, header, dayTotalYen, stayShownFor, hereLine, nearStops, nightOf, NIGHT_ENDS_MIN } from "../plan.js";
 import { issuer, dayShort, dayHead } from "../format.js";
 import { ticketEl } from "./ticket.js";
 import { summary as bookSummary, countText } from "../stampbook.js";
@@ -116,6 +116,35 @@ function patchRows(rows, fresh) {
   while (rows.children.length > want.length) rows.lastElementChild.remove();
 }
 
+// The 前夜 strip: its heading replaced when it changed, its rows patched as
+// the ticket's own are.
+function patchEve(old, fresh) {
+  const h = old.querySelector(".eve-h");
+  const nh = fresh.querySelector(".eve-h");
+  if (h && nh && h.outerHTML !== nh.outerHTML) h.replaceWith(nh);
+  const rows = old.querySelector(".rows");
+  const nr = fresh.querySelector(".rows");
+  if (rows && nr) patchRows(rows, nr);
+}
+
+// A head that differs only in its two clocks (T1, every minute): only the
+// clocks change, as a leave-by line does, so the rest of the head (the gate
+// stamp, the stamp line, focus) is left alone. Returns whether it did so.
+function onlyClocks(head, fresh) {
+  const zs = head.querySelector(":scope > .zs");
+  const nz = fresh.querySelector(":scope > .zs");
+  if (!zs || !nz) return false;
+  const bare = (n) => {
+    const c = n.cloneNode(true);
+    const z = c.querySelector(":scope > .zs");
+    if (z) z.remove();
+    return c.outerHTML;
+  };
+  if (bare(head) !== bare(fresh)) return false;
+  if (zs.outerHTML !== nz.outerHTML) zs.replaceWith(nz);
+  return true;
+}
+
 // Brings the ticket on screen (`old`) in line with a freshly drawn one,
 // part by part. Returns the ticket now on screen.
 function patchTicket(old, fresh) {
@@ -133,7 +162,8 @@ function patchTicket(old, fresh) {
   }
   a.forEach((n, i) => {
     if (n.classList.contains("rows")) patchRows(n, b[i]);
-    else if (n.outerHTML !== b[i].outerHTML) n.replaceWith(b[i]);
+    else if (n.classList.contains("eve")) patchEve(n, b[i]);
+    else if (n.outerHTML !== b[i].outerHTML && !onlyClocks(n, b[i])) n.replaceWith(b[i]);
   });
   return old;
 }
@@ -224,7 +254,7 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
   // Today's open next stop, all of it on screen if it is not (its full open
   // height, even while it is still sliding open).
   function revealNext() {
-    if (cur < 0 || states[cur] !== "today" || !autoId || (chosen && openId !== autoId)) return;
+    if (cur < 0 || !autoId || (chosen && openId !== autoId)) return;
     const pg = rail.children[cur];
     const r = pg ? pg.querySelector('.r[data-id="' + CSS.escape(autoId) + '"]') : null;
     if (!r) return;
@@ -474,8 +504,7 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
     const date = clock.demoDay();
     demo.hidden = !date;
     if (!date) return;
-    const s = store.state;
-    const m = nowIn((s.trip && s.trip.tz) || "Asia/Tokyo", clock.now()).minutes;
+    const m = tripNow(store.state, clock.now()).minutes;
     const hhmm = String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0");
     // The time is kept with the date: it never wraps onto a line alone.
     const head = "Pretending it’s " + dayHead(date, []).en + ", ";
@@ -486,7 +515,9 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
 
   // The stamp button and its count; the date of today's open stamp for the ticket's line.
   function showStamps(s) {
-    const b = bookSummary(s, Date.now());
+    // The real time (never the demo's), and the Days clock's day at it.
+    const real = Date.now();
+    const b = bookSummary(s, real, tripNow(s, real).date);
     const on = s.status === "ready" && b.total > 0;
     stampBtn.hidden = !on;
     bar.classList.toggle("has-stamp", on);
@@ -543,18 +574,21 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
     const days = list(s.days).filter((d) => d && typeof d.date === "string" && d.date);
     const tz = s.trip.tz || "Asia/Tokyo";
     const nowMs = clock.now();
-    const now = nowIn(tz, nowMs);
+    // The Days clock: on a day in its own zone, that place's date and time.
+    const now = tripNow(s, nowMs);
     seen = now;
-    const toGo = daysToGo({ ...s.trip, tz }, nowMs);
+    const toGo = daysToGo({ ...s.trip, tz }, nowMs, now.date);
     const mark = issuer(list(s.people));
     // A row typed into the Sheet by hand may be blank or have no id.
     const stops = list(s.stops).filter((x) => x && typeof x.id === "string" && x.id && typeof x.date === "string");
     const stays = list(s.stays).filter((x) => x && typeof x === "object");
     const expenses = list(s.expenses).filter((x) => x && typeof x === "object");
     const inView = cur >= 0 ? dates[cur] : null;
+    const home = zoneOf(s.trip, null);
     // Where the phone is, when usable (js/where.js): memory only.
     const here = where ? where.current() : null;
-    board.update(boardFor(s, nowMs, here), tz);
+    // Closed until the Days clock's next day; during a demo, the real one's.
+    board.update(boardFor(s, nowMs, here), clock.demoDay() ? tripNow(s, Date.now()).date : now.date);
     const left = rail.scrollLeft;
     const spot = focusSpot();
 
@@ -570,7 +604,7 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
       drawPager();
     }
     states = days.map((d) => dayState(d.date, now.date));
-    ahead = days.map((d) => (toGo > 0 ? daysToGo({ start: d.date, tz }, nowMs) : 0));
+    ahead = days.map((d) => (toGo > 0 ? daysToGo({ start: d.date, tz }, nowMs, now.date) : 0));
 
     autoId = null;
     days.forEach((day, i) => {
@@ -598,6 +632,22 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
         // Today's stamp is open and not yet pressed: the ticket says so.
         stampOpen: stampToday === day.date,
       };
+      // A day in its own zone (T1 現地時刻): its word, and the two clocks while it is today.
+      const zone = zoneOf(s.trip, day);
+      model.zone = zone === home ? null : { word: zoneWord(zone), clocks: state === "today" ? zoneClocks(s, nowMs, zone) : null };
+      // 前夜: the evening before this day, with its stops, judged by its own day.
+      const eve = eveBefore(s.eves, day.date);
+      const eveStops = eve ? stopsFor(stops, eve.date) : [];
+      if (eveStops.length) {
+        const eveState = dayState(eve.date, now.date);
+        const eveNext = eveState === "today" ? nextStopId(eveStops, now.minutes) : null;
+        if (eveNext) autoId = eveNext;
+        model.eve = { date: eve.date, local: zoneOf(s.trip, eve) !== home, stops: eveStops, state: eveState, minutes: eveState === "today" ? now.minutes : null, nextId: eveNext };
+        if (eveNext && here) {
+          const hl = hereLine(eveStops.find((x) => x.id === eveNext), now.minutes, here);
+          if (hl) model.eve.hereNext = hl;
+        }
+      }
       // Leave by, from where you are: only with a usable position near the next stop.
       if (nextId && here) {
         const hl = hereLine(dayStops.find((x) => x.id === nextId), now.minutes, here);
@@ -611,7 +661,7 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
       // The stops with a ticket: the 券 box and Show ticket. None, no key at all.
       if (tickets) {
         const tix = {};
-        for (const st of dayStops) {
+        for (const st of model.eve ? eveStops.concat(dayStops) : dayStops) {
           const m = tickets.mark(st, s);
           if (m) tix[st.id] = m;
         }
@@ -642,7 +692,7 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
       // Money, or in the background): Days counts as last seen today, so
       // coming to it on a later day moves the rail on (R32).
       if (!timer) leftOn = now.date;
-      jump(openDayIndex({ ...s.trip, tz }, days, nowMs));
+      jump(openDayIndex({ ...s.trip, tz }, days, nowMs, now.date));
       return;
     }
     // Keep the day in view where it was, without animation.
@@ -663,7 +713,7 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
     if (timer && period() !== running) retime();
     const s = store.state;
     if (!tripReady(s)) return;
-    const now = nowIn(tzOf(s), clock.now());
+    const now = tripNow(s, clock.now());
     if (!seen || now.date !== seen.date || now.minutes !== seen.minutes) render(s);
   }
 
@@ -694,12 +744,13 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
       // A sheet over Days still in use counts as being looked at.
       if (back && tripReady(s) && dates.length && !held()) {
         const nowMs = clock.now();
-        if (nowIn(tzOf(s), nowMs).date > back) jump(openDayIndex({ ...s.trip, tz: tzOf(s) }, dates.map((date) => ({ date })), nowMs));
+        const today = tripNow(s, nowMs).date;
+        if (today > back) jump(openDayIndex({ ...s.trip, tz: tzOf(s) }, dates.map((date) => ({ date })), nowMs, today));
       }
     } else if (!live && timer) {
       clearInterval(timer);
       timer = null;
-      leftOn = tripReady(s) ? nowIn(tzOf(s), clock.now()).date : null;
+      leftOn = tripReady(s) ? tripNow(s, clock.now()).date : null;
     }
   }
   document.addEventListener("visibilitychange", wake);
@@ -721,7 +772,10 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
       if (now === demoWas) return;
       demoWas = now;
       const s = store.state;
-      if (tripReady(s) && dates.length) jump(openDayIndex({ ...s.trip, tz: tzOf(s) }, dates.map((date) => ({ date })), clock.now()));
+      if (tripReady(s) && dates.length) {
+        const nowMs = clock.now();
+        jump(openDayIndex({ ...s.trip, tz: tzOf(s) }, dates.map((date) => ({ date })), nowMs, tripNow(s, nowMs).date));
+      }
     });
   }
   wake();

@@ -38,7 +38,7 @@
 //   every picture is on this phone. stayMark: the same for a stay's booking
 //   ("pics" or "ref"; a picture on a stay has `stay` instead of `stop`).
 
-import { dateIn } from "./time.js";
+import { tripNow } from "./plan.js";
 
 export const LIMITS = { maxSide: 1500, maxChars: 450000, perStop: 8, perTrip: 120, chunk: 45000, fact: 60 };
 export const NOT_A_TICKET = "Only a photo, a screenshot or a PDF can be a ticket.";
@@ -478,8 +478,8 @@ const nextDay = (date) => {
 // night, 15:00), then past ones (most recent first); none whose stop or stay
 // is removed or not on the plan.
 export function fetchOrder(s, nowMs) {
-  const tz = (s.trip && s.trip.tz) || "Asia/Tokyo";
-  const today = dateIn(tz, nowMs);
+  // Today by the Days clock (a day in its own zone is that place's).
+  const today = tripNow(s, nowMs).date;
   const stops = new Map((Array.isArray(s.stops) ? s.stops : []).filter((x) => x && !x.deleted).map((x) => [x.id, x]));
   const stays = new Map((Array.isArray(s.stays) ? s.stays : []).filter((x) => x && !x.deleted && /^\d{4}-\d{2}-\d{2}$/.test(String(x.firstNight || ""))).map((x) => [x.id, x]));
   const when = (t) => {

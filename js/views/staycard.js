@@ -36,7 +36,7 @@
 // trip's zone) and a line saying whether its pictures are on this phone.
 // Without a booking the card is as it was, plus Edit.
 
-import { safeHref, stayMapsUrl, stayDistance, nowIn, nightOf } from "../plan.js";
+import { safeHref, stayMapsUrl, stayDistance, tripNow, nightOf } from "../plan.js";
 import { stayMark } from "../tickets.js";
 import { tagSmall, nightsLong } from "./keytag.js";
 
@@ -356,8 +356,8 @@ export function mountStayCard(root, store, { where = null, keep = null, clock = 
     const s = store.state;
     const mark = s.ticketsReady === false ? null : stayMark(stay, s.tickets, (id) => !!keep && keep.have(id));
     if (!mark) return null;
-    const tz = (s.trip && s.trip.tz) || "Asia/Tokyo";
-    const now = nowIn(tz, clock ? clock.now() : Date.now());
+    // By the Days clock (a day in its own zone is that place's).
+    const now = tripNow(s, clock ? clock.now() : Date.now());
     return { mark, night: nightOf(stay, { today: now.date, minutes: now.minutes }) };
   }
 
