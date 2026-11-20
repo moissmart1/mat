@@ -329,6 +329,9 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
     if (word) parts.push(" ", el("i", "", word));
     count.replaceChildren(...parts);
     count.hidden = !dates.length;
+    rail.querySelectorAll(".pg[data-date]").forEach(page => {
+      page.classList.toggle("is-neighbor", page.dataset.date === dates[cur - 1] || page.dataset.date === dates[cur + 1]);
+    });
     pager.querySelectorAll(".sq").forEach((b, i) => {
       b.classList.toggle("is-cur", i === cur);
       b.classList.toggle("is-done", states[i] === "used");
@@ -429,7 +432,21 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
     openId = was === r.dataset.id ? null : r.dataset.id;
     applyOpen();
   }
+  // A mouse press on a neighboring control must not focus it and scroll
+  // the strip before the click has a chance to select its day.
+  const neighborPaper = (ev) => ev.target.closest(".pg.is-neighbor .tk");
+  rail.addEventListener("pointerdown", (ev) => {
+    if (ev.button === 0 && ev.pointerType === "mouse" && neighborPaper(ev)) ev.preventDefault();
+  });
   rail.addEventListener("click", (ev) => {
+    // Older browsers deliver clicks as MouseEvents, without a pointer type.
+    const mouse = ev.detail > 0 && (ev.pointerType ? ev.pointerType === "mouse" : matchMedia("(hover: hover) and (pointer: fine)").matches);
+    const paper = mouse && neighborPaper(ev);
+    if (paper) {
+      ev.preventDefault();
+      jump(dates.indexOf(paper.closest(".pg").dataset.date), true);
+      return;
+    }
     if (where && ev.target.closest(".tk-ask .yes")) {
       where.ask();
       return;
