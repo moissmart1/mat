@@ -11,7 +11,6 @@
 // kept, and Safari itself clears a site's storage after a week without a
 // visit. The pasted key is never drawn anywhere else and never logged.
 
-import { KEEP_OPEN } from "./net.js";
 import { fillSeal } from "../picture.js";
 
 export const HOW_LINES = ["Ring up what you paid.", "The slip says who pays whom.", "Stamp it the moment you send."];
@@ -25,6 +24,11 @@ export function clearedText(kept) {
   if (!(kept > 0)) return CLEARED;
   return CLEARED + (kept === 1 ? " Your unsent line is kept: it goes out once you open your new link." : " Your " + kept + " unsent lines are kept: they go out once you open your new link.");
 }
+// With no key, unsent changes the phone could not save are only in this page's
+// memory (js/store.js takeTripOff): pasting the link here keeps them; the Home
+// Screen app's steps (version 36) send people to their email, so this says not
+// to close the app rather than to keep it open (#20 review).
+const MEMORY_ONLY = "Unsent changes are only in this app’s memory: don’t close it while you copy your link.";
 const NOT_CONNECTED = "This app isn’t connected yet.";
 const BAD_PASTE = "That doesn’t look like a trip link.";
 const KEY_SHAPE = /^[A-Za-z0-9_-]{6,200}$/;
@@ -215,7 +219,7 @@ export function mountFirst(root, store, { connected = true, storage = defaultSto
     const refused = s.keyRefused ? KEY_REFUSED + (s.cleared ? " " + clearedText(s.cleared.kept) : "") : NO_KEY;
     const blocked = !connected ? NOT_CONNECTED : keyless ? refused : null;
     gate.hidden = !blocked;
-    if (blocked) gateText.textContent = keyless && s.queueStorageFailed ? blocked + " " + KEEP_OPEN : blocked;
+    if (blocked) gateText.textContent = keyless && s.queueStorageFailed ? blocked + " " + MEMORY_ONLY : blocked;
     paste.hidden = !keyless;
     const needMe = !blocked && s.status === "ready" && !s.me && s.people.length > 0;
     if (needMe) drawPeople(s.people);
