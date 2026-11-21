@@ -8,7 +8,7 @@
 
 const assert = require("node:assert/strict");
 const P = require("../../backend/Pure.js");
-const { SEED, WITH_PLAN, NOON12, open, until, visible } = require("./helpers.cjs");
+const { SEED, WITH_PLAN, NOON12, open, until, atRest, visible } = require("./helpers.cjs");
 
 const SIZES = [
   { width: 667, height: 375 },
@@ -57,7 +57,8 @@ const isOpen = (page, id) => page.evaluate((i) => {
   const el = document.getElementById(i);
   return !!el && el.classList.contains("is-open");
 }, id);
-const waitOpen = (page, id) => until(() => isOpen(page, id), "#" + id + " opens");
+// Open and at rest: a tap is never aimed at a sheet still sliding up (helpers.cjs atRest).
+const waitOpen = (page, id) => atRest(page, "#" + id);
 const waitClosed = (page, id) => until(async () => !(await isOpen(page, id)), "#" + id + " closes");
 const activeView = (page) => page.evaluate(() => document.querySelector(".view.is-active").id);
 
