@@ -314,7 +314,7 @@ export function mountMoney(root, store, { onRing = () => {}, onLine = () => {}, 
     rateNote.textContent = rateNote.hidden ? "" : STAND_IN_RATE;
     const aside = setAsideText(s.setAside);
     asideNote.hidden = !aside;
-    asideNote.textContent = aside;
+    if (asideNote.textContent !== aside) asideNote.textContent = aside;
 
     const ctx = { me: s.me, online: s.online, seenAt: s.seenAt, people: s.people, names, days: s.days, nowMs: now() };
     // The one count of what is new: lines and stamps by someone else since you looked.
@@ -328,6 +328,8 @@ export function mountMoney(root, store, { onRing = () => {}, onLine = () => {}, 
 
   input.addEventListener("input", () => render(store.state));
   input.addEventListener("keydown", (ev) => {
+    // Enter or Escape while a kana/IME word is being composed belongs to the IME.
+    if (ev.isComposing || ev.keyCode === 229) return;
     if (ev.key === "Escape") {
       if (!input.value) return;
       ev.preventDefault();

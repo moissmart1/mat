@@ -157,6 +157,24 @@ module.exports = [
     },
   },
   {
+    name: "find: Enter and Escape during IME composition are left to the IME",
+    async run({ page }) {
+      await ready(page);
+      await page.focus("#rcQuery");
+      await page.keyboard.type("ramen");
+      await waitRows(page, 1);
+      const sent = await page.evaluate(() => {
+        const q = document.getElementById("rcQuery");
+        const fire = (key) => q.dispatchEvent(new KeyboardEvent("keydown", { key, isComposing: true, bubbles: true, cancelable: true }));
+        return { enter: fire("Enter"), esc: fire("Escape") };
+      });
+      assert.deepEqual(sent, { enter: true, esc: true }, "not prevented");
+      assert.equal(await active(page), "rcQuery", "Enter did not blur");
+      assert.equal(await page.inputValue("#rcQuery"), "ramen", "Escape did not clear");
+      assert.equal(await rows(page), 1);
+    },
+  },
+  {
     name: "find: what is typed is text",
     async run({ page }) {
       await ready(page);
