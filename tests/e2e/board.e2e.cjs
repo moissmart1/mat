@@ -169,7 +169,8 @@ module.exports = [
       assert.deepEqual(ink, { big: AMBER, l1: AMBER, l2: GREEN, ground: "rgb(9, 8, 7)", h: 52 });
       // It sits between the top line and the first ticket.
       const order = await page.evaluate(() => [...document.getElementById("vDays").children].filter((n) => !n.hidden).map((n) => n.className.split(" ")[0]));
-      assert.deepEqual(order, ["bar", "brd-wrap", "rail"]);
+      // The line "This phone" (issue 84) stands at the board's foot.
+      assert.deepEqual(order, ["bar", "brd-wrap", "rdy", "rail"]);
     },
   },
   {
@@ -193,7 +194,7 @@ module.exports = [
       await ready(none, { seed: seedWith([ITEMS[2]]) });
       await until(() => none.evaluate(() => document.querySelectorAll("#rail .tk").length > 0), "tickets");
       assert.equal(await boardUp(none), false, "nothing open: no board");
-      assert.deepEqual(await none.evaluate(() => [...document.getElementById("vDays").children].filter((n) => !n.hidden).map((n) => n.className.split(" ")[0])), ["bar", "rail"]);
+      assert.deepEqual(await none.evaluate(() => [...document.getElementById("vDays").children].filter((n) => !n.hidden).map((n) => n.className.split(" ")[0])), ["bar", "rdy", "rail"], "with no board only the line This phone (issue 84) stands between");
       const bare = await newPhone();
       await ready(bare, { seed: WITH_PLAN, pull: false });
       assert.equal(await boardUp(bare), false, "no planner: no board");
@@ -225,7 +226,7 @@ module.exports = [
       // 19:00 Dinner is the last timed stop: past it (and its grace), nothing is next.
       await advance(page, backend, 7 * 60 * MIN);
       await until(async () => !(await boardUp(page)), "no board once nothing is left today");
-      assert.deepEqual(await page.evaluate(() => [...document.getElementById("vDays").children].filter((n) => !n.hidden).map((n) => n.className.split(" ")[0])), ["bar", "rail"]);
+      assert.deepEqual(await page.evaluate(() => [...document.getElementById("vDays").children].filter((n) => !n.hidden).map((n) => n.className.split(" ")[0])), ["bar", "rdy", "rail"], "with no board only the line This phone (issue 84) stands between");
     },
   },
   {
