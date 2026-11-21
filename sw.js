@@ -21,7 +21,7 @@
 //   script.googleusercontent.com), and anything else not listed here.
 // - Only OK answers are ever kept.
 
-const SW_VERSION = "3216a757ae";
+const SW_VERSION = "3b1a150874";
 const SHELL_CACHE = "mat-shell-" + SW_VERSION;
 const FONT_CACHE = "mat-fonts";
 
@@ -93,6 +93,7 @@ const SHELL = [
   "js/views/staysheet.js",
   "js/views/stopsheet.js",
   "js/views/stub.js",
+  "js/views/tap.js",
   "js/views/ticketpart.js",
   "js/views/ticket.js",
   "js/views/todos.js",
