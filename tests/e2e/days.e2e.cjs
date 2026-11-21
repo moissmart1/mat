@@ -163,14 +163,24 @@ module.exports = [
       await until(async () => (await inView(page)) === "2026-12-12", "today is in view");
       const rail = await page.locator("#rail").boundingBox();
       const y = Math.max(rail.y, 0) + 40;
+      // The rail's scrollend: the swipe and its snap have finished.
+      await page.evaluate(() => {
+        globalThis.__railRest = false;
+        document.getElementById("rail").addEventListener("scrollend", () => (globalThis.__railRest = true), { once: true });
+      });
+      // A touch drag of six tenths of the rail, the finger held still before
+      // it lifts (Chrome's own synthetic gesture, preventFling), so the rail
+      // only snaps to the nearest ticket. A release with any speed left is a
+      // fling, and how far a fling carries depends on the browser and on when
+      // it receives each touch: CI's Chrome 151 flung to Dec 14 twice
+      // (2026-11-21, unstamped and then stamped 16 ms apart), and here the same
+      // fast drag lands on Dec 14 every time without preventFling, on Dec 13
+      // every time with it.
       const touch = await page.context().newCDPSession(page);
-      for (let n = 8; n >= 2; n--) {
-        const x = rail.x + rail.width * n / 10;
-        await touch.send("Input.dispatchTouchEvent", { type: n === 8 ? "touchStart" : "touchMove", touchPoints: [{ x, y }] });
-      }
-      await touch.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      await touch.send("Input.synthesizeScrollGesture", { x: rail.x + rail.width * 0.8, y, xDistance: -rail.width * 0.6, yDistance: 0, gestureSourceType: "touch", preventFling: true });
+      await until(() => page.evaluate(() => globalThis.__railRest), "the rail comes to rest");
+      assert.equal(await inView(page), "2026-12-13", "the Dec 13 ticket is in view");
       await expectText(page, "#dayCount", /^Day 4 of 11/);
-      await until(async () => (await inView(page)) === "2026-12-13", "the Dec 13 ticket is in view");
     },
   },
   {

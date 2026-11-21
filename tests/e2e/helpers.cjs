@@ -169,6 +169,33 @@ async function until(check, message, timeout = 5000) {
   }
 }
 
+// Waits until a sheet or panel (any element that slides in and out on a class)
+// has come to rest: its class says open (or shut, with open: false), nothing
+// on it or inside it is still running a finite transition or animation on
+// the page's own timeline, and its box is the same on two looks in a row.
+// Waiting for the class alone is not enough: the class goes on as the slide
+// starts, and a tap aimed then lands where the control was, not where it is
+// (the hotel card's Done was 415 px below where it comes to rest, under the
+// screen; CI 2026-11-21, and the register's keys in line.e2e before that).
+// Infinite animations and scroll-driven ones (the Days rail's fan) never end
+// and are not the slide, so they are left out.
+async function atRest(page, selector, { open: isOpen = true, cls = "is-open", timeout = 5000 } = {}) {
+  let last = null;
+  await until(async () => {
+    const now = await page.evaluate(([sel, cls, isOpen]) => {
+      const el = document.querySelector(sel);
+      if (!el || el.classList.contains(cls) !== isOpen) return null;
+      const moving = el.getAnimations({ subtree: true }).some((a) => a.playState === "running" && a.timeline === document.timeline && a.effect && a.effect.getTiming().iterations !== Infinity);
+      if (moving) return null;
+      const b = el.getBoundingClientRect();
+      return [b.left, b.top, b.width, b.height].join(",");
+    }, [selector, cls, isOpen]);
+    const same = now !== null && now === last;
+    last = now;
+    return same;
+  }, selector + (isOpen ? " opens" : " closes") + " and comes to rest", timeout);
+}
+
 // The trimmed textContent of the first match, or null when there is none.
 function text(page, selector) {
   return page.evaluate((sel) => {
@@ -198,4 +225,4 @@ function visible(page, selector) {
   }, selector);
 }
 
-module.exports = { PORT, ORIGIN, SEED, PLAN, WITH_PLAN, NOON12, SEEDED_AT, makeBackend, open, ownKey, advance, until, text, expectText, visible };
+module.exports = { PORT, ORIGIN, SEED, PLAN, WITH_PLAN, NOON12, SEEDED_AT, makeBackend, open, ownKey, advance, until, atRest, text, expectText, visible };
