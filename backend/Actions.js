@@ -1212,6 +1212,8 @@ var TODO_UNRECORDED_WHY_ = "The MAT app couldn’t record the tick; put back";
 var TODO_ITEM_ARG_MAX_ = 1000;
 // How far after a pull's planner read a Booked left behind can say it was kept (issue #79).
 var TODO_LEFT_AHEAD_MS_ = 10 * 60000;
+// How long before a pull's planner read a Booked left behind is still acted on (coordinator's ruling, ticksafe review).
+var TODO_LEFT_MAX_AGE_MS_ = 60 * 60000;
 
 // Item texts compared as the same item: runs of spaces (non-breaking ones
 // too) count as one, and the ends are trimmed, on both sides.
@@ -1360,6 +1362,8 @@ function pullTodos_(read, by, readAt) {
     var left = todoLeftFrom_(leftOf[id]);
     var at = left ? Date.parse(left.at) : NaN;
     if (left && !(at < readMs)) return at - readMs <= TODO_LEFT_AHEAD_MS_ ? { wait: true } : { left: null, raw: leftOf[id] };
+    // Too old to act on: cleared, nothing written.
+    if (left && readMs - at > TODO_LEFT_MAX_AGE_MS_) return { left: null, raw: leftOf[id] };
     return { left: left, raw: leftOf[id] };
   };
   var inPlanner = {};
@@ -1385,6 +1389,11 @@ function pullTodos_(read, by, readAt) {
     // An undone tick whose Booked the planner still holds: that Booked is the
     // app's own, so the row keeps the status it had before the tick.
     var owed = (cellText_(r.planner_written) === "undo" && sameItem_(it.item, tickedItemOf_(r))) || adopt;
+    // Review M1 (ticksafe): the tick that wrote that Booked still stands
+    // unrecorded (its record and its take-back both failed): its record is
+    // finished, as settleTick_ would have; nothing is written to the planner.
+    var record = left !== null && cellText_(r.ticked_by) !== "" && cellText_(r.planner_written) === "" && it.status === "Booked" &&
+      sameItem_(it.item, left.item) && sameItem_(tickedItemOf_(r), left.item) && Date.parse(cellStamp_(r.ticked_at)) <= Date.parse(left.at);
     // A true was kept aside (todoWas_) is what the app's latest Booked
     // replaced: an owed row puts that back, not its own (issue 16).
     var keptWas = wasOf[it.id];
@@ -1396,11 +1405,15 @@ function pullTodos_(read, by, readAt) {
       patch.planner_written = "undo";
       patch.planner_was = left.was;
       patch.ticked_item = left.item;
+    } else if (record) {
+      patch.planner_written = "yes";
+      patch.planner_was = left.was;
+      patch.status = "Booked";
     }
-    // Cleared once the row says so (adopted), or at once (anything else).
+    // Cleared once the row says so (adopted or recorded), or at once (anything else).
     var dropLeft = null;
     if (lf && !lf.wait) {
-      if (adopt) dropLeft = lf.raw;
+      if (adopt || record) dropLeft = lf.raw;
       else dropTodoLeftIf_(it.id, lf.raw);
     }
     // Another item under this # now: whatever was ticked or claimed was the old one (R49).
@@ -1424,7 +1437,7 @@ function pullTodos_(read, by, readAt) {
     // still owed its put-back (issue 16); anywhere else it is just cleared.
     var dropWas = null;
     if (keptWas !== null) {
-      if (!takeoff && ((cellText_(r.ticked_by) !== "" && cellText_(r.planner_written) === "yes") || owed)) {
+      if (!takeoff && ((cellText_(r.ticked_by) !== "" && cellText_(r.planner_written) === "yes") || owed || record)) {
         patch.planner_was = keptWas;
         dropWas = keptWas;
       } else dropTodoWasIf_(it.id, keptWas);
@@ -1564,6 +1577,9 @@ function plannerTick_(id, item, actor) {
       var logRows = plannerTab_(TODO_LOG_TAB_);
       var found = plannerTodo_(plannerTab_(TODO_BOOK_TAB_), id, item);
       if (!found) return { result: "pending" };
+      // Not exactly Booked: a Booked left behind there (todoLeft_) is gone,
+      // so what it says it replaced is no longer true (review I1, ticksafe).
+      if (found.status !== "Booked") dropTodoLeft_(id);
       // Booked there already (by hand): nothing to write; the app takes its word.
       if (isBooked(found.status)) return { result: "already", status: found.status };
       var wrote = plannerWriteStatus_(logRows, found, "Booked", TODO_TICK_WHY_, actor);
@@ -1607,7 +1623,10 @@ function plannerUntick_(id, item, was, actor, why, owed) {
       var logRows = plannerTab_(TODO_LOG_TAB_);
       var found = plannerTodo_(plannerTab_(TODO_BOOK_TAB_), id, item);
       if (!found) return "pending";
-      if (found.status !== "Booked") return "kept";
+      if (found.status !== "Booked") {
+        dropTodoLeft_(id); // as in plannerTick_: that Booked is gone
+        return "kept";
+      }
       // Issue 16: a was kept aside is what the app's latest Booked replaced
       // (plannerTick_, under this lock): it wins over the one handed in.
       var kept = todoWas_(id);
@@ -1674,17 +1693,31 @@ function todoWasOf_(ids, left) {
 // the text the tick was bound to, what that Booked replaced, and when this
 // was kept. Written outside every lock (best effort: History's "left …
 // marked Booked" line is said either way). The next pull whose planner read
-// began after `at` settles it, under the app's lock: a row nobody has ticked
-// and nothing is owed on, whose planner row is still that item and says
-// exactly Booked, is made owed its put-back (planner_written "undo",
+// began after `at` settles it, under the app's lock, while the planner row
+// is still that item and says exactly Booked: a row nobody has ticked and
+// nothing is owed on is made owed its put-back (planner_written "undo",
 // planner_was `was`), which that pull's retries then write as for any undo;
-// anything else (the row ticked by someone, already owed, another item, any
-// other status, the row gone) just has it cleared. Never written for a tick
-// that still stands and is recorded: nothing is taken back then.
+// a row still ticked by the tick that wrote it (ticked no later than `at`,
+// bound to that item, nothing recorded) has its record finished
+// (planner_written "yes", planner_was `was`: nothing written to the planner;
+// its undo is then an ordinary one: review M1, ticksafe). Anything else (a
+// row ticked since, already owed or recorded, another item, any other
+// status, the row gone) just has it cleared; so does one kept more than
+// TODO_LEFT_MAX_AGE_MS_ before the read (Mo's planner may have been set
+// right and typed Booked by hand since: History's line stays the record).
+// plannerTick_ and plannerUntick_ clear it whenever they find the cell not
+// exactly Booked (review I1, ticksafe).
 function keepTodoLeft_(id, item, was) {
   try {
     setProp_("TODO_LEFT_" + id, JSON.stringify({ item: item, was: was, at: nowIso_() }));
-  } catch (e) { /* best effort */ }
+  } catch (e) {
+    // An older one must not stand in for it (review M3, ticksafe).
+    dropTodoLeft_(id);
+  }
+}
+// Deleted whatever it says (best effort): the Booked it spoke of is gone.
+function dropTodoLeft_(id) {
+  try { delProp_("TODO_LEFT_" + id); } catch (e) { /* best effort */ }
 }
 // The parsed TODO_LEFT_<#> value, or null when it is not one (cleared as junk).
 function todoLeftFrom_(raw) {

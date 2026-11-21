@@ -2445,3 +2445,97 @@ test("issue 79: a put-back that still can't be written stays owed, as an undo's 
   assert.equal(bookStatus(call), "Not booked");
   assert.deepEqual(owedOf(call), ["", "", "", "Not booked"]);
 });
+
+// ---------- ticksafe review (fix round): I1, M1, M3 and the age limit ----------
+
+test("review I1 (ticksafe): a Booked left behind, set right by hand, must not lend its old status to a later tick's Booked", async () => {
+  const { call } = await undoneBeforeRecorded((c) => { c.fake.planner.lockFails = true; });
+  assert.equal(leftKept(call), true);
+  call.fake.planner.tabs["Book Now"][3][4] = "Cancelled"; // by hand; no pull
+  later(call, 1);
+  const realSettle = call.fake.world.settleTick_;
+  call.fake.world.settleTick_ = (...a) => {
+    call.fake.world.settleTick_ = realSettle;
+    call.fake({ key: KEY, actor: "Ajen", action: "undo", args: { logId: lastLogId(call) } });
+    later(call, 1);
+    call.fake({ key: KEY, actor: "Ajen", action: "syncTodos", args: { force: true } });
+    return realSettle(...a);
+  };
+  await call("tickTodo", { id: "1", item: "Rail pass reservation" });
+  await forced(call);
+  assert.equal(cellValues(call).slice(2).includes("Not booked"), false);
+  assert.equal(bookStatus(call), "Cancelled");
+  assert.equal(leftKept(call), false);
+});
+
+test("review I1 (ticksafe): a tick or a put-back that finds the cell not exactly Booked clears a Booked left behind", async () => {
+  const { call } = await undoneBeforeRecorded((c) => { c.fake.planner.lockFails = true; });
+  call.fake.planner.tabs["Book Now"][3][4] = "Booked - conf MADEUP2"; // by hand
+  assert.equal(call.fake.world.plannerUntick_("1", "Rail pass reservation", "Not booked", "Mo"), "kept");
+  assert.equal(leftKept(call), false, "the put-back's planner read clears it");
+  call.fake.props.TODO_LEFT_1 = JSON.stringify({ item: "Rail pass reservation", was: "Made-up old status", at: call.at.now });
+  call.fake.planner.tabs["Book Now"][3][4] = "Pending"; // by hand
+  later(call, 1);
+  await call("tickTodo", { id: "1", item: "Rail pass reservation" });
+  assert.equal(leftKept(call), false, "the tick's planner read clears it");
+  assert.equal(stored(call, "1").planner_was, "Pending");
+});
+
+test("review M1 (ticksafe): a tick whose record and take-back both failed and which still stands: the next pull finishes its record, writes nothing, and its later undo puts the status back", async () => {
+  const call = linked();
+  await call("syncTodos");
+  const n0 = call.lock.n;
+  call.lock.busy = (n) => n === n0 + 2; // free for the save, busy when the write is to be recorded
+  call.fake.planner.cellFails = (cell, value) => value !== "Booked"; // the take-back can't be written
+  const t = await call("tickTodo", { id: "1", item: "Rail pass reservation" });
+  call.lock.busy = () => false;
+  call.fake.planner.cellFails = false;
+  assert.deepEqual([t.data.planner, stored(call, "1").ticked_by, stored(call, "1").planner_written], ["pending", "Mo", ""]);
+  assert.equal(leftKept(call), true);
+  const before = cellValues(call);
+  await forced(call);
+  assert.deepEqual(cellValues(call), before, "nothing written to the planner");
+  assert.deepEqual(owedOf(call), ["Mo", "yes", "Not booked", "Booked"], "recorded as the tick's own Booked");
+  assert.equal(leftKept(call), false);
+  later(call, 1);
+  const u = await call("undo", { logId: t.data.logId }, "Mo");
+  assert.deepEqual([u.ok, u.data.planner], [true, "written"]);
+  assert.equal(bookStatus(call), "Not booked");
+  assert.deepEqual(owedOf(call), ["", "", "", "Not booked"]);
+});
+
+test("review M1 (ticksafe): a tick made after the Booked was left behind is not given its record; the property is cleared", async () => {
+  const { call } = await undoneBeforeRecorded((c) => { c.fake.planner.lockFails = true; });
+  later(call, 1);
+  await call("tickTodo", { id: "1", item: "Rail pass reservation" }, "Ajen"); // the planner already says Booked: "already"
+  await forced(call);
+  assert.equal(stored(call, "1").planner_written, "", "not recorded as Ajen's write");
+  assert.equal(leftKept(call), false);
+});
+
+test("age limit (ticksafe ruling): a Booked left behind more than an hour before the pull's read is cleared and nothing is written; within the hour it is put back", async () => {
+  const old = await undoneBeforeRecorded((c) => { c.fake.planner.lockFails = true; });
+  later(old.call, 60);
+  await forced(old.call); // read 61 minutes after
+  assert.equal(bookStatus(old.call), "Booked");
+  assert.deepEqual(cellValues(old.call), ["Booked"], "nothing written");
+  assert.equal(leftKept(old.call), false);
+  assert.deepEqual(owedOf(old.call), ["", "", "", "Booked"], "the row shows what the planner says, as on version 40");
+  assert.equal((await history(old.call)).some((e) => e.summary === LEFT_LINE), true, "History's line stays the record");
+
+  const recent = await undoneBeforeRecorded((c) => { c.fake.planner.lockFails = true; });
+  later(recent.call, 58);
+  await forced(recent.call); // read 59 minutes after
+  assert.equal(bookStatus(recent.call), "Not booked");
+});
+
+test("review M3 (ticksafe): when keeping a Booked left behind fails, an older one does not stand in for it", async () => {
+  const call = linked();
+  await call("syncTodos");
+  call.fake.props.TODO_LEFT_1 = JSON.stringify({ item: "Rail pass reservation", was: "Made-up older status", at: call.at.now });
+  const realSet = call.fake.world.setProp_;
+  call.fake.world.setProp_ = (k, v) => { if (String(k).startsWith("TODO_LEFT_")) throw new Error("boom: properties"); return realSet(k, v); };
+  call.fake.world.keepTodoLeft_("1", "Rail pass reservation", "Not booked");
+  call.fake.world.setProp_ = realSet;
+  assert.equal(leftKept(call), false);
+});
