@@ -227,6 +227,10 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
     status: "boot", online: true, rev: null, me: null,
     trip: null, people: [], days: [], eves: [], stops: [], stays: [], expenses: [], payments: [], rateToday: null, rateSource: null, sheetUrl: "", plannerLinked: false, todos: [], todosPulledAt: "", paymentsPulledAt: "", stampDefs: [], stamps: [], paymentProblems: { at: "", list: [], more: 0 }, todoProblems: { at: "", list: [], more: 0 }, tickets: [], ticketsReady: false, ticketList: false,
     loadedAt: null, seenAt: null, lastChange: null, notice: null, setAside: [], keyRefused: false,
+    // linkKept: a link pasted on the no-key screen could not reach the trip (no
+    // signal, or no answer): the key is kept, status stays "nokey" until a load
+    // lands, and the app's checks keep trying (issue #85). Never after a refusal.
+    linkKept: false,
     // personal: this phone opened its own person's link (load said so); me is then theirs.
     // cleared: the trip was taken off this phone after its key was refused ({ kept: own unsent lines kept }).
     personal: false, cleared: null, queueStorageFailed: false,
@@ -493,6 +497,7 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
       loadedAt: null, lastChange: null, notice: null, setAside: [],
       history: { entries: [], more: false, loading: false, error: null, firstPageError: null },
       cleared: had ? { kept: mine.length } : null,
+      linkKept: false,
       queueStorageFailed: memoryQueue !== null,
       settlementProvisional: false,
     });
@@ -585,6 +590,9 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
       r = await call("load", {});
     } catch (err) {
       if (state.status !== "nokey") state.status = base ? "ready" : "error";
+      // A pasted key whose first load got no answer: kept, and tried again by
+      // the app's checks (issue #85). A refusal took the trip off (call): not kept.
+      else state.linkKept = !wiped && !state.keyRefused && !(err && err.code === "bad_key") && !!getItem("mat.key");
       changed();
       return false;
     }
@@ -599,6 +607,7 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
     state.rev = r.rev;
     state.loadedAt = now();
     state.status = "ready";
+    state.linkKept = false;
     saveCache();
     changed();
     afterContact();
@@ -768,6 +777,7 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
 
   async function boot({ candidate = null } = {}) {
     state.keyRefused = false;
+    state.linkKept = false;
     wiped = false;
     state.cleared = null;
     const key = getItem("mat.key");

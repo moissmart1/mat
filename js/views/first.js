@@ -34,6 +34,13 @@ export function clearedText(kept) {
 // to close the app rather than to keep it open (#20 review).
 const MEMORY_ONLY = "Unsent changes are only in this app’s memory: don’t close it while you copy your link.";
 const NOT_CONNECTED = "This app isn’t connected yet.";
+// A pasted link that could not reach the trip (no signal): the key is kept and
+// the app opens by itself when a check gets through (issue #85, js/store.js
+// linkKept). The field is hidden: nothing more to paste.
+export const LINK_KEPT = "Your link is kept. MAT opens by itself when signal is back.";
+// With issue 84's glass (調整中) on this screen, its two small lines say this.
+export const GLASS_KEPT = { mark: "調整中", top: "Link kept", under: "Waiting for signal" };
+const MEMORY_KEPT = "Unsent changes are only in this app’s memory: don’t close it until the trip opens.";
 const BAD_PASTE = "That doesn’t look like a trip link.";
 const KEY_SHAPE = /^[A-Za-z0-9_-]{6,200}$/;
 
@@ -222,9 +229,11 @@ export function mountFirst(root, store, { connected = true, storage = defaultSto
     const keyless = connected && s.status === "nokey";
     const refused = s.keyRefused ? (standalone() ? KEY_REFUSED_HOME : KEY_REFUSED) + (s.cleared ? " " + clearedText(s.cleared.kept) : "") : standalone() ? NO_KEY_HOME : NO_KEY;
     const blocked = !connected ? NOT_CONNECTED : keyless ? refused : null;
+    const kept = keyless && s.linkKept === true && !s.keyRefused;
     gate.hidden = !blocked;
-    if (blocked) gateText.textContent = keyless && s.queueStorageFailed ? blocked + " " + MEMORY_ONLY : blocked;
-    paste.hidden = !keyless;
+    if (kept) gateText.textContent = s.queueStorageFailed ? LINK_KEPT + " " + MEMORY_KEPT : LINK_KEPT;
+    else if (blocked) gateText.textContent = keyless && s.queueStorageFailed ? blocked + " " + MEMORY_ONLY : blocked;
+    paste.hidden = !keyless || kept;
     const needMe = !blocked && s.status === "ready" && !s.me && s.people.length > 0;
     if (needMe) drawPeople(s.people);
     setOpen(first, needMe);
