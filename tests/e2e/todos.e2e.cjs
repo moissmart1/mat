@@ -207,8 +207,10 @@ module.exports = [
       assert.equal(await page.$("#vDays #todos, #vDays .bw"), null);
     },
   },
+  // Three cases, not one: as one case with four phones it took 13 s at the
+  // median on GitHub (19 s at worst) and ran past the 30 s budget under load.
   {
-    name: "before the trip the tab is there with 0 open; no planner or no items: no tab; during the trip no Before key (Tickets has its place) and the open items are a slip on Tickets that goes with the last tick",
+    name: "before the trip the tab is there with 0 open; no planner or no items: no tab",
     async run({ page, newPhone }) {
       // Before the trip, everything done: still there, count 0 and no pill.
       await ready(page, { items: [ITEMS[4]] });
@@ -221,8 +223,12 @@ module.exports = [
       await until(() => other.evaluate(() => document.querySelectorAll("#rail .tk").length > 0), "the tickets draw");
       assert.equal(await visible(other, "#beforeBtn"), false, "no list, no tab");
       assert.equal(await other.evaluate(() => document.getElementById("beforeBtn").hidden), true);
+    },
+  },
+  {
+    name: "during the trip with nothing open: no Before key, Tickets has its place, and no slip on it",
+    async run({ page: third }) {
       // During the trip with nothing open: no Before key; Tickets has its place, with no slip.
-      const third = await newPhone();
       await ready(third, { nowMs: NOON12, items: [ITEMS[4]], go: false });
       await third.evaluate(() => window.__matTest.store.idle());
       assert.equal(await tabIsIn(third), false, "trip on: no Before key");
@@ -231,8 +237,12 @@ module.exports = [
       await third.click("#ticketsBtn");
       await until(() => third.evaluate(() => !!document.querySelector("#vTickets .pc-case")), "the case shows");
       assert.equal(await third.$("#pcSlip"), null, "nothing open: no slip");
+    },
+  },
+  {
+    name: "during the trip no Before key (Tickets has its place) and the open items are a slip on Tickets that goes with the last tick",
+    async run({ page: fourth }) {
       // During the trip with one open: still no Before key; the slip on Tickets holds it.
-      const fourth = await newPhone();
       const backend = await ready(fourth, { nowMs: NOON12, items: [ITEMS[1], ITEMS[4]], go: false });
       await until(() => visible(fourth, "#ticketsBtn"), "Tickets in the bar");
       assert.equal(await tabIsIn(fourth), false, "no Before key on a trip day");
