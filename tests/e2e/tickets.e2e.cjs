@@ -138,9 +138,10 @@ for (const size of SIZES) {
       backend.fake.primitives.updateWhere_("People", "name", "Mo", { photo: JPEG });
       await ready(page, { backend, me: "Ajen" });
       await allKept(page);
-      await expectText(page, row(SKY) + " .tk-mark", "券 3 codes · on this phone");
+      // Ajen's own code (whose, issue #83): his seat, then 1 of 3 on the key.
+      await expectText(page, row(SKY) + " .tk-mark", "券 AJYours · Car 7 · 10B");
       await openRow(page, SKY);
-      await expectText(page, row(SKY) + " .r-tk", "切符Show ticket3 codes");
+      await expectText(page, row(SKY) + " .r-tk", "切符Show ticketYours · 1 of 3");
       // The booking link stays, beside it, quieter.
       assert.equal(await text(page, row(SKY) + " .r-map.alt"), "Ticket or booking ↗");
       await shot(page, "day-" + size.tag);
@@ -158,7 +159,7 @@ for (const size of SIZES) {
       assert.equal(await page.evaluate(() => document.querySelector("#tix .who3 button:nth-child(1) .seal").classList.contains("is-on")), true);
       assert.equal(await text(page, "#tix .who3 button:nth-child(1)"), "You");
       if (size.tag === "393" || size.tag === "320") await shotTo(page, "switch" + (size.tag === "320" ? "-320" : ""));
-      await expectText(page, "#tix .pp-pg .stub-who", "AJENCar 7 · 10B");
+      await expectText(page, "#tix .pp-pg .stub-who", "AJENあなたの券 Your codeCar 7 · 10B");
       await expectText(page, "#tix .facts", /予約番号Booking refTEST-3001.*名義Name on bookingMO.*人数People3 adults.*座席SeatCar 7 · 10B/);
       await expectText(page, "#tix .kept", "保存済On this phone. Works with no signal.");
       await expectText(page, "#tix .oa-top span", "切取 Torn off · Sat Dec 12");
@@ -195,7 +196,7 @@ for (const size of SIZES) {
       const backend = await ticketed();
       await ready(page, { backend });
       await allKept(page);
-      await expectText(page, row(MEIJI) + " .tk-mark", "券 1 code · on this phone");
+      await expectText(page, row(MEIJI) + " .tk-mark", "券 全One code for all of us");
       await showTicket(page, MEIJI);
       await expectText(page, "#tix .stub-who", "3名 · ALL THREEGroup 4");
       assert.equal(await page.evaluate(() => document.querySelectorAll("#tix .who3").length), 0);
@@ -219,7 +220,7 @@ for (const size of SIZES) {
       const backend = await ticketed();
       await ready(page, { backend });
       await allKept(page);
-      await expectText(page, row(LUNCH) + " .tk-mark", "券 2 pages · on this phone");
+      await expectText(page, row(LUNCH) + " .tk-mark", "券 全2 pages for all of us");
       await showTicket(page, LUNCH);
       await expectText(page, "#tix .stub-who", "E-TICKETTap to enlarge");
       assert.equal(await page.evaluate(() => document.querySelectorAll("#tix .stub-code.is-page img").length), 2);
@@ -290,7 +291,7 @@ for (const size of SIZES) {
       };
       await ready(page, { backend });
       await until(() => page.evaluate((sel) => !!document.querySelector(sel + " .tk-mark b.is-dash"), row(MEIJI)), "the box is dashed");
-      await expectText(page, row(MEIJI) + " .tk-mark", "券 1 code · needs signal once");
+      await expectText(page, row(MEIJI) + " .tk-mark", "券 全All of us · needs signal once");
       await shot(page, "day-needs-signal-" + size.tag);
       await showTicket(page, MEIJI);
       await expectText(page, "#tix .miss", /The picture is not on this phone yet\..*Until then, show the booking ref below/);
@@ -355,7 +356,7 @@ cases.push({
     await as(backend, "removeTicket", { id: t.id }, "Mo");
     await advance(page, backend, 21000);
     await until(() => page.evaluate(() => document.querySelectorAll("#tix .pp-pg").length === 2), "the stub shows two codes");
-    await expectText(page, row(SKY) + " .tk-mark", "券 2 codes · on this phone");
+    await expectText(page, row(SKY) + " .tk-mark", "券 MOYours · Car 7 · 10A");
   },
 });
 

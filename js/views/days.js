@@ -775,6 +775,18 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
   }
   document.addEventListener("visibilitychange", wake);
   new MutationObserver(wake).observe(root, { attributes: true, attributeFilter: ["class"] });
+  // The next ticket's slot comes up over the foot of the day (its tickets
+  // arrive after the day is drawn): today's next stop is brought clear of it.
+  const phoneEl = root.closest(".phone");
+  if (phoneEl) {
+    let slotWas = phoneEl.classList.contains("has-slot");
+    new MutationObserver(() => {
+      const on = phoneEl.classList.contains("has-slot");
+      if (on === slotWas) return;
+      slotWas = on;
+      if (on && root.classList.contains("is-active") && dates.length && settledOn === cur && !held()) revealNext();
+    }).observe(phoneEl, { attributes: true, attributeFilter: ["class"] });
+  }
 
   render(store.state);
   store.subscribe(render);

@@ -122,7 +122,7 @@ for (const size of SIZES) {
       assert.deepEqual(rows.map((r) => [r.who, r.seat, r.stop]), [["Mo", "Car 7 · 10A", SKY], ["Ajen", "", SKY], ["Trenton", "", SKY]]);
       const sky = backend.fake.tables.Stops.find((s) => s.id === SKY);
       assert.deepEqual([sky.tk_ref, sky.tk_name, sky.tk_people], ["TEST-4401", "MO", "3 adults"]);
-      await expectText(page, row(SKY) + " .tk-mark", "券 3 codes · on this phone");
+      await expectText(page, row(SKY) + " .tk-mark", "券 MOYours · Car 7 · 10A");
       await shot(page, "attach-3-saved-" + size.tag);
       // History has each picture and the facts.
       const h = (await backend.fake({ key: "test-key", action: "history", args: {} })).data.entries.map((e) => e.who + " " + e.summary);
@@ -142,7 +142,7 @@ for (const size of SIZES) {
         const img = document.querySelector("#tix .stub-code img");
         return !!img && img.naturalWidth > 0;
       }), "the other phone's stub shows the code");
-      await expectText(other, "#tix .pp-pg .stub-who", "TRENTON");
+      await expectText(other, "#tix .pp-pg .stub-who", "TTRENTONあなたの券 Your code");
       await expectText(other, "#tix .facts", /TEST-4401/);
 
       // Remove one on the first phone; Undo brings it back.
@@ -180,7 +180,7 @@ cases.push({
     const rows = backend.fake.tables.Tickets;
     assert.equal(rows.length, 3);
     assert.ok(rows.every((r) => r.who === "" && (r.mime === "image/jpeg" || r.mime === "image/png")));
-    await expectText(page, row(LUNCH) + " .tk-mark", /券 3 pages/);
+    await expectText(page, row(LUNCH) + " .tk-mark", "券 全3 pages for all of us");
   },
 });
 

@@ -315,7 +315,7 @@ export function mountStub(root, store, keep, { clock = null } = {}) {
             small.append(jp, "Your code");
           } else small.append(who + "’s code, not yours");
           words.append(el("b", "", who.toUpperCase()), small);
-          hd.append(sealFor(mine ? "me" : "other", person || null, who, "s46"), words);
+          hd.append(sealFor(mine ? "me" : "other", { ...person, initials: [...who][0].toUpperCase() }, who, "s46"), words);
           head.append(hd, seat);
         } else head.append(el("b", "", "ALL"), seat);
         pg.append(head, ...pics.map((t) => slot(t, { zoom: pics.length > 1, page: pics.length > 1 })));
