@@ -48,6 +48,7 @@ import { fillSeal } from "../picture.js";
 import { paidStampSVG } from "../stamp.js";
 import { wetInk, rollingCount } from "../fx.js";
 import { thud, primeSound } from "../sound.js";
+import { tapOnRelease } from "./tap.js";
 import { clock as hhmm, localDay, dayHead } from "../format.js";
 import { homeToday, slipNo, dueLine, byBookBy, doneTodos, isDone, plannerPending, tickedLine, isStale, showBeforeTab, todoProblemHead } from "../todos.js";
 
@@ -496,7 +497,21 @@ export function mountTodos(root, store, { clock, now = () => Date.now(), onState
     setTimeout(draw, HOLD_MS);
   }
 
+  // A redraw between finger down and finger up (a sync, another phone's claim)
+  // replaces Tick it off, so the browser sends no click to it. The tap is then
+  // done on finger up (js/views/tap.js, as in the Chicago app). Ticking an item
+  // already ticked does nothing, so a click that does come cannot tick twice.
+  const tap = tapOnRelease(section, {
+    pick: (t) => {
+      const b = t.closest('[data-act="tick"]');
+      const r = b && b.closest(".bw-r[data-id]");
+      return r && rows.contains(r) ? { id: r.dataset.id } : null;
+    },
+    act: (what) => tick(what.id),
+  });
+
   section.addEventListener("click", (ev) => {
+    if (tap.skip(ev)) return;
     const t = ev.target;
     if (t.closest("#bwDoneB")) {
       doneOpen = !doneOpen;

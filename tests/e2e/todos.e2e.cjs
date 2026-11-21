@@ -1112,3 +1112,34 @@ module.exports.push({
     assert.equal(r.ok, false, "the backend refuses it too");
   },
 });
+
+// Issue #77: a finger down on Tick it off, the row drawn again before the finger
+// comes up (a sync, another phone's claim): the button the finger went down on is
+// gone and the browser sends no click. The tap is done on finger up (js/views/tap.js).
+module.exports.push({
+  name: "a redraw between the press and the release of Tick it off still ticks the item",
+  async run({ page }) {
+    const backend = await ready(page);
+    await openRow(page, "3");
+    const spot = await page.evaluate((s) => {
+      const b = document.querySelector(s);
+      b.scrollIntoView({ block: "center" });
+      const r = b.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    }, row(3) + " .bw-tick");
+    await page.mouse.move(spot.x, spot.y);
+    await page.mouse.down();
+    // The row is drawn again under the finger: a new button, the old one gone.
+    const swapped = await page.evaluate((s) => {
+      const b = document.querySelector(s);
+      const fresh = b.cloneNode(true);
+      b.replaceWith(fresh);
+      return !b.isConnected && fresh.isConnected;
+    }, row(3) + " .bw-tick");
+    assert.equal(swapped, true, "the button was replaced between press and release");
+    await page.mouse.up();
+    await until(() => page.evaluate((s) => document.querySelector(s).classList.contains("is-landed"), row(3)), "row 3 is stamped");
+    await until(() => stored(backend, "3").ticked_by === "Mo", "ticked");
+    assert.equal(sent(backend, "tickTodo").length, 1, "ticked once");
+  },
+});
