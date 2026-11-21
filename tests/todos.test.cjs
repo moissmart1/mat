@@ -2093,7 +2093,8 @@ test("issue 16: a pull reads every kept-aside was in one getProperties(), never 
   const reads = call.fake.propReads.slice(before);
   const batched = reads.filter((k) => /^TODO_WAS_/.test(k) && k.includes("+"));
   assert.equal(batched.length, 1, "one read, all 26 keys in it");
-  assert.equal(batched[0].split("+").length, 26);
+  assert.equal(batched[0].split("+").filter((k) => /^TODO_WAS_/.test(k)).length, 26);
+  assert.equal(batched[0].split("+").filter((k) => /^TODO_LEFT_/.test(k)).length, 26, "issue #79: each Booked left behind comes in the same read");
   assert.deepEqual(reads.filter((k) => /^TODO_WAS_/.test(k) && !k.includes("+")), ["TODO_WAS_7"], "only the one being cleared is read again");
   assert.equal(call.fake.calls.getProps_, 1);
   assert.equal("TODO_WAS_7" in call.fake.props, false);
@@ -2192,6 +2193,255 @@ test("review round 2: undo, re-tick, undo again while the first put-back is betw
   await forced(call);
   assert.equal(stored(call, "1").ticked_by, "");
   assert.notEqual(bookStatus(call), "Booked", "no Booked left that nobody ticked");
+  assert.equal(bookStatus(call), "Not booked");
+  assert.deepEqual(owedOf(call), ["", "", "", "Not booked"]);
+});
+
+// ---------- issue #78: a tick carries the item the phone showed ----------
+
+const CHANGED = "That number is another item in the planner now, so nothing was ticked. Check the list again.";
+
+test("issue 78: a tick for the item shown, after a pull put another item under that #, is refused: nothing saved, no History, nothing written, rev unchanged", async () => {
+  const call = linked();
+  await call("syncTodos");
+  // Mo renumbers his planner; a pull brings it in. A phone still shows the old #1.
+  call.fake.planner.tabs["Book Now"] = bookNow({ ...B1, Item: "Made-up item that took #1" }, B2, B3);
+  await forced(call);
+  const rev = (await call("rev")).rev;
+  const logs = logRows(call).length;
+  const r = await call("tickTodo", { id: "1", item: "Rail pass reservation" }, "Ajen");
+  assert.deepEqual([r.ok, r.error, r.message], [false, "item_changed", CHANGED]);
+  assert.deepEqual([stored(call, "1").ticked_by, stored(call, "1").ticked_item, stored(call, "1").planner_written], ["", "", ""]);
+  assert.equal(logRows(call).length, logs, "no History");
+  assert.deepEqual(writes(call), [], "nothing written to the planner");
+  assert.equal((await call("rev")).rev, rev);
+  // Ticked for the item now under #1, it goes through as any tick.
+  const t = await call("tickTodo", { id: "1", item: "Made-up item that took #1" }, "Ajen");
+  assert.deepEqual([t.ok, t.data.planner, stored(call, "1").ticked_item], [true, "written", "Made-up item that took #1"]);
+});
+
+test("issue 78: the item shown matches as sameItem_ does (runs of spaces and non-breaking spaces, the ends); case is another item", async () => {
+  const call = linked({ book: bookNow({ ...B1, Item: "Rail  pass  reservation" }, B2, B3) });
+  await call("syncTodos");
+  const ok = await call("tickTodo", { id: "1", item: "  Rail pass reservation " });
+  assert.deepEqual([ok.ok, ok.data.planner], [true, "written"]);
+  const cased = await call("tickTodo", { id: "2", item: "tea ceremony class" });
+  assert.deepEqual([cased.ok, cased.error], [false, "item_changed"]);
+  assert.equal(stored(call, "2").ticked_by, "");
+});
+
+test("issue 78: a tick with no item (a page from before this change) ticks as before", async () => {
+  const call = linked();
+  await call("syncTodos");
+  const t = await call("tickTodo", { id: "1" });
+  assert.deepEqual([t.ok, t.data.planner, stored(call, "1").ticked_item], [true, "written", "Rail pass reservation"]);
+});
+
+test("issue 78: an item that is not text, or longer than any Item, is a bad request; a changed item is said before already-done", async () => {
+  const call = linked();
+  await call("syncTodos");
+  for (const item of [null, 7, { a: 1 }, ["x"], "x".repeat(1001)]) {
+    const r = await call("tickTodo", { id: "1", item });
+    assert.deepEqual([r.ok, r.error, r.message], [false, "bad_input", "That request didn’t come through properly."], JSON.stringify(item).slice(0, 20));
+  }
+  assert.equal(stored(call, "1").ticked_by, "");
+  // #3 says Booked in the planner (done); a phone that showed another item there hears that the item changed.
+  const r = await call("tickTodo", { id: "3", item: "Made-up item #3 used to be" });
+  assert.deepEqual([r.error, r.message], ["item_changed", CHANGED]);
+  assert.equal((await call("tickTodo", { id: "3", item: "Snow park day trip" })).message, "That one is already done.");
+});
+
+// ---------- issue #79: a Booked left behind when a take-back can't reach the planner ----------
+
+const LEFT_LINE = "left “Rail pass reservation” marked Booked in the planner: the app couldn’t record it";
+const leftKept = (call, id = "1") => ("TODO_LEFT_" + id) in call.fake.props;
+const cellValues = (call) => writes(call).filter((w) => w.kind === "cell").map((w) => w.value);
+
+// A tick of #1 by Mo that is undone (by Ajen) after its Booked is written and
+// before it is recorded; then fault(call) runs, so the take-back meets it.
+async function undoneBeforeRecorded(fault) {
+  const call = linked();
+  await call("syncTodos");
+  later(call, 1);
+  const realSettle = call.fake.world.settleTick_;
+  call.fake.world.settleTick_ = (...a) => {
+    call.fake.world.settleTick_ = realSettle;
+    call.fake({ key: KEY, actor: "Ajen", action: "undo", args: { logId: lastLogId(call) } });
+    fault(call);
+    return realSettle(...a);
+  };
+  const t = await call("tickTodo", { id: "1", item: "Rail pass reservation" });
+  call.fake.planner.lockFails = false;
+  call.fake.planner.appendFails = false;
+  call.fake.planner.cellFails = false;
+  call.lock.busy = () => false;
+  return { call, t };
+}
+
+test("issue 79 (review M5): a tick undone before it is recorded whose take-back finds the planner lock busy: the next pull puts the status back", async () => {
+  const { call, t } = await undoneBeforeRecorded((c) => { c.fake.planner.lockFails = true; });
+  assert.equal(t.data.planner, "pending");
+  assert.equal(bookStatus(call), "Booked", "left behind");
+  assert.deepEqual(owedOf(call), ["", "", "", "Not booked"], "nobody ticked, nothing owed");
+  assert.equal((await history(call))[0].summary, LEFT_LINE, "History says so, as before");
+  assert.equal(leftKept(call), true);
+  const p = await forced(call);
+  assert.equal(p.ok, true, JSON.stringify(p));
+  assert.equal(bookStatus(call), "Not booked", "put back");
+  assert.deepEqual(cellValues(call), ["Booked", "Not booked"]);
+  const back = call.fake.planner.tabs["Change Log"].slice(-1)[0];
+  assert.deepEqual([back[2], back[6], back[7], back[8]], ["MAT app (Ajen)", "Booked", "Not booked", "Tick undone in the MAT app"], "by the one who undid the tick");
+  assert.deepEqual(owedOf(call), ["", "", "", "Not booked"]);
+  assert.equal(leftKept(call), false);
+  assert.equal(p.data.todos.find((x) => x.id === "1").done, false);
+  await forced(call);
+  assert.deepEqual(cellValues(call), ["Booked", "Not booked"], "nothing more written");
+});
+
+test("issue 79 (seed 3585): the take-back's Change Log append fails, the cell goes back to Booked, and the note's lock is busy: no History line, and the next pull still puts it back", async () => {
+  const { call } = await undoneBeforeRecorded((c) => { c.fake.planner.appendFails = true; c.lock.busy = () => true; });
+  assert.equal(bookStatus(call), "Booked");
+  assert.deepEqual(cellValues(call), ["Booked", "Not booked", "Booked"]);
+  assert.equal((await history(call)).some((e) => e.kind === "planner"), false, "no History line at all");
+  assert.deepEqual(owedOf(call), ["", "", "", "Not booked"]);
+  await forced(call);
+  assert.equal(bookStatus(call), "Not booked");
+  assert.deepEqual(owedOf(call), ["", "", "", "Not booked"]);
+  assert.equal(leftKept(call), false);
+});
+
+test("issue 79 (review M7): a waiting put-back finds the row not owed and leaves a re-tick's Booked whose take-back failed; the next pull puts it back", async () => {
+  const { call, logId } = await ticked(); // T1: written and recorded
+  later(call, 1);
+  // U1 (Ajen): its put-back waits for the planner lock.
+  const realAfter = call.fake.world.afterUntick_;
+  let waiting = null;
+  call.fake.world.afterUntick_ = (e, ...rest) => { call.fake.world.afterUntick_ = realAfter; waiting = () => realAfter(e, ...rest); return e; };
+  await call("undo", { logId }, "Ajen");
+  assert.ok(waiting);
+  await forced(call); // a pull's retry puts it back and settles the row
+  assert.deepEqual([bookStatus(call), ...owedOf(call)], ["Not booked", "", "", "", "Not booked"]);
+  // T2 (Mo) writes Booked; Ajen undoes it before it is recorded; its take-back finds the planner lock busy.
+  const realSettle = call.fake.world.settleTick_;
+  call.fake.world.settleTick_ = (...a) => {
+    call.fake.world.settleTick_ = realSettle;
+    call.fake({ key: KEY, actor: "Ajen", action: "undo", args: { logId: lastLogId(call) } });
+    call.fake.planner.lockFails = true;
+    return realSettle(...a);
+  };
+  await call("tickTodo", { id: "1", item: "Rail pass reservation" });
+  call.fake.planner.lockFails = false;
+  assert.equal((await history(call))[0].summary, LEFT_LINE);
+  waiting(); // U1's put-back at last: the row is not owed, "taken", nothing written
+  assert.equal(bookStatus(call), "Booked", "left behind, nobody ticked");
+  assert.deepEqual(owedOf(call), ["", "", "", "Not booked"]);
+  await forced(call);
+  assert.equal(bookStatus(call), "Not booked", "the pull puts it back");
+  assert.deepEqual(owedOf(call), ["", "", "", "Not booked"]);
+  assert.equal(leftKept(call), false);
+  assert.equal("TODO_WAS_1" in call.fake.props, false);
+});
+
+test("issue 79: a tick whose record and take-back both fail, undone later (never recorded): the next pull puts it back", async () => {
+  const call = linked();
+  await call("syncTodos");
+  const n0 = call.lock.n;
+  call.lock.busy = (n) => n === n0 + 2; // free for the save, busy when the write is to be recorded
+  call.fake.planner.cellFails = (cell, value) => value !== "Booked"; // the take-back can't be written
+  const t = await call("tickTodo", { id: "1", item: "Rail pass reservation" });
+  call.lock.busy = () => false;
+  call.fake.planner.cellFails = false;
+  assert.deepEqual([t.data.planner, stored(call, "1").ticked_by, stored(call, "1").planner_written], ["pending", "Mo", ""]);
+  later(call, 1);
+  const u = await call("undo", { logId: t.data.logId }, "Mo");
+  assert.deepEqual([u.ok, u.data.planner], [true, "kept"], "a plain untick: the app knew of no Booked");
+  assert.equal(bookStatus(call), "Booked");
+  await forced(call);
+  assert.equal(bookStatus(call), "Not booked");
+  assert.deepEqual(owedOf(call), ["", "", "", "Not booked"]);
+  assert.equal(leftKept(call), false);
+});
+
+test("issue 79: a row a person has ticked is never touched: the tick stands with the planner's Booked, nothing written, the Booked left behind is cleared", async () => {
+  const { call } = await undoneBeforeRecorded((c) => { c.fake.planner.lockFails = true; });
+  later(call, 1);
+  const t = await call("tickTodo", { id: "1", item: "Rail pass reservation" }, "Ajen");
+  assert.deepEqual([t.ok, t.data.planner], [true, "written"], "the planner already says Booked: taken as it is");
+  const before = cellValues(call);
+  await forced(call);
+  await forced(call);
+  assert.deepEqual(cellValues(call), before, "nothing written");
+  assert.equal(bookStatus(call), "Booked");
+  assert.equal(stored(call, "1").ticked_by, "Ajen");
+  assert.equal(leftKept(call), false);
+});
+
+for (const [name, change] of [
+  ["the Status was changed by hand", (c) => { c.fake.planner.tabs["Book Now"][3][4] = "Booked - conf MADEUP1"; }],
+  ["the Status says booked in other words", (c) => { c.fake.planner.tabs["Book Now"][3][4] = "booked"; }],
+  ["the planner gave the # to another item, which says Booked", (c) => { c.fake.planner.tabs["Book Now"] = bookNow({ ...B1, Item: "Made-up item that took #1", Status: "Booked" }, B2, B3); }],
+  ["the item is gone from the planner", (c) => { c.fake.planner.tabs["Book Now"] = bookNow(B2, B3); }],
+]) {
+  test(`issue 79 (R49): nothing is put back when ${name}; the Booked left behind is cleared`, async () => {
+    const { call } = await undoneBeforeRecorded((c) => { c.fake.planner.lockFails = true; });
+    change(call);
+    const before = cellValues(call);
+    await forced(call);
+    await forced(call);
+    assert.deepEqual(cellValues(call), before, "nothing written");
+    assert.equal(leftKept(call), false);
+    assert.equal(stored(call, "1").planner_written, "");
+  });
+}
+
+test("issue 79: a row already owed its put-back keeps its own; the Booked left behind is cleared", async () => {
+  const { call } = await owed(); // planner Booked, the row owes "Not booked"
+  call.fake.planner.cellFails = false;
+  call.fake.props.TODO_LEFT_1 = JSON.stringify({ item: "Rail pass reservation", was: "Made-up other status", at: call.at.now });
+  await forced(call);
+  assert.equal(bookStatus(call), "Not booked", "the row's own put-back");
+  assert.equal(leftKept(call), false);
+});
+
+test("issue 79: a Booked left behind kept after the pull's planner read began waits for the next pull, untouched", async () => {
+  const { call } = await undoneBeforeRecorded((c) => { c.fake.planner.lockFails = true; });
+  const raw = call.fake.props.TODO_LEFT_1;
+  const left = JSON.parse(raw);
+  // Kept two minutes on: the pull a minute on began its read before it.
+  call.fake.props.TODO_LEFT_1 = JSON.stringify({ ...left, at: new Date(Date.parse(call.at.now) + 2 * 60000).toISOString() });
+  await forced(call);
+  assert.equal(bookStatus(call), "Booked");
+  assert.equal(leftKept(call), true, "left for the next pull");
+  assert.equal(stored(call, "1").planner_written, "");
+  later(call, 1);
+  await forced(call);
+  assert.equal(bookStatus(call), "Not booked");
+  assert.equal(leftKept(call), false);
+});
+
+test("issue 79: a Booked left behind that is not one (junk) is cleared and nothing is written", async () => {
+  const call = linked();
+  await call("syncTodos");
+  call.fake.planner.tabs["Book Now"][3][4] = "Booked";
+  const farAhead = new Date(Date.parse(call.at.now) + 60 * 60000).toISOString(); // an hour after the next pull's read
+  for (const junk of ["not json", JSON.stringify({ item: "Rail pass reservation" }), JSON.stringify({ item: "Rail pass reservation", was: "Not booked", at: "soon" }), JSON.stringify({ item: "Rail pass reservation", was: "Not booked", at: farAhead })]) {
+    call.fake.props.TODO_LEFT_1 = junk;
+    await forced(call);
+    assert.equal(leftKept(call), false, junk);
+    assert.equal(bookStatus(call), "Booked");
+  }
+  assert.deepEqual(writes(call), []);
+});
+
+test("issue 79: a put-back that still can't be written stays owed, as an undo's does, and goes through on a later pull", async () => {
+  const { call } = await undoneBeforeRecorded((c) => { c.fake.planner.lockFails = true; });
+  call.fake.planner.cellFails = true;
+  await forced(call);
+  assert.equal(bookStatus(call), "Booked");
+  assert.deepEqual(owedOf(call), ["", "undo", "Not booked", "Not booked"], "owed, shown with its old status");
+  assert.equal(leftKept(call), false, "the row says it now");
+  call.fake.planner.cellFails = false;
+  await forced(call);
   assert.equal(bookStatus(call), "Not booked");
   assert.deepEqual(owedOf(call), ["", "", "", "Not booked"]);
 });

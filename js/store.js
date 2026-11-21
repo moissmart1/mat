@@ -53,6 +53,9 @@ const NOT_SAVED = "No signal. That wasn’t saved.";
 const UNCONFIRMED = "Couldn’t confirm that. Checking…";
 const STALE = "That was changed again since. Undo the newer change first.";
 const NO_SIGNAL = "No signal. Try again.";
+// A tick refused because the planner put another item under that # since this
+// phone drew its list (issue #78): the list is fetched again.
+const TODO_CHANGED = "That number is another item in the planner now, so nothing was ticked. Check the list again.";
 // A pull from the planner writes a few rows at a time: asked again while more
 // remain, up to this many calls in a row.
 const TODO_PULLS = 4;
@@ -912,6 +915,12 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
       } else if (op.quiet) {
         removeOp(op);
         settleQuiet(op, err);
+      } else if (op.kind === "todo" && codeOf(err) === "item_changed") {
+        // The # holds another item now: nothing was saved. The list as the
+        // backend has it now is fetched, so the screen shows the new item.
+        removeOp(op);
+        state.notice = TODO_CHANGED;
+        track(refresh());
       } else {
         removeOp(op);
         state.notice = failNotice(err);
@@ -1694,9 +1703,14 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
   }
 
   // A tick, shown at once (done, by me, now); the backend then tries to
-  // write Booked into the planner.
+  // write Booked into the planner. It carries the item as this phone shows
+  // it (the list is drawn from the store on every change), and the backend
+  // refuses it when that # holds another item by now (issue #78).
   function tickTodo(id) {
-    return change("todo", id, "tick", "tickTodo", { tickedBy: myName, tickedAt: new Date(now()).toISOString(), done: true });
+    const cur = find("todo", id);
+    if (!cur) return null;
+    const item = typeof cur.item === "string" ? cur.item : "";
+    return change("todo", id, "tick", "tickTodo", { tickedBy: myName, tickedAt: new Date(now()).toISOString(), done: true }, { args: { id, item } });
   }
 
   // on: I take it (from anyone: "claim", or "takeover" from someone else);

@@ -42,6 +42,7 @@ var MSG_ = {
   notYourPicture: "You can only change your own picture.",
   noTodo: "That one isn’t on the list any more.",
   todoDone: "That one is already done.",
+  todoChanged: "That number is another item in the planner now, so nothing was ticked. Check the list again.",
   tickTakenOff: "That number is another item in the planner now: its tick was taken off.",
   claimTakenOff: "That number is another item in the planner now: nobody is on it any more.",
   bothTakenOff: "That number is another item in the planner now: its tick was taken off and nobody is on it any more.",
@@ -1207,6 +1208,10 @@ var TODO_LOG_TAB_ = "Change Log";
 var TODO_TICK_WHY_ = "Ticked off in the MAT app";
 var TODO_UNTICK_WHY_ = "Tick undone in the MAT app";
 var TODO_UNRECORDED_WHY_ = "The MAT app couldn’t record the tick; put back";
+// The longest item text a tick may carry (an Item is cut to 300 characters).
+var TODO_ITEM_ARG_MAX_ = 1000;
+// How far after a pull's planner read a Booked left behind can say it was kept (issue #79).
+var TODO_LEFT_AHEAD_MS_ = 10 * 60000;
 
 // Item texts compared as the same item: runs of spaces (non-breaking ones
 // too) count as one, and the ends are trimmed, on both sides.
@@ -1280,6 +1285,9 @@ function syncTodos_(args, ctx) {
     return env;
   };
   var rows;
+  // When the planner read began: a Booked left behind (todoLeft_) kept
+  // before this is in what it reads (issue #79).
+  var readAt = nowIso_();
   try {
     rows = plannerTab_(TODO_BOOK_TAB_);
   } catch (e) {
@@ -1287,7 +1295,7 @@ function syncTodos_(args, ctx) {
   }
   var read = todosFromRows(rows, tripYear_());
   if (read.missing) return refuse("planner_columns", read.missing);
-  var pulled = withLock_(function () { return pullTodos_(read, ctx.actor); });
+  var pulled = withLock_(function () { return pullTodos_(read, ctx.actor, readAt); });
   if (!pulled.ok) return pulled;
 
   // The pull is complete once its row writes are: what the retries do never
@@ -1331,14 +1339,29 @@ function syncTodos_(args, ctx) {
 
 // The pull's writes to the app's own Sheet, under its lock: read is
 // todosFromRows of the Book Now rows; by, who pulls (named in the Change Log
-// for a put-back whose undo the Log does not name).
+// for a put-back whose undo the Log does not name); readAt, when the planner
+// read began (ISO text).
 // -> { ok, more, problems, retry }.
-function pullTodos_(read, by) {
+function pullTodos_(read, by, readAt) {
   var byId = {};
   todoRows_().forEach(function (r) { byId[cellText_(r.id)] = r; });
-  // Every kept-aside was (todoWas_) this pull may look at, in one
-  // getProperties() rather than one read an item (issue 16).
-  var wasOf = todoWasOf_(read.items.map(function (it) { return it.id; }).concat(Object.keys(byId)));
+  // Every kept-aside was (todoWas_) and Booked left behind (todoLeft_) this
+  // pull may look at, in one getProperties() rather than one read an item
+  // (issue 16).
+  var props = todoWasOf_(read.items.map(function (it) { return it.id; }).concat(Object.keys(byId)), true);
+  var wasOf = props.was;
+  var leftOf = props.left;
+  // A Booked left behind kept after the planner read began is not in that
+  // read: it waits for the next pull, untouched. One that says it was kept
+  // more than TODO_LEFT_AHEAD_MS_ after this read began cannot be (no request
+  // runs that long): junk, cleared.
+  var readMs = Date.parse(readAt);
+  var leftNow = function (id) {
+    var left = todoLeftFrom_(leftOf[id]);
+    var at = left ? Date.parse(left.at) : NaN;
+    if (left && !(at < readMs)) return at - readMs <= TODO_LEFT_AHEAD_MS_ ? { wait: true } : { left: null, raw: leftOf[id] };
+    return { left: left, raw: leftOf[id] };
+  };
   var inPlanner = {};
   var jobs = [];
   var problems = read.problems.slice();
@@ -1351,16 +1374,35 @@ function pullTodos_(read, by) {
       jobs.push({ add: cols });
       return;
     }
+    // Issue #79: a Booked the app left behind (todoLeft_) on a row nobody
+    // has ticked and nothing is owed on, while the planner row is still that
+    // item and says exactly Booked: the row is made owed its put-back.
+    var lf = leftOf[it.id] !== null ? leftNow(it.id) : null;
+    var left = lf && !lf.wait ? lf.left : null;
+    // (Never on a row whose claim this pull takes off: it clears the row.)
+    var adopt = left !== null && cellText_(r.ticked_by) === "" && cellText_(r.planner_written) === "" && it.status === "Booked" && sameItem_(it.item, left.item) &&
+      !(cellText_(r.claimed_by) !== "" && !sameItem_(it.item, cellText_(r.item)));
     // An undone tick whose Booked the planner still holds: that Booked is the
     // app's own, so the row keeps the status it had before the tick.
-    var owed = cellText_(r.planner_written) === "undo" && sameItem_(it.item, tickedItemOf_(r));
+    var owed = (cellText_(r.planner_written) === "undo" && sameItem_(it.item, tickedItemOf_(r))) || adopt;
     // A true was kept aside (todoWas_) is what the app's latest Booked
     // replaced: an owed row puts that back, not its own (issue 16).
     var keptWas = wasOf[it.id];
-    if (owed && it.status === "Booked") cols.status = keptWas !== null ? keptWas : cellText_(r.planner_was);
+    if (owed && it.status === "Booked") cols.status = keptWas !== null ? keptWas : adopt ? left.was : cellText_(r.planner_was);
     var patch = {};
     Object.keys(cols).forEach(function (k) { if (cellDate_(r[k]) !== cols[k]) patch[k] = cols[k]; });
     if (cellText_(r.gone) === "yes") patch.gone = "";
+    if (adopt) {
+      patch.planner_written = "undo";
+      patch.planner_was = left.was;
+      patch.ticked_item = left.item;
+    }
+    // Cleared once the row says so (adopted), or at once (anything else).
+    var dropLeft = null;
+    if (lf && !lf.wait) {
+      if (adopt) dropLeft = lf.raw;
+      else dropTodoLeftIf_(it.id, lf.raw);
+    }
     // Another item under this # now: whatever was ticked or claimed was the old one (R49).
     var ticked = cellText_(r.ticked_by) !== "";
     var claimer = cellText_(r.claimed_by);
@@ -1387,12 +1429,13 @@ function pullTodos_(read, by) {
         dropWas = keptWas;
       } else dropTodoWasIf_(it.id, keptWas);
     }
-    if (Object.keys(patch).length) jobs.push({ id: it.id, patch: patch, takeoff: takeoff, dropped: dropped, dropWas: dropWas });
+    if (Object.keys(patch).length) jobs.push({ id: it.id, patch: patch, takeoff: takeoff, dropped: dropped, dropWas: dropWas, dropLeft: dropLeft });
   });
   Object.keys(byId).forEach(function (id) {
     if (inPlanner[id]) return;
-    // A row gone, or going now, keeps nothing aside (review M4).
+    // A row gone, or going now, keeps nothing aside (review M4), nor a Booked left behind (issue #79).
     dropTodoWasIf_(id, wasOf[id]);
+    if (leftOf[id] !== null && !leftNow(id).wait) dropTodoLeftIf_(id, leftOf[id]);
     if (cellText_(byId[id].gone) !== "yes") jobs.push({ id: id, patch: { gone: "yes" } });
   });
 
@@ -1412,6 +1455,7 @@ function pullTodos_(read, by) {
       if (job.takeoff) logTakeoff_(job.takeoff, before, after);
       if (job.dropped !== null && job.dropped !== undefined) logDropped_(job.id, job.dropped);
       if (job.dropWas !== null && job.dropWas !== undefined) dropTodoWasIf_(job.id, job.dropWas);
+      if (job.dropLeft !== null && job.dropLeft !== undefined) dropTodoLeftIf_(job.id, job.dropLeft);
     }
     writes++;
   });
@@ -1599,20 +1643,63 @@ function keepTodoWas_(id, was) { setProp_("TODO_WAS_" + id, was); }
 // Cleared only while it still says `seen` (null: nothing to clear), so a
 // newer Booked's was kept aside meanwhile is never lost (issue 16).
 function dropTodoWasIf_(id, seen) { if (seen !== null && seen !== undefined && todoWas_(id) === seen) delProp_("TODO_WAS_" + id); }
-// The kept-aside was of each id, { id: text or null }, in one read.
-function todoWasOf_(ids) {
+// The kept-aside was of each id, { id: text or null }, in one read; with
+// left (issue #79), each id's Booked left behind (todoLeft_, raw text or
+// null) comes from that same read, as { was, left }.
+function todoWasOf_(ids, left) {
   var out = {};
+  var lefts = {};
   var keys = [];
   ids.forEach(function (id) {
     if (Object.prototype.hasOwnProperty.call(out, id)) return;
     out[id] = null;
+    lefts[id] = null;
     keys.push("TODO_WAS_" + id);
+    if (left) keys.push("TODO_LEFT_" + id);
   });
-  if (!keys.length) return out;
+  if (!keys.length) return left ? { was: out, left: lefts } : out;
   var got = getProps_(keys);
-  Object.keys(out).forEach(function (id) { var v = got["TODO_WAS_" + id]; out[id] = typeof v === "string" ? v : null; });
-  return out;
+  Object.keys(out).forEach(function (id) {
+    var v = got["TODO_WAS_" + id];
+    out[id] = typeof v === "string" ? v : null;
+    var l = got["TODO_LEFT_" + id];
+    lefts[id] = typeof l === "string" ? l : null;
+  });
+  return left ? { was: out, left: lefts } : out;
 }
+
+// Issue #79: a Booked the app wrote and then could not take back out (the
+// tick undone, or never recorded, and the take-back could not get the
+// planner), kept in the Script Property TODO_LEFT_<#> as { item, was, at }:
+// the text the tick was bound to, what that Booked replaced, and when this
+// was kept. Written outside every lock (best effort: History's "left …
+// marked Booked" line is said either way). The next pull whose planner read
+// began after `at` settles it, under the app's lock: a row nobody has ticked
+// and nothing is owed on, whose planner row is still that item and says
+// exactly Booked, is made owed its put-back (planner_written "undo",
+// planner_was `was`), which that pull's retries then write as for any undo;
+// anything else (the row ticked by someone, already owed, another item, any
+// other status, the row gone) just has it cleared. Never written for a tick
+// that still stands and is recorded: nothing is taken back then.
+function keepTodoLeft_(id, item, was) {
+  try {
+    setProp_("TODO_LEFT_" + id, JSON.stringify({ item: item, was: was, at: nowIso_() }));
+  } catch (e) { /* best effort */ }
+}
+// The parsed TODO_LEFT_<#> value, or null when it is not one (cleared as junk).
+function todoLeftFrom_(raw) {
+  if (typeof raw !== "string") return null;
+  var v;
+  try {
+    v = JSON.parse(raw);
+  } catch (e) {
+    return null;
+  }
+  if (!v || typeof v.item !== "string" || typeof v.was !== "string" || typeof v.at !== "string" || !isFinite(Date.parse(v.at))) return null;
+  return v;
+}
+// Cleared only while it still says `seen` (raw text), so one kept meanwhile stays.
+function dropTodoLeftIf_(id, seen) { if (typeof seen === "string" && getProp_("TODO_LEFT_" + id) === seen) delProp_("TODO_LEFT_" + id); }
 
 // Records what the planner did with a tick, under the app's lock, only while
 // the tick is still there and bound to the same text. A Booked the app
@@ -1704,7 +1791,11 @@ function settleTick_(id, item, by, out) {
   }
   if (out.result === "written" && (!rec.ok || rec.revert)) {
     var back = plannerUntick_(id, item, out.was, by, rec.ok ? TODO_UNTICK_WHY_ : TODO_UNRECORDED_WHY_);
-    if (back === "pending") logBookedLeft_(id, item, by);
+    if (back === "pending") {
+      // Kept first: it needs no lock, the History line does (issue #79).
+      keepTodoLeft_(id, item, out.was);
+      try { logBookedLeft_(id, item, by); } catch (e6) { /* best effort */ }
+    }
     return "pending";
   }
   return rec.ok ? "written" : "pending";
@@ -1752,9 +1843,17 @@ function liveTodo_(args) {
 // Saved first under the app's lock (the tick stands on its own); the
 // planner write follows once the lock is let go (then_, run by dispatch_).
 function tickTodo_(args, ctx) {
+  // Issue #78: the item the phone showed under that #. A phone from before
+  // it was sent sends none: ticked as before (no tick is ever kept on a
+  // phone to be sent later, so none can come from an older list than the
+  // page open on it).
+  if (args.item !== undefined && (typeof args.item !== "string" || args.item.length > TODO_ITEM_ARG_MAX_)) return err_("bad_input", MSG_.badRequest);
   var got = liveTodo_(args);
   if (got.env) return got.env;
   var cur = got.todo;
+  // A pull has put another item under that # since the phone drew its list:
+  // nothing is ticked, and the phone fetches the list again (R49).
+  if (args.item !== undefined && !sameItem_(args.item, cur.item)) return err_("item_changed", MSG_.todoChanged);
   if (cur.done) return err_("bad_input", MSG_.todoDone);
   // The connector never makes a tick (R49 M1): a tick is what reaches the planner.
   if (ctx.via === "claude") return err_("bad_input", MSG_.claudeTick);
