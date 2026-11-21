@@ -5,11 +5,12 @@
 // root and redraws on every store change. Every figure comes from money.js and
 // format.js; text from people or the Sheet goes in with textContent only.
 
-import { standing, jpyOf, cadCents, shares } from "../money.js";
+import { standing, jpyOf, cadCents, shares, expenseShares } from "../money.js";
 import { tripDay } from "../time.js";
 import { tripNow } from "../plan.js";
 import { mountSlip, viewerOwed } from "./slip.js";
-import { yen, dollars, typed, dayHead, issuer, pt, freshText, sentence, tripSpan } from "../format.js";
+import { yen, dollars, typed, dayHead, issuer, pt, freshText, sentence, tripSpan, japanTime } from "../format.js";
+import { copyText } from "../clip.js";
 import { fillSeal } from "../picture.js";
 
 const UNREACHABLE = "Couldn’t reach the trip sheet.";
@@ -22,6 +23,73 @@ export function setAsideText(list) {
   return list.length === 1
     ? "1 line in the Sheet can’t be read (" + why + "). It’s left out of the totals. Tell Mo."
     : list.length + " lines in the Sheet can’t be read (" + why + "). They’re left out of the totals. Tell Mo.";
+}
+
+// The settlement summary under the receipt: plain text to paste into the
+// group chat or screenshot. Its figures come from the slip's own source
+// (viewerOwed), so rates, rounding and transfers are the slip's. Only the
+// fields listed here go in: no e-Transfer addresses, keys, links or notes.
+// "Provisional" is #21's signal: this phone has money lines the Sheet
+// hasn't confirmed.
+const SPLIT = { equal: "Split equally", parts: "Split by parts", exact: "Split by amounts" };
+const PROVISIONAL = "Provisional. Some changes haven’t synced.";
+// Oldest first, as a summary reads: before the trip, then each day, then the
+// order the lines were added in.
+const byDay = (a, b) => (a.day === b.day ? 0 : a.day === "pre" ? -1 : b.day === "pre" ? 1 : a.day < b.day ? -1 : 1) ||
+  ((a.addedAt || "") < (b.addedAt || "") ? -1 : (a.addedAt || "") > (b.addedAt || "") ? 1 : 0);
+
+export function settlementSummary(state, nowMs) {
+  const { live, list, bal, simplify, provisional } = viewerOwed(state);
+  return {
+    trip: state.trip.name,
+    preparedAt: nowMs,
+    loadedAt: Number.isFinite(state.loadedAt) ? state.loadedAt : null,
+    simplified: simplify,
+    provisional,
+    excluded: setAsideText(state.setAside),
+    expenses: live.slice().sort(byDay).map((e) => ({
+      day: e.day, description: e.title, paidBy: e.paidBy, amount: e.amount,
+      currency: e.currency, rate: e.rate, cadCents: cadCents(e),
+      splitMode: e.splitMode || "equal", sharesCadCents: expenseShares(e),
+    })),
+    payments: state.payments.filter((p) => !p.removed).map((p) => ({
+      from: p.from, to: p.to, cadCents: Math.round(p.cad * 100),
+    })),
+    balances: bal,
+    transfers: list.map(({ from, to, cents }) => ({ from, to, cents })),
+  };
+}
+
+// The figures part of the text: everything but the Prepared and Last loaded
+// lines, so a redraw can tell whether anything that matters has changed.
+const TIME_LINE = /^(Prepared|Last loaded) /;
+export const summaryFigures = (text) => text.split("\n").filter((line) => !TIME_LINE.test(line)).join("\n");
+
+export function summaryText(summary) {
+  const lines = [summary.trip + " — Settlement summary", "Dollar amounts are CAD.",
+    "Prepared " + japanTime(summary.preparedAt),
+    "Last loaded " + (summary.loadedAt === null ? "unknown" : japanTime(summary.loadedAt))];
+  if (summary.provisional) lines.push(PROVISIONAL);
+  if (summary.excluded) lines.push(summary.excluded);
+  lines.push("", "Expenses");
+  for (const e of summary.expenses) {
+    const yenLine = e.currency !== "CAD";
+    lines.push(dayHead(e.day).en + " · " + e.description + " · " + e.paidBy + " paid " + typed(e) +
+      (yenLine ? " (" + dollars(e.cadCents) + " at " + e.rate + " JPY/CAD)" : ""));
+    lines.push("  " + (SPLIT[e.splitMode] || SPLIT.equal) + ": " + Object.entries(e.sharesCadCents).map(([who, cents]) => who + " " + dollars(cents)).join(", "));
+  }
+  if (!summary.expenses.length) lines.push("None");
+  lines.push("", "Recorded payments");
+  for (const p of summary.payments) lines.push(p.from + " → " + p.to + "  " + dollars(p.cadCents));
+  if (!summary.payments.length) lines.push("None");
+  lines.push("", "Balances");
+  for (const [who, cents] of Object.entries(summary.balances)) {
+    lines.push(who + (cents < 0 ? " owes " + dollars(-cents) : cents > 0 ? " is owed " + dollars(cents) : " is even"));
+  }
+  lines.push("", summary.simplified ? "Remaining transfers (simplified)" : "Remaining transfers");
+  for (const t of summary.transfers) lines.push(t.from + " → " + t.to + "  " + dollars(t.cents));
+  if (!summary.transfers.length) lines.push("All settled");
+  return lines.join("\n");
 }
 
 function el(tag, cls, text) {
@@ -177,7 +245,63 @@ export function mountMoney(root, store, { onRing = () => {}, onLine = () => {}, 
   slip.id = "slip";
   const rc = el("div", "rc");
   rc.id = "rc";
-  root.replaceChildren(top, slip, rc);
+  // The settlement summary: a second strip of receipt paper under the
+  // receipt, shut until its heading is tapped. The text is built when it
+  // opens and when Copy summary is tapped; a sync redraws it only when the
+  // figures change, so a selection being made on an iPhone isn't wiped.
+  const summary = el("section", "rc rc-sum");
+  summary.id = "rcSum";
+  const sumHead = el("button", "rc-sum-h");
+  sumHead.type = "button";
+  sumHead.id = "rcSumBtn";
+  sumHead.setAttribute("aria-expanded", "false");
+  sumHead.setAttribute("aria-controls", "rcSumBody");
+  sumHead.append(el("span", "", "Settlement summary"), el("i", "rc-sum-mark"));
+  sumHead.lastChild.setAttribute("aria-hidden", "true");
+  const sumBody = el("div", "rc-sum-b");
+  sumBody.id = "rcSumBody";
+  sumBody.hidden = true;
+  const content = el("pre", "rc-sum-t");
+  content.id = "rcSumText";
+  const copyBtn = el("button", "rc-sum-copy", "Copy summary");
+  copyBtn.type = "button";
+  copyBtn.id = "rcSumCopy";
+  const copyRow = el("div", "rc-sum-act");
+  copyRow.append(copyBtn);
+  sumBody.append(el("div", "rule"), content, copyRow);
+  summary.append(sumHead, sumBody);
+  let shownFigures = null;
+  const buildSummary = () => summaryText(settlementSummary(store.state, now()));
+  const showSummary = (text) => {
+    content.textContent = text;
+    shownFigures = summaryFigures(text);
+  };
+  const isShown = () => !summary.hidden && !sumBody.hidden;
+  // A redraw while it is shown: only when the figures changed.
+  const redrawSummary = () => {
+    const text = buildSummary();
+    if (summaryFigures(text) !== shownFigures) showSummary(text);
+  };
+  sumHead.addEventListener("click", () => {
+    const open = sumBody.hidden;
+    sumBody.hidden = !open;
+    sumHead.setAttribute("aria-expanded", String(open));
+    if (open) showSummary(buildSummary());
+  });
+  let copiedTimer = null;
+  copyBtn.addEventListener("click", () => {
+    // Built afresh in the tap's own turn, so Safari still counts the tap.
+    const text = buildSummary();
+    showSummary(text);
+    copyText(Promise.resolve(text)).then((ok) => {
+      copyBtn.textContent = ok ? "Copied." : "Couldn’t copy that.";
+      clearTimeout(copiedTimer);
+      copiedTimer = setTimeout(() => {
+        copyBtn.textContent = "Copy summary";
+      }, 2000);
+    });
+  });
+  root.replaceChildren(top, slip, rc, summary);
   mountSlip(slip, store);
 
   histBtn.addEventListener("click", () => onHistory());
@@ -207,6 +331,9 @@ export function mountMoney(root, store, { onRing = () => {}, onLine = () => {}, 
       asideNote.hidden = true;
       histBtn.hidden = true;
       slip.hidden = true;
+      summary.hidden = true;
+      content.textContent = "";
+      shownFigures = null;
       rc.replaceChildren();
       return;
     }
@@ -234,6 +361,8 @@ export function mountMoney(root, store, { onRing = () => {}, onLine = () => {}, 
     histN.hidden = fresh === 0;
 
     drawReceipt(rc, s, live, ctx);
+    summary.hidden = false;
+    if (isShown()) redrawSummary();
   }
 
   render(store.state);
