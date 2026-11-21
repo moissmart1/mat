@@ -1316,7 +1316,11 @@ function syncTodos_(args, ctx) {
   queue.forEach(function (job) {
     setProp_("TODOS_RETRY_AFTER", job.key);
     try {
-      if (job.was !== undefined) settleUntick_(job.id, plannerUntick_(job.id, job.item, job.was, job.by, null, true), null, job.item);
+      if (job.was !== undefined) {
+        var said = plannerUntick_(job.id, job.item, job.was, job.by, null, true);
+        // "taken": the row is no longer owed; this put-back has nothing to record (review round 2).
+        if (said !== "taken") settleUntick_(job.id, said, null, job.item);
+      }
       else settleTick_(job.id, job.item, job.by, plannerTick_(job.id, job.item, job.by));
     } catch (e) {
       // Best effort (R45): the tick stands and a later pull tries again.
@@ -1546,8 +1550,11 @@ function plannerTick_(id, item, actor) {
 // retry), not settleTick_'s own take-back: its `was` was read under the
 // app's lock some time before, so with nothing kept aside the Todos row is
 // read again here (review I1): no longer owed means the Booked there is a
-// tick recorded since, left alone ("kept"); still owed, its planner_was now.
+// tick recorded since, left alone ("taken": the caller records nothing, the
+// row being someone else's by now: review round 2); still owed, its
+// planner_was now.
 // -> "written" | "kept" (someone changed it since: left alone) |
+// "taken" (owed only: no longer owed, left alone, nothing to record) |
 // "pending" (could not; the planner may still say Booked)
 function plannerUntick_(id, item, was, actor, why, owed) {
   if (typeof was !== "string") return "pending";
@@ -1562,7 +1569,7 @@ function plannerUntick_(id, item, was, actor, why, owed) {
       var kept = todoWas_(id);
       if (kept === null && owed) {
         var row = findRow_("Todos", id);
-        if (!row || cellText_(row.planner_written) !== "undo") return "kept";
+        if (!row || cellText_(row.planner_written) !== "undo") return "taken";
         was = cellText_(row.planner_was);
       }
       var put = plannerWriteStatus_(logRows, found, kept !== null ? kept : was, why || TODO_UNTICK_WHY_, actor);
@@ -1904,6 +1911,13 @@ function undoTodo_(entry, rows, ctx) {
 
 function afterUntick_(env, id, item, was, by) {
   var said = plannerUntick_(id, item, was, by, null, true);
+  // "taken": the row is no longer owed (ticked again since): nothing to
+  // record, and recording "kept" could clear a later undo's owed row (review
+  // round 2). The phone hears "kept", as before.
+  if (said === "taken") {
+    env.data.planner = "kept";
+    return withRowNow_(env, id);
+  }
   // Recording it is best effort: a row left owed is settled by the next pull,
   // which finds the planner put back ("kept") or puts it back itself.
   try { settleUntick_(id, said, { actor: by, via: "app" }, item); } catch (e) { /* best effort */ }

@@ -2160,3 +2160,38 @@ test("review M4: a kept-aside value of a row already gone is cleared by a pull",
   await forced(call);
   assert.equal("TODO_WAS_3" in call.fake.props, false);
 });
+
+// ---------- issue 16, fix round 2 (review round 2, R2-I1) ----------
+
+test("review round 2: undo, re-tick, undo again while the first put-back is between its planner part and its record", async () => {
+  const { call, logId } = await ticked();
+  later(call, 2);
+  const lastTick = () => [...call.fake.tables.Log].reverse().find((r) => r.action === "tick" && String(r.ref) === "1").id;
+  const realAfter = call.fake.world.afterUntick_;
+  const realPl = call.fake.world.withPlannerLock_;
+  let second = null;
+  call.fake.world.afterUntick_ = (e, ...rest) => {
+    // U1's planner part is next. Mo ticks again first (T2); just after U1's
+    // planner part, Ajen undoes T2 (U2), whose own planner part waits.
+    call.fake.world.afterUntick_ = (e2, ...rest2) => { second = () => realAfter(e2, ...rest2); return e2; };
+    call.fake({ key: KEY, actor: "Mo", action: "tickTodo", args: { id: "1" } });
+    call.fake.world.withPlannerLock_ = (fn) => {
+      call.fake.world.withPlannerLock_ = realPl;
+      const out = realPl(fn);
+      call.fake({ key: KEY, actor: "Ajen", action: "undo", args: { logId: Number(lastTick()) } });
+      return out;
+    };
+    return realAfter(e, ...rest);
+  };
+  const u1 = await call("undo", { logId }, "Ajen");
+  call.fake.world.afterUntick_ = realAfter;
+  assert.equal(u1.data.planner, "kept", "the phone hears kept, as before");
+  assert.ok(second);
+  second();
+  await forced(call);
+  await forced(call);
+  assert.equal(stored(call, "1").ticked_by, "");
+  assert.notEqual(bookStatus(call), "Booked", "no Booked left that nobody ticked");
+  assert.equal(bookStatus(call), "Not booked");
+  assert.deepEqual(owedOf(call), ["", "", "", "Not booked"]);
+});
