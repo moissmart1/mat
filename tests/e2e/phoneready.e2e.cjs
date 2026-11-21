@@ -15,7 +15,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const { WITH_PLAN, makeBackend, open, advance, until, text, expectText, visible } = require("./helpers.cjs");
+const { WITH_PLAN, makeBackend, open, advance, until, atRest, text, expectText, visible } = require("./helpers.cjs");
 const { png } = require("./pictures.cjs");
 
 const KEY = "test-key";
@@ -149,16 +149,8 @@ const height = (page, sel) => page.evaluate((s) => {
   return n ? Math.round(n.getBoundingClientRect().height) : null;
 }, sel);
 
-// The sheet has finished rising (no transition running, at rest).
-async function sheetAtRest(page, up = true) {
-  await until(() => page.evaluate((up) => {
-    const s = document.getElementById("rdy");
-    if (!s) return false;
-    if (s.getAnimations().some((a) => a.playState === "running")) return false;
-    const r = s.getBoundingClientRect();
-    return up ? s.classList.contains("is-open") && r.bottom <= innerHeight + 0.5 && r.top < innerHeight : !s.classList.contains("is-open");
-  }, up), "the sheet is at rest");
-}
+// The sheet has come to rest, up or down (the shared atRest helper).
+const sheetAtRest = (page, up = true) => atRest(page, "#rdy", { open: up });
 const sheetRows = (page) => page.evaluate(() => [...document.querySelectorAll("#rdy .rdy-rows > *")].map((r) => r.innerText.replace(/\s+/g, " ").trim()));
 
 // Nine pictures kept, then the phone set to "Only when I open one" and three more added by another phone.
