@@ -2693,7 +2693,7 @@ test("tickTodo shows the tick at once, keeps what the backend saved, and Undo pu
   t = byId(p.store.state.todos, "1");
   assert.equal(t.pending, undefined);
   assert.equal(t.status, "Booked", "the planner took it");
-  assert.deepEqual(p.net.sent.filter((b) => b.action === "tickTodo").map((b) => b.args), [{ id: "1" }]);
+  assert.deepEqual(p.net.sent.filter((b) => b.action === "tickTodo").map((b) => b.args), [{ id: "1", item: "Made-up booking 1" }], "the item as shown goes with the #");
 
   await p.store.undo(token);
   await p.store.idle();
@@ -2719,6 +2719,38 @@ test("tickTodo refused rolls back with the backend's sentence; offline it says n
   assert.equal(p.store.state.notice, "No signal. That wasn’t saved.");
   assert.equal(byId(p.store.state.todos, "1").tickedBy, "");
   assert.equal(p.fake.tables.Todos.find((r) => r.id === "1").ticked_by, "");
+});
+
+// Issue #78: a tick on a list drawn before a pull put another item under that #.
+test("issue 78: a tick on a stale list is refused, nothing is ticked or written, the phone says so plainly and fetches the list again", async () => {
+  const at = { ms: NOW };
+  const fake = createFakeBackend(bookSeed(3), { clock: () => new Date(at.ms).toISOString() });
+  const p = phone({ fake, clock: () => at.ms });
+  await p.store.boot();
+  await p.store.syncTodos();
+  // Mo renumbers his planner; another phone's pull brings it in. This phone has not looked since.
+  fake.planner.tabs["Book Now"][2][1] = "Made-up renumbered item";
+  at.ms += 60 * 1000;
+  await backend(fake, "syncTodos", { force: true }, "Ajen");
+  assert.equal(fake.tables.Todos.find((r) => r.id === "2").item, "Made-up renumbered item", "the backend has the new item");
+  assert.equal(byId(p.store.state.todos, "2").item, "Made-up booking 2", "the stale list");
+  const loads = p.net.sent.filter((b) => b.action === "load").length;
+  p.store.tickTodo("2");
+  await p.store.idle();
+  assert.deepEqual(p.net.sent.filter((b) => b.action === "tickTodo").map((b) => b.args), [{ id: "2", item: "Made-up booking 2" }]);
+  assert.equal(p.store.state.notice, "That number is another item in the planner now, so nothing was ticked. Check the list again.");
+  assert.equal(fake.tables.Todos.find((r) => r.id === "2").ticked_by, "", "nothing ticked");
+  assert.deepEqual(fake.planner.writes, [], "nothing written to the planner");
+  assert.ok(p.net.sent.filter((b) => b.action === "load").length > loads, "the list is fetched again");
+  const t = byId(p.store.state.todos, "2");
+  assert.deepEqual([t.item, t.tickedBy, t.done, t.pending], ["Made-up renumbered item", "", false, undefined], "redrawn with the item under #2 now, open");
+  // Ticked again from the fresh list, it goes through.
+  p.store.clearNotice();
+  p.store.tickTodo("2");
+  await p.store.idle();
+  assert.equal(p.store.state.notice, null);
+  assert.equal(fake.tables.Todos.find((r) => r.id === "2").ticked_by, "Mo");
+  assert.equal(fake.tables.Todos.find((r) => r.id === "2").ticked_item, "Made-up renumbered item");
 });
 
 test("claimTodo: I’ll do it, take it over, hand it back, each with its own words on the undo bar", async () => {

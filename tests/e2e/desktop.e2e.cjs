@@ -11,7 +11,7 @@
 // These cases run as a computer: a mouse and a keyboard, no touch.
 
 const assert = require("node:assert/strict");
-const { SEED, WITH_PLAN, NOON12, makeBackend, open, advance, until, visible } = require("./helpers.cjs");
+const { SEED, WITH_PLAN, NOON12, makeBackend, open, advance, until, atRest, visible } = require("./helpers.cjs");
 
 const BIG = { width: 1440, height: 900 };
 const LAPTOP = { width: 1280, height: 720 };
@@ -25,7 +25,8 @@ const isOpen = (page, id) => page.evaluate((i) => {
   const el = document.getElementById(i);
   return !!el && el.classList.contains("is-open");
 }, id);
-const waitOpen = (page, id) => until(() => isOpen(page, id), "#" + id + " opens");
+// Open and at rest: a tap is never aimed at a sheet still sliding up (helpers.cjs atRest).
+const waitOpen = (page, id) => atRest(page, "#" + id);
 const waitClosed = (page, id) => until(async () => !(await isOpen(page, id)), "#" + id + " closes");
 // Sheets rise over half a second of real time (the page's clock is paused,
 // so this looks twice, 120 ms apart, from here): wait until one stands still.

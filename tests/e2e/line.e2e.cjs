@@ -18,7 +18,16 @@ const waitSheet = (page) =>
     "the line sheet opens",
   );
 const waitSheetClosed = (page) => until(async () => !(await isOpen(page, "line")), "the line sheet closes");
-const waitRegOpen = (page) => until(() => isOpen(page, "reg"), "the register opens");
+// Open, and risen all the way: the register slides up over 500 ms, and a key tapped
+// mid-slide can be missed (computed transform is "none" once it has settled).
+const waitRegOpen = (page) =>
+  until(
+    () => page.evaluate(() => {
+      const r = document.getElementById("reg");
+      return r.classList.contains("is-open") && getComputedStyle(r).transform === "none";
+    }),
+    "the register opens",
+  );
 const rowCount = (page) => page.evaluate(() => document.querySelectorAll("#rc .rc-row").length);
 const waitRows = (page, n) => until(async () => (await rowCount(page)) === n, "expected " + n + " receipt rows");
 const rowOf = (page, title) =>

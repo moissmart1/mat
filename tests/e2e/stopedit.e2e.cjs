@@ -4,7 +4,7 @@
 // clock is 13:20 on Dec 12 in Japan, Day 3 (Shibuya Sky at 14:00 is next).
 
 const assert = require("node:assert/strict");
-const { WITH_PLAN, open, advance, until, text, expectText, visible } = require("./helpers.cjs");
+const { WITH_PLAN, open, advance, until, atRest, text, expectText, visible } = require("./helpers.cjs");
 
 const D12 = "2026-12-12";
 const SKY = "planstop1203";
@@ -22,16 +22,10 @@ const isOpen = (page, id) => page.evaluate((i) => {
   const el = document.getElementById(i);
   return !!el && el.classList.contains("is-open");
 }, id);
-// The sheet is open and has risen all the way (it slides up over 500 ms).
-const waitSheet = (page) =>
-  until(
-    () => page.evaluate(() => {
-      const s = document.getElementById("stop");
-      return !!s && s.classList.contains("is-open") && Math.abs(s.getBoundingClientRect().bottom - innerHeight) < 1;
-    }),
-    "the stop sheet opens",
-  );
-const waitSheetClosed = (page) => until(async () => !(await isOpen(page, "stop")), "the stop sheet closes");
+// The sheet is open and has risen all the way (it slides up over 500 ms), or
+// shut and gone all the way down: a tap is only aimed at a sheet at rest.
+const waitSheet = (page) => atRest(page, "#stop");
+const waitSheetClosed = (page) => atRest(page, "#stop", { open: false });
 const idle = (page) => page.evaluate(() => globalThis.__matTest.store.idle());
 // Pictures are taken only when MAT_TAB_SHOTS names an output folder.
 const SHOTS = process.env.MAT_TAB_SHOTS || "";
@@ -697,12 +691,12 @@ module.exports = [
       await waitSheetClosed(page);
       // The hotel card closes the stop sheet, and the stop sheet the hotel card.
       await page.click(tk(D12) + " .tk-stay");
-      await until(() => isOpen(page, "stay"), "the hotel card opens");
+      await atRest(page, "#stay");
       await page.click("#stayDone");
-      await until(async () => !(await isOpen(page, "stay")), "the hotel card closes");
+      await atRest(page, "#stay", { open: false });
       await openAdd(page);
       await page.evaluate(() => document.getElementById("dayCount").click());
-      await until(() => isOpen(page, "allDays"), "the all-days list opens");
+      await atRest(page, "#allDays");
       assert.equal(await isOpen(page, "stop"), false, "the stop sheet closed for it");
     },
   },

@@ -1195,3 +1195,28 @@ module.exports.push({
     assert.equal(sent(backend, "tickTodo").length, 0, "no tick sent");
   },
 });
+
+// Issue #78: the ordinary tap, on a list drawn before a pull (from another phone)
+// put another item under that #. The tick carries the item shown; the backend
+// refuses it; the phone says so plainly and draws the list as it is now.
+module.exports.push({
+  name: "a tick on a list drawn before a pull put another item under that #: refused in a plain sentence, nothing ticked, the list shows the new item",
+  async run({ page }) {
+    const backend = await ready(page);
+    await stubSound(page);
+    bookRow(backend, 3)[1] = "Made-up item that took #3";
+    const pulled = await backend.call("syncTodos", { force: true }, "Ajen");
+    assert.equal(pulled.ok, true, JSON.stringify(pulled));
+    assert.equal(stored(backend, "3").item, "Made-up item that took #3");
+    assert.equal(await page.$eval(row(3) + " .bw-n", (e) => e.textContent), "Snow park day trip", "this phone still shows the old #3");
+    await openRow(page, "3");
+    await tapTick(page, "3");
+    await expectText(page, "#ubarT", "That number is another item in the planner now, so nothing was ticked. Check the list again.");
+    await until(() => page.evaluate((s) => { const n = document.querySelector(s + " .bw-n"); return !!n && n.textContent === "Made-up item that took #3" && !document.querySelector(s).classList.contains("is-landed"); }, row(3)), "row 3 shows the item under #3 now, open and not stamped");
+    assert.deepEqual(sent(backend, "tickTodo").map((r) => r.args), [{ id: "3", item: "Snow park day trip" }]);
+    assert.equal(stored(backend, "3").ticked_by || "", "", "not ticked");
+    assert.deepEqual(backend.fake.planner.writes, [], "nothing written to the planner");
+    await advance(page, backend, 1700);
+    assert.equal(await page.evaluate(() => window.__thuds), 0, "no thud for a tick refused");
+  },
+});

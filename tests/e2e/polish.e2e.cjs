@@ -7,7 +7,7 @@
 // here is made up.
 
 const assert = require("node:assert/strict");
-const { SEED, WITH_PLAN, NOON12, open, advance, until, visible } = require("./helpers.cjs");
+const { SEED, WITH_PLAN, NOON12, open, advance, until, atRest, visible } = require("./helpers.cjs");
 
 const PORTRAIT = { width: 390, height: 844 };
 const SIDEWAYS = { width: 844, height: 390 };
@@ -21,7 +21,8 @@ const isOpen = (page, id) => page.evaluate((i) => {
   const el = document.getElementById(i);
   return !!el && el.classList.contains("is-open");
 }, id);
-const waitOpen = (page, id) => until(() => isOpen(page, id), "#" + id + " opens");
+// Open and at rest: a tap is never aimed at a sheet still sliding up (helpers.cjs atRest).
+const waitOpen = (page, id) => atRest(page, "#" + id);
 const rect = (page, sel) => page.evaluate((s) => {
   const r = document.querySelector(s).getBoundingClientRect();
   return { top: r.top, bottom: r.bottom, left: r.left, right: r.right };
@@ -197,14 +198,19 @@ async function countThuds(page) {
   });
 }
 const thuds = (page) => page.evaluate(() => globalThis.__thuds);
-// The backend answers an addPayment only after `ms` (real time); `fail` makes it an error answer.
-function slow(backend, ms, fail) {
+// The backend holds every addPayment until the test calls log.answer() (not
+// a real-time delay: on a busy runner 3 s of wall clock passed between the
+// tap and the first look at the slip, 2026-11-21, and the delay had already
+// answered); `fail` makes it an error answer.
+function held(backend, fail) {
   const handle = backend.handle;
-  const log = { asked: 0, answered: 0 };
+  let answer;
+  const gate = new Promise((r) => (answer = r));
+  const log = { asked: 0, answered: 0, answer };
   backend.handle = async (body) => {
     if (body.action !== "addPayment") return handle(body);
     log.asked++;
-    await new Promise((r) => setTimeout(r, ms));
+    await gate;
     log.answered++;
     return fail ? { ok: false, error: "refused", message: "Not saved." } : handle(body);
   };
@@ -221,12 +227,14 @@ cases.push({
     await countThuds(page);
     const backend = await money(page);
     await until(() => page.evaluate(() => document.querySelectorAll("#slip .s-row.is-open").length === 2), "the slip draws");
-    const log = slow(backend, 3000);
+    const log = held(backend);
     await armAndStamp(page);
-    await until(() => page.evaluate(() => !!document.querySelector("#slip .stamp.hit")), "the stamp lands");
+    await until(() => page.evaluate(() => !!document.querySelector("#slip .stamp.hit")), "the stamp lands while the backend is still holding the payment");
+    assert.equal(log.asked, 1, "the payment was sent");
     assert.equal(await thuds(page), 1, "one thud on the tap");
-    assert.equal(log.answered, 0, "the backend has not answered yet");
-    await until(() => log.answered === 1, "the backend answers", 6000);
+    log.answer();
+    await until(() => log.answered === 1, "the backend answers");
+    await page.evaluate(() => globalThis.__matTest.store.idle());
     assert.equal(await thuds(page), 1, "and no second thud with the answer");
   },
 });
@@ -236,10 +244,11 @@ cases.push({
     await countThuds(page);
     const backend = await money(page);
     await until(() => page.evaluate(() => document.querySelectorAll("#slip .s-row.is-open").length === 2), "the slip draws");
-    const log = slow(backend, 800, true);
+    const log = held(backend, true);
     await armAndStamp(page);
     await until(() => page.evaluate(() => !!document.querySelector("#slip .stamp.hit")), "the stamp lands");
-    await until(() => log.answered === 1, "the backend refuses", 6000);
+    log.answer();
+    await until(() => log.answered === 1, "the backend refuses");
     await until(() => page.evaluate(() => !document.querySelector("#slip .stamp") && document.querySelectorAll("#slip .s-row.is-open").length === 2), "the stamp is taken back");
     await until(() => page.evaluate(() => !document.getElementById("ubar").hidden), "and the notice says so");
   },
