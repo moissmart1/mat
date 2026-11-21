@@ -51,7 +51,10 @@
 // from seed.desk === true), fake.cache (the script cache: { key: value }),
 // fake.tableReads
 // (readTable_ calls per tab), fake.geocoder ({ answer(query, region) }: the
-// stand-in for Apps Script's geocoder; default finds nothing).
+// stand-in for Apps Script's geocoder; default finds nothing), fake.calls
+// (issue 16: every storage primitive the backend called, by name, and for
+// the Sheet reads and getProp_ also by tab or key, as "readTable_:People";
+// a test may zero it with fake.resetCalls()).
 
 const fs = require("fs");
 const path = require("path");
@@ -322,6 +325,14 @@ function createFakeBackend(seed, { clock, lockFails, keepsApostrophe = false } =
     ensureClaudeToken_() {
       if (!primitives.claudeToken_()) props.CLAUDE_TOKEN = crypto.randomBytes(16).toString("hex");
     },
+    // Same as Env.js: several Script Properties in one read (recorded in
+    // propReads as one entry, the keys joined by "+").
+    getProps_(keys) {
+      propReads.push(keys.join("+"));
+      const out = {};
+      for (const k of keys) out[k] = Object.prototype.hasOwnProperty.call(props, k) ? props[k] : null;
+      return out;
+    },
     // Same as Env.js: PLANNER_ID, and the planner's Payments tab as the
     // Sheets API hands it back. Reading throws when it cannot read.
     plannerId_: () => (Object.prototype.hasOwnProperty.call(props, "PLANNER_ID") && props.PLANNER_ID) || null,
@@ -401,6 +412,21 @@ function createFakeBackend(seed, { clock, lockFails, keepsApostrophe = false } =
     },
   };
   Object.assign(world, primitives);
+  // Issue 16: every primitive the backend calls is counted (calls[name], and
+  // calls["name:tab"] for the Sheet reads and getProp_), so a test can hold a
+  // request to a budget of Sheet and Script Properties reads. Only calls the
+  // backend makes through its global names count, not the fake's own.
+  const calls = {};
+  const BY_FIRST_ARG = ["readTable_", "readTableOrNull_", "columnValues_", "cellsAt_", "hasTab_", "hasColumn_", "getProp_"];
+  for (const name of Object.keys(primitives)) {
+    const f = primitives[name];
+    if (typeof f !== "function") continue;
+    world[name] = function (...args) {
+      calls[name] = (calls[name] || 0) + 1;
+      if (BY_FIRST_ARG.includes(name)) calls[name + ":" + args[0]] = (calls[name + ":" + args[0]] || 0) + 1;
+      return f.apply(this, args);
+    };
+  }
   world.CHECK_KEY_HASH = sha256(CHECK_KEY);
   world.Logger = { log: (t) => logged.push(String(t)) };
   world.console = { error: (t) => consoleLines.push(String(t)), log: (t) => consoleLines.push(String(t)), warn: (t) => consoleLines.push(String(t)) };
@@ -452,6 +478,8 @@ function createFakeBackend(seed, { clock, lockFails, keepsApostrophe = false } =
   fake.requests = requests;
   fake.primitives = primitives;
   fake.geocoder = geocoder;
+  fake.calls = calls;
+  fake.resetCalls = () => { for (const k of Object.keys(calls)) delete calls[k]; };
   fake.world = world; // test-only: replace a helper (e.g. make updateById_ throw)
   fake.lockWaitedMs = () => lockWaited;
   // Test-only: what the Plan 1 backend (0a66cbd) answered to load, for a

@@ -144,8 +144,23 @@ function handleAs_(holder, body) {
   var env;
   try {
     // A person's key whose name is no longer on the trip opens nothing.
-    if (holder.kind === "person" && peopleNames_().indexOf(holder.name) === -1) env = err_("bad_key", MSG_.badKey);
-    else env = dispatch_(body, holder);
+    // Issue 16: the People rows read for that check are the ones the request
+    // goes on with (load, a write's names), so People is read once a request.
+    // The 20-second check (rev) needs only the names: it reads that one
+    // column, not the pictures. load's Script Properties, REV first, are read
+    // before People, as load_ alone would (its rev never newer than its data).
+    var pre = { props: null, people: null };
+    if (holder.kind === "person") {
+      var names;
+      if (body.action === "rev") names = peopleNameColumn_();
+      else {
+        if (body.action === "load") pre.props = getProps_(LOAD_PROPS_);
+        pre.people = peopleRows_();
+        names = namesOf_(pre.people);
+      }
+      if (names.indexOf(holder.name) === -1) env = err_("bad_key", MSG_.badKey);
+    }
+    if (!env) env = dispatch_(body, holder, pre);
   } catch (e) {
     reportError_("handle_", e, [body && body.key]);
     env = err_("server", MSG_.server);
@@ -177,13 +192,14 @@ var CLAUDE_ACTIONS_ = ["load", "history", "syncPayments", "addExpense", "addStop
   // Listed only so they answer their own "do this one in the app" sentence.
   "pressStamp", "tickTodo"];
 
-function dispatch_(body, holder) {
+// pre: what handleAs_ has read already ({ props, people }, either null).
+function dispatch_(body, holder, pre) {
   var args = body.args === undefined || body.args === null ? {} : body.args;
   if (!isObj_(args)) return err_("bad_input", MSG_.badRequest);
   var action = body.action;
   if (holder.kind === "check" && CHECK_ACTIONS_.indexOf(action) === -1) return err_("bad_input", MSG_.checkOnly);
   if (holder.kind === "claude" && CLAUDE_ACTIONS_.indexOf(action) === -1) return err_("bad_input", MSG_.badAction);
-  if (action === "load") return load_(holder);
+  if (action === "load") return load_(holder, pre);
   if (action === "rev") return ok_({}, rev_());
   if (action === "history") return history_(args);
   // One ticket picture's data, for a phone to keep: a read, no lock, no Log.
@@ -248,7 +264,7 @@ function dispatch_(body, holder) {
     case "syncTodos": write = null; break;
     default: return err_("bad_input", MSG_.badAction);
   }
-  var names = peopleNames_();
+  var names = pre && pre.people ? namesOf_(pre.people) : peopleNames_();
   // Who the write is made as: a person's key is that person whatever the
   // phone says (an old phone's queued write still carries an actor: it is
   // written as the key's person); the connector is the name Mcp.js gives;
@@ -278,7 +294,11 @@ function err_(code, message) { return { ok: false, error: code, message: message
 // REV from Script Properties. If the property is missing (properties were
 // reset), start from the Log's highest id so rev never goes backwards.
 function rev_() {
-  var raw = getProp_("REV");
+  return revOf_(getProp_("REV"));
+}
+
+// The rev a REV property's text stands for (rev_).
+function revOf_(raw) {
   var n = Number(raw);
   if (raw !== null && raw !== "" && isFinite(n) && n >= 0) return Math.floor(n);
   return maxLogId_();
@@ -338,7 +358,17 @@ function peopleRows_() {
 }
 
 function peopleNames_() {
-  return peopleRows_().map(function (r) { return cellText_(r.name); });
+  return namesOf_(peopleRows_());
+}
+
+function namesOf_(rows) {
+  return rows.map(function (r) { return cellText_(r.name); });
+}
+
+// The names on the trip from People's name column alone (no pictures read),
+// in the tab's order, not the trip's: enough to say whether someone is on it.
+function peopleNameColumn_() {
+  return columnValues_("People", "name").map(cellText_).filter(function (n) { return n !== ""; });
 }
 
 function findRow_(tab, id) {
@@ -378,17 +408,27 @@ function tripInfo_() {
   return trip;
 }
 
+// The Script Properties load reads, in one getProperties() (issue 16).
+var LOAD_PROPS_ = ["REV", "PLANNER_ID", "TODOS_PULLED_AT", "PAYMENTS_PULLED_AT", "PAYMENT_PROBLEMS", "TODO_PROBLEMS", "TICKET_DESK_URL", "TICKET_DESK_KEY"];
+
 // holder: who asked (handle_). me is the key's person ("" for the shared or
 // check key) and personal whether it is a person's own key, so a phone on
 // its own link is that person and offers no choice. Under the check key
 // the e-Transfer addresses are left out: it only checks a release.
-function load_(holder) {
-  var rev = rev_();
+// pre: LOAD_PROPS_ and the People rows if handleAs_ read them (issue 16),
+// in this order: the properties, REV among them, before anything else, so
+// the rev handed back is never newer than the data.
+function load_(holder, pre) {
+  var props = pre && pre.props ? pre.props : getProps_(LOAD_PROPS_);
+  var rev = revOf_(props.REV);
+  // As plannerId_ and deskReady_ (Env.js) read them.
+  var plannerLinked = !!props.PLANNER_ID;
+  var deskReady = !!props.TICKET_DESK_URL && !!props.TICKET_DESK_KEY;
   var rate = getRateInfo_();
   var book = stampBook_();
   var data = {
     trip: tripInfo_(),
-    people: peopleRows_().map(personFromRow).map(function (p) {
+    people: (pre && pre.people ? pre.people : peopleRows_()).map(personFromRow).map(function (p) {
       if (holder && holder.kind === "check") p.etransfer = "";
       return p;
     }),
@@ -416,14 +456,14 @@ function load_(holder) {
     rateToday: rate.rate,
     rateSource: rate.source,
     sheetUrl: sheetUrl_(),
-    plannerLinked: plannerId_() !== null,
+    plannerLinked: plannerLinked,
     todos: todosShown_(),
-    todosPulledAt: getProp_("TODOS_PULLED_AT") || "",
-    paymentsPulledAt: getProp_("PAYMENTS_PULLED_AT") || "",
+    todosPulledAt: props.TODOS_PULLED_AT || "",
+    paymentsPulledAt: props.PAYMENTS_PULLED_AT || "",
     stampDefs: book.defs,
     stamps: book.stamps,
-    paymentProblems: plannerProblemsStored_("PAYMENT_PROBLEMS"),
-    todoProblems: plannerProblemsStored_("TODO_PROBLEMS"),
+    paymentProblems: plannerProblemsFrom_(props.PAYMENT_PROBLEMS),
+    todoProblems: plannerProblemsFrom_(props.TODO_PROBLEMS),
   };
   // The ticket pictures (never their data), once migrate has made the tabs;
   // until then the key is left out and the phones show no tickets.
@@ -438,18 +478,19 @@ function load_(holder) {
   // is told it can look, once the planner, the desk and the planner_id
   // column are there. Everyone else's load has no such key.
   if (tickets !== null && holder && holder.kind === "person" && data.people.length && data.people[0].name === holder.name &&
-      plannerId_() !== null && deskReady_() && hasColumn_("Tickets", "planner_id")) data.ticketList = true;
+      plannerLinked && deskReady && hasColumn_("Tickets", "planner_id")) data.ticketList = true;
   return ok_(data, rev);
 }
 
 // The last planner pull's problems as stored in a Script Property
 // (PAYMENT_PROBLEMS for payments, TODO_PROBLEMS for Book Now), or the empty
 // shape when there are none yet or the property is not what we wrote.
-function plannerProblemsStored_(key) {
+// raw: the property's text (null when it is not there; load reads it).
+function plannerProblemsFrom_(raw) {
   var none = { at: "", list: [], more: 0 };
   var v;
   try {
-    v = JSON.parse(getProp_(key) || "");
+    v = JSON.parse(raw || "");
   } catch (e) {
     return none;
   }
@@ -1291,6 +1332,9 @@ function syncTodos_(args, ctx) {
 function pullTodos_(read, by) {
   var byId = {};
   todoRows_().forEach(function (r) { byId[cellText_(r.id)] = r; });
+  // Every kept-aside was (todoWas_) this pull may look at, in one
+  // getProperties() rather than one read an item (issue 16).
+  var wasOf = todoWasOf_(read.items.map(function (it) { return it.id; }).concat(Object.keys(byId)));
   var inPlanner = {};
   var jobs = [];
   var problems = read.problems.slice();
@@ -1306,7 +1350,10 @@ function pullTodos_(read, by) {
     // An undone tick whose Booked the planner still holds: that Booked is the
     // app's own, so the row keeps the status it had before the tick.
     var owed = cellText_(r.planner_written) === "undo" && sameItem_(it.item, tickedItemOf_(r));
-    if (owed && it.status === "Booked") cols.status = cellText_(r.planner_was);
+    // A true was kept aside (todoWas_) is what the app's latest Booked
+    // replaced: an owed row puts that back, not its own (issue 16).
+    var keptWas = wasOf[it.id];
+    if (owed && it.status === "Booked") cols.status = keptWas !== null ? keptWas : cellText_(r.planner_was);
     var patch = {};
     Object.keys(cols).forEach(function (k) { if (cellDate_(r[k]) !== cols[k]) patch[k] = cols[k]; });
     if (cellText_(r.gone) === "yes") patch.gone = "";
@@ -1327,21 +1374,20 @@ function pullTodos_(read, by) {
       ["ticked_item", "planner_written", "planner_was"].forEach(function (k) { patch[k] = ""; });
       if (it.status === "Booked") dropped = tickedItemOf_(r);
     }
-    // A true was kept aside (todoWas_) goes onto a row still ticked as
-    // written; anywhere else it is just cleared.
-    var keptWas = todoWas_(it.id);
-    var dropWas = false;
+    // A true was kept aside goes onto a row still ticked as written, or
+    // still owed its put-back (issue 16); anywhere else it is just cleared.
+    var dropWas = null;
     if (keptWas !== null) {
-      if (!takeoff && cellText_(r.ticked_by) !== "" && cellText_(r.planner_written) === "yes") {
+      if (!takeoff && ((cellText_(r.ticked_by) !== "" && cellText_(r.planner_written) === "yes") || owed)) {
         patch.planner_was = keptWas;
-        dropWas = true;
-      } else dropTodoWas_(it.id);
+        dropWas = keptWas;
+      } else dropTodoWasIf_(it.id, keptWas);
     }
     if (Object.keys(patch).length) jobs.push({ id: it.id, patch: patch, takeoff: takeoff, dropped: dropped, dropWas: dropWas });
   });
   Object.keys(byId).forEach(function (id) {
     if (!inPlanner[id] && cellText_(byId[id].gone) !== "yes") {
-      dropTodoWas_(id);
+      dropTodoWasIf_(id, wasOf[id]);
       jobs.push({ id: id, patch: { gone: "yes" } });
     }
   });
@@ -1361,7 +1407,7 @@ function pullTodos_(read, by) {
       var after = updateById_("Todos", job.id, job.patch);
       if (job.takeoff) logTakeoff_(job.takeoff, before, after);
       if (job.dropped !== null && job.dropped !== undefined) logDropped_(job.id, job.dropped);
-      if (job.dropWas) dropTodoWas_(job.id);
+      if (job.dropWas !== null && job.dropWas !== undefined) dropTodoWasIf_(job.id, job.dropWas);
     }
     writes++;
   });
@@ -1474,7 +1520,13 @@ function plannerTick_(id, item, actor) {
       if (isBooked(found.status)) return { result: "already", status: found.status };
       var wrote = plannerWriteStatus_(logRows, found, "Booked", TODO_TICK_WHY_, actor);
       if (wrote === "formula") return { result: "formula" };
-      return wrote === "written" ? { result: "written", was: found.status } : { result: "pending" };
+      if (wrote !== "written") return { result: "pending" };
+      // Issue 16: what this Booked replaced is kept aside at once, still
+      // under the planner lock, until the app records it (settleTick_). An
+      // undo that lands before then, or a put-back waiting for this lock
+      // with the was an undo read earlier, puts back this one, never an older.
+      try { keepTodoWas_(id, found.status); } catch (e2) { /* best effort: settleTick_ records it */ }
+      return { result: "written", was: found.status };
     } catch (e) {
       return { result: "pending" };
     }
@@ -1494,7 +1546,11 @@ function plannerUntick_(id, item, was, actor, why) {
       var found = plannerTodo_(plannerTab_(TODO_BOOK_TAB_), id, item);
       if (!found) return "pending";
       if (found.status !== "Booked") return "kept";
-      var put = plannerWriteStatus_(logRows, found, was, why || TODO_UNTICK_WHY_, actor);
+      // Issue 16: a was kept aside is what the app's latest Booked replaced
+      // (plannerTick_, under this lock): it wins over the one handed in.
+      var kept = todoWas_(id);
+      var put = plannerWriteStatus_(logRows, found, kept !== null ? kept : was, why || TODO_UNTICK_WHY_, actor);
+      if (put === "written" && kept !== null) dropTodoWasIf_(id, kept);
       return put === "formula" ? "kept" : put;
     } catch (e) {
       return "pending";
@@ -1504,17 +1560,36 @@ function plannerUntick_(id, item, was, actor, why) {
 }
 
 // The status a tick's Booked replaced, kept aside in a Script Property
-// (TODO_WAS_<id>) when the app could not write it into the row: the app's
-// lock busy twice over while the row still held an older planner_was
-// (second fix round, I1). Needs no lock. Undo uses it before the row's
-// planner_was; the next pull (or that undo), under the lock, copies it onto
-// the row and clears it; a row no longer ticked or gone just has it cleared.
+// (TODO_WAS_<id>): written under the planner lock the moment the Booked is
+// (plannerTick_, issue 16), cleared once the row records it (settleTick_);
+// it stays when the app could not write it into the row (the app's lock
+// busy twice over while the row still held an older planner_was: second
+// fix round, I1). Needs no lock. Undo and a put-back (plannerUntick_) use
+// it before the row's planner_was; the next pull (or that undo), under the
+// lock, copies it onto a row ticked as written or owed its put-back and
+// clears it; any other row, or one gone, just has it cleared.
 function todoWas_(id) {
   var v = getProp_("TODO_WAS_" + id);
   return typeof v === "string" ? v : null;
 }
 function keepTodoWas_(id, was) { setProp_("TODO_WAS_" + id, was); }
-function dropTodoWas_(id) { if (todoWas_(id) !== null) delProp_("TODO_WAS_" + id); }
+// Cleared only while it still says `seen` (null: nothing to clear), so a
+// newer Booked's was kept aside meanwhile is never lost (issue 16).
+function dropTodoWasIf_(id, seen) { if (seen !== null && seen !== undefined && todoWas_(id) === seen) delProp_("TODO_WAS_" + id); }
+// The kept-aside was of each id, { id: text or null }, in one read.
+function todoWasOf_(ids) {
+  var out = {};
+  var keys = [];
+  ids.forEach(function (id) {
+    if (Object.prototype.hasOwnProperty.call(out, id)) return;
+    out[id] = null;
+    keys.push("TODO_WAS_" + id);
+  });
+  if (!keys.length) return out;
+  var got = getProps_(keys);
+  Object.keys(out).forEach(function (id) { var v = got["TODO_WAS_" + id]; out[id] = typeof v === "string" ? v : null; });
+  return out;
+}
 
 // Records what the planner did with a tick, under the app's lock, only while
 // the tick is still there and bound to the same text. A Booked the app
@@ -1537,7 +1612,7 @@ function settleTick_(id, item, by, out) {
         bumpRev_();
       } else if (out.result === "written") {
         updateById_("Todos", id, { planner_written: "yes", planner_was: out.was, status: "Booked" });
-        dropTodoWas_(id);
+        dropTodoWasIf_(id, out.was);
         bumpRev_();
       } else if (cellText_(row.status) !== out.status) {
         updateById_("Todos", id, { status: out.status });
@@ -1577,7 +1652,7 @@ function settleTick_(id, item, by, out) {
           var still = row && cellText_(row.ticked_by) !== "" && sameItem_(tickedItemOf_(row), item) && cellText_(row.gone) !== "yes" && cellText_(row.planner_written) === "yes";
           if (!still) return { ok: true, done: false };
           updateById_("Todos", id, { planner_was: out.was, status: "Booked" });
-          dropTodoWas_(id);
+          dropTodoWasIf_(id, out.was);
           bumpRev_();
           return { ok: true, done: true };
         });
@@ -1783,7 +1858,7 @@ function undoTodo_(entry, rows, ctx) {
     patch.status = "Booked";
   }
   var savedRow = updateById_("Todos", entry.ref, patch);
-  if (untick && keptWas !== null) dropTodoWas_(entry.ref);
+  if (untick && keptWas !== null) dropTodoWasIf_(entry.ref, keptWas);
   var saved = todoFromRow(savedRow);
   var log = appendLog_(ctx, "undo", "todo", entry.ref, "undid: " + entry.summary, todoSnap_(cur, row), todoSnap_(saved, savedRow), entry.id);
   updateById_("Log", entry.id, { undone_by: log.id });

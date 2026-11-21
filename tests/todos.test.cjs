@@ -1973,3 +1973,128 @@ test("fix2 I1: a kept-aside was for a row no longer ticked, or gone, is just cle
   assert.equal("TODO_WAS_3" in call.fake.props, false);
   assert.deepEqual(writes(call), []);
 });
+
+// ---------- issue 16: an undo that lands before the true was is recorded ----------
+// The set-up of fix2 I1: Ajen's undo left #1 owed ("Not booked"), then the
+// planner's Status was set to Cancelled by hand. Mo ticks it again: the row
+// says yes with the older "Not booked", and the planner gets Booked over
+// Cancelled. Whatever the order, undoing that tick must put back Cancelled.
+async function reTickRace({ hooks, busy = () => false }) {
+  const { call } = await owed();
+  call.fake.planner.cellFails = false;
+  call.fake.planner.tabs["Book Now"][3][4] = "Cancelled";
+  later(call, 1);
+  const lastTick = () => [...call.fake.tables.Log].reverse().find((r) => r.action === "tick" && String(r.ref) === "1").id;
+  const undo = () => call.fake({ key: KEY, actor: "Ajen", action: "undo", args: { logId: Number(lastTick()) } });
+  hooks(call, undo);
+  call.lock.busy = busy;
+  const t = await call("tickTodo", { id: "1" }, "Mo");
+  call.lock.busy = () => false;
+  return { call, t };
+}
+
+test("issue 16 (the reported race): both records busy, and the undo lands in the moment before the was is kept aside: Cancelled is put back", async () => {
+  let settling = false;
+  let fired = false;
+  const { call } = await reTickRace({
+    hooks(call, undo) {
+      const realSettle = call.fake.world.settleTick_;
+      call.fake.world.settleTick_ = (...a) => { settling = true; try { return realSettle(...a); } finally { settling = false; } };
+      const realKeep = call.fake.world.keepTodoWas_;
+      call.fake.world.keepTodoWas_ = (...a) => {
+        if (settling && !fired) { fired = true; undo(); }
+        return realKeep(...a);
+      };
+    },
+    // the save is free, both of the record's takings busy, the undo's own free
+    busy: (() => { let n = 0; return () => { n++; return n === 2 || n === 3; }; })(),
+  });
+  assert.equal(fired, true, "the undo landed");
+  assert.equal(bookStatus(call), "Cancelled");
+  assert.equal(stored(call, "1").ticked_by, "");
+  await forced(call);
+  assert.equal(bookStatus(call), "Cancelled", "no pull changes it");
+  assert.equal("TODO_WAS_1" in call.fake.props, false, "nothing left kept aside");
+});
+
+test("issue 16: an undo between the planner's Booked and the record (no lock busy) puts back Cancelled", async () => {
+  const { call } = await reTickRace({
+    hooks(call, undo) {
+      const realSettle = call.fake.world.settleTick_;
+      call.fake.world.settleTick_ = (...a) => { call.fake.world.settleTick_ = realSettle; undo(); return realSettle(...a); };
+    },
+  });
+  assert.equal(bookStatus(call), "Cancelled");
+  const cells = writes(call).filter((w) => w.kind === "cell").map((w) => w.value);
+  assert.deepEqual(cells.slice(-2), ["Booked", "Cancelled"], "Booked, then Cancelled back once: nothing else written");
+  await forced(call);
+  assert.equal(bookStatus(call), "Cancelled");
+  assert.equal("TODO_WAS_1" in call.fake.props, false);
+});
+
+test("issue 16: an undo read before the Booked, its put-back waiting for the planner lock until after it, puts back Cancelled", async () => {
+  const { call } = await reTickRace({
+    hooks(call, undo) {
+      const realAfter = call.fake.world.afterUntick_;
+      let deferred = null;
+      // The undo's planner part waits (for the planner lock) and runs once the tick let it go.
+      call.fake.world.afterUntick_ = (e, ...rest) => { call.fake.world.afterUntick_ = realAfter; deferred = () => realAfter(e, ...rest); return e; };
+      call.fake.planner.between = () => { undo(); };
+      const realSettle = call.fake.world.settleTick_;
+      call.fake.world.settleTick_ = (...a) => { call.fake.world.settleTick_ = realSettle; if (deferred) deferred(); return realSettle(...a); };
+    },
+  });
+  assert.equal(bookStatus(call), "Cancelled");
+  await forced(call);
+  assert.equal(bookStatus(call), "Cancelled");
+  assert.equal("TODO_WAS_1" in call.fake.props, false);
+});
+
+test("issue 16: an undo read before the Booked whose put-back stays pending, the record busy: the next pull puts back Cancelled", async () => {
+  let recording = false;
+  const { call } = await reTickRace({
+    hooks(call, undo) {
+      call.fake.planner.between = () => {
+        call.fake.planner.lockFails = true;
+        undo();
+        call.fake.planner.lockFails = false;
+      };
+      const realSettle = call.fake.world.settleTick_;
+      call.fake.world.settleTick_ = (...a) => { call.fake.world.settleTick_ = realSettle; recording = true; try { return realSettle(...a); } finally { recording = false; } };
+    },
+    busy: () => recording,
+  });
+  assert.equal(bookStatus(call), "Booked", "the record found the row owed: the put-back is the pull's");
+  assert.deepEqual(owedOf(call).slice(0, 2), ["", "undo"]);
+  const p = await forced(call);
+  assert.equal(p.ok, true, JSON.stringify(p));
+  assert.equal(bookStatus(call), "Cancelled");
+  assert.deepEqual(owedOf(call), ["", "", "", "Cancelled"]);
+  assert.equal("TODO_WAS_1" in call.fake.props, false);
+});
+
+test("issue 16: a plain tick keeps its was aside only until it is recorded; a tick the planner refuses keeps nothing", async () => {
+  const { call } = await ticked();
+  assert.equal(stored(call, "1").planner_was, "Not booked");
+  assert.equal(Object.keys(call.fake.props).some((k) => k.startsWith("TODO_WAS_")), false);
+  const refused = await ticked((c) => { c.fake.planner.cellFails = true; });
+  assert.equal(Object.keys(refused.call.fake.props).some((k) => k.startsWith("TODO_WAS_")), false);
+});
+
+test("issue 16: a pull reads every kept-aside was in one getProperties(), never one property an item", async () => {
+  const items = Array.from({ length: 26 }, (_, i) => ({ "#": i + 1, Item: "Made-up item " + (i + 1), "Book by": "2026-11-30", Status: "Not booked" }));
+  const call = linked({ book: bookNow(...items) });
+  await call("syncTodos");
+  await forced(call); // 15 rows a pull: the second adds the rest
+  call.fake.props.TODO_WAS_7 = "Made-up status"; // a row not ticked: cleared
+  const before = call.fake.propReads.length;
+  call.fake.resetCalls();
+  await forced(call);
+  const reads = call.fake.propReads.slice(before);
+  const batched = reads.filter((k) => /^TODO_WAS_/.test(k) && k.includes("+"));
+  assert.equal(batched.length, 1, "one read, all 26 keys in it");
+  assert.equal(batched[0].split("+").length, 26);
+  assert.deepEqual(reads.filter((k) => /^TODO_WAS_/.test(k) && !k.includes("+")), ["TODO_WAS_7"], "only the one being cleared is read again");
+  assert.equal(call.fake.calls.getProps_, 1);
+  assert.equal("TODO_WAS_7" in call.fake.props, false);
+});
