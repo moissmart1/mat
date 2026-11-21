@@ -44,7 +44,7 @@ function memStorage(init = {}) {
 //   net.garble         actions that reach the backend but get a non-envelope reply
 //   net.knownOffline   the phone itself says it has no network: nothing is sent
 //   timeoutMs          how long the api waits for a reply (the app's own 30 s by default)
-function phone({ seed, fake, storage, me = "Mo", nowMs = NOW, clock, timeoutMs, ticketData, isHidden } = {}) {
+function phone({ seed, fake, storage, me = "Mo", durableStorage = true, nowMs = NOW, clock, timeoutMs, ticketData, isHidden } = {}) {
   fake = fake || createFakeBackend(seed);
   storage = storage || memStorage({ "mat.key": KEY, "mat.me": me });
   const net = { offline: false, knownOffline: false, failing: new Set(), lose: new Set(), garble: new Set(), override: null, holds: [], sent: [] };
@@ -71,7 +71,7 @@ function phone({ seed, fake, storage, me = "Mo", nowMs = NOW, clock, timeoutMs, 
   };
   const api = createApi({ url: URL, getKey: () => storage.getItem("mat.key"), getActor: () => storage.getItem("mat.me"), fetchImpl, isOnline: () => !net.knownOffline, ...(timeoutMs ? { timeoutMs } : {}) });
   const waits = [];
-  const store = createStore({ api, storage, now: clock || (() => nowMs), wait: async (ms) => { waits.push(ms); }, ...(ticketData ? { ticketData } : {}), ...(isHidden ? { isHidden } : {}) });
+  const store = createStore({ api, storage, durableStorage, now: clock || (() => nowMs), wait: async (ms) => { waits.push(ms); }, ...(ticketData ? { ticketData } : {}), ...(isHidden ? { isHidden } : {}) });
   return { fake, storage, net, api, store, waits };
 }
 
@@ -486,6 +486,69 @@ test("Offline queue survives a reload", async () => {
   assert.equal(sent(one.fake, "addExpense"), 1);
 });
 
+test("An unsent expense warns until its queue can be saved, even offline", async () => {
+  const p = phone();
+  await p.store.boot();
+  p.net.offline = true;
+  await p.store.checkRev();
+
+  const save = p.storage.setItem;
+  p.storage.setItem = (key, value) => {
+    if (key === "mat.queue") throw new Error("QuotaExceededError");
+    save(key, value);
+  };
+  p.store.addExpense(draft());
+  const id = idOf(p.store);
+  await p.store.idle();
+  assert.equal(p.store.state.queueStorageFailed, true);
+  assert.equal(byId(p.store.state.expenses, id).pending, true);
+  assert.deepEqual(queueOf(p.storage), []);
+
+  p.storage.setItem = save;
+  await p.store.checkRev();
+  assert.equal(p.store.state.online, false);
+  assert.equal(p.store.state.queueStorageFailed, false);
+  assert.deepEqual(queueOf(p.storage).map((q) => q.expense.id), [id]);
+});
+
+test("The in-memory fallback warns even when it accepts a queue write", async () => {
+  const p = phone({ durableStorage: false });
+  await p.store.boot();
+  p.net.offline = true;
+  await p.store.checkRev();
+
+  p.store.addExpense(draft());
+  const id = idOf(p.store);
+  await p.store.idle();
+  assert.deepEqual(queueOf(p.storage).map((q) => q.expense.id), [id]);
+  assert.equal(p.store.state.queueStorageFailed, true);
+
+  assert.equal(p.store.discard(id), true);
+  assert.equal(p.store.state.queueStorageFailed, false);
+});
+
+test("An expense can sync and clear the warning while queue storage still fails", async () => {
+  const p = phone();
+  await p.store.boot();
+  p.net.offline = true;
+  const save = p.storage.setItem;
+  p.storage.setItem = (key, value) => {
+    if (key === "mat.queue") throw new Error("QuotaExceededError");
+    save(key, value);
+  };
+
+  p.store.addExpense(draft());
+  const id = idOf(p.store);
+  await p.store.idle();
+  assert.equal(p.store.state.queueStorageFailed, true);
+
+  p.net.offline = false;
+  await p.store.flush();
+  await p.store.idle();
+  assert.equal(p.store.state.queueStorageFailed, false);
+  assert.equal((await backend(p.fake)).expenses.filter((e) => e.id === id).length, 1);
+});
+
 test("Undoing a queued line means it is never sent", async () => {
   const p = phone();
   await p.store.boot();
@@ -700,6 +763,7 @@ test("an undone add whose reply came back garbled is finished on the next contac
   await p.store.idle();
   assert.equal(p.store.state.expenses.find((e) => e.id === id && !e.deleted), undefined);
   assert.deepEqual(queueOf(p.storage).map((q) => [q.undo, q.args.expense.id]), [[true, id]]);
+  assert.equal(p.store.state.settlementProvisional, true, "the add and undo are still being reconciled");
   p.net.garble.clear();
   await p.store.checkRev();
   await p.store.idle();
@@ -709,6 +773,7 @@ test("an undone add whose reply came back garbled is finished on the next contac
   assert.equal(byId(p.store.state.expenses, id).deleted, true);
   assert.equal(p.store.state.notice, null);
   assert.deepEqual(queueOf(p.storage), []);
+  assert.equal(p.store.state.settlementProvisional, false);
 });
 
 test("an add whose reply came back garbled stays queued and is resent once, not marked failed", async () => {
@@ -745,6 +810,7 @@ test("an undo whose reply came back garbled is finished without a second undo", 
   p.store.undo(t);
   await p.store.idle();
   assert.equal(p.store.state.expenses.find((e) => e.id === id && !e.deleted), undefined);
+  assert.equal(p.store.state.settlementProvisional, true);
   p.net.garble.clear();
   await p.store.checkRev();
   await p.store.idle();
@@ -752,6 +818,7 @@ test("an undo whose reply came back garbled is finished without a second undo", 
   assert.deepEqual((await backend(p.fake, "history")).entries.map((e) => e.action), ["undo", "add"]);
   assert.equal(p.store.state.notice, null);
   assert.deepEqual(queueOf(p.storage), []);
+  assert.equal(p.store.state.settlementProvisional, false);
 });
 
 test("an undone add that the backend refuses is dropped with nothing more sent", async () => {
@@ -3621,6 +3688,80 @@ test("round 2: an address key that is taken becomes the saved trip at once, so a
   assert.equal(again.store.state.me, "Trenton");
 });
 
+for (const failure of ["memory-only", "queue write", "wipe write"]) {
+  test("refused link protects unsent changes after a " + failure + " failure", async () => {
+    const fake = createFakeBackend(SEED);
+    const storage = memStorage({ "mat.key": fake.personKey("Ajen") });
+    const p = phone({ fake, storage, durableStorage: failure !== "memory-only" });
+    await p.store.boot();
+    const save = storage.setItem;
+    let rejectQueue = failure === "queue write";
+    storage.setItem = (key, value) => {
+      if (rejectQueue && key === "mat.queue") throw new Error("storage unavailable");
+      save(key, value);
+    };
+    p.net.offline = true;
+    await p.store.checkRev();
+    p.store.addExpense(draft({ title: "Kept until reconnected", paidBy: "Ajen" }));
+    const id = idOf(p.store);
+    await p.store.idle();
+    rejectQueue ||= failure === "wipe write";
+    fake.world.newLinkForPerson2();
+    p.net.offline = false;
+    await p.store.checkRev();
+    await p.store.idle();
+    await p.store.checkRev();
+    assert.equal(p.store.state.queueStorageFailed, true);
+    assert.deepEqual(p.store.state.cleared, { kept: 1 });
+    assert.equal(p.store.state.expenses.length, 0);
+    storage.setItem("mat.key", fake.personKey("Ajen"));
+    await p.store.boot();
+    await p.store.idle();
+    assert.equal(p.store.state.queueStorageFailed, false);
+    assert.equal((await backend(fake)).expenses.filter(e => e.id === id).length, 1);
+  });
+}
+
+test("settlement is provisional during a queued retry through acknowledgement, and ordinary sends stay quiet", async () => {
+  const p = phone();
+  await p.store.boot();
+  const release = p.net.hold("addExpense");
+  p.store.addExpense(draft());
+  assert.equal(p.store.state.settlementProvisional, false);
+  release();
+  await p.store.idle();
+
+  p.net.offline = true;
+  await p.store.checkRev();
+  p.store.addExpense(draft());
+  await p.store.idle();
+  assert.equal(p.store.state.settlementProvisional, true);
+  p.net.offline = false;
+  const ack = p.net.hold("addExpense");
+  await p.store.checkRev();
+  await p.store.checkRev();
+  assert.equal(p.store.state.settlementProvisional, true);
+  ack();
+  await p.store.idle();
+  assert.equal(p.store.state.settlementProvisional, false);
+});
+
+test("undoing a payment after a garbled reply stays provisional until the undo is acknowledged", async () => {
+  const p = phone();
+  await p.store.boot();
+  p.net.garble.add("addPayment");
+  const token = p.store.addPayment({ from: "Ajen", to: "Mo", cad: 25 });
+  await p.store.idle();
+  assert.equal(p.store.state.online, true);
+  assert.equal(p.store.state.settlementProvisional, true);
+  await p.store.undo(token);
+  assert.equal(p.store.state.settlementProvisional, true);
+  p.net.garble.clear();
+  await p.store.checkRev();
+  await p.store.idle();
+  assert.equal(p.store.state.settlementProvisional, false);
+});
+
 // ---------- a stay's booking (S2 鍵札): saveStay, addStay, a picture on a stay ----------
 
 const INN = { id: "stayINN00001", name: "Tsubame-so Guest House", nameJp: "つばめ荘", addressJp: "東京都台東区 つばめ町 1-2-3", firstNight: "2026-12-10", lastNight: "2026-12-12" };
@@ -3757,4 +3898,75 @@ test("the eve is emptied with the days when the trip comes off the phone", async
   assert.equal(p.store.state.eves.length, 1);
   p.store.forgot();
   assert.deepEqual([p.store.state.status, p.store.state.eves, p.store.state.days], ["nokey", [], []]);
+});
+
+// ---------- signal back: an old failure is not news; what waits goes at once ----------
+
+// A store whose api answers each request only when the test says so.
+function heldPhone() {
+  const calls = [];
+  const api = (action, args) => new Promise((resolve, reject) => calls.push({ action, args, resolve, reject }));
+  const net = () => Object.assign(new Error("Couldn’t reach the trip sheet."), { code: "network" });
+  const store = createStore({ api, storage: memStorage({ "mat.key": KEY, "mat.me": "Mo" }), now: () => NOW, wait: async () => {} });
+  const ok = (data = { entries: [], more: false }) => ({ ok: true, rev: 0, data });
+  return { store, calls, net, ok };
+}
+
+test("a request that started before the latest answer and then fails for lack of signal does not mark the phone offline", async () => {
+  const p = heldPhone();
+  const older = p.store.loadHistory(); // starts first
+  const newer = p.store.historyFor("x"); // starts second
+  assert.equal(p.calls.length, 2);
+  p.calls[1].resolve(p.ok()); // the newer one answers: signal
+  await newer;
+  assert.equal(p.store.state.online, true);
+  p.calls[0].reject(p.net()); // the older one's failure lands late
+  await older;
+  assert.equal(p.store.state.online, true, "old news: the phone has signal");
+  // A request that starts after that answer and fails: no signal, as before.
+  const after = p.store.loadHistory();
+  p.calls[2].reject(p.net());
+  await after;
+  assert.equal(p.store.state.online, false);
+});
+
+test("two requests that fail with no answer between them both count: the phone is offline", async () => {
+  const p = heldPhone();
+  const a = p.store.loadHistory();
+  const b = p.store.historyFor("x");
+  p.calls[0].reject(p.net());
+  p.calls[1].reject(p.net());
+  await a;
+  await b.catch(() => {});
+  assert.equal(p.store.state.online, false);
+});
+
+test("when signal comes back through any answer, a picture waiting on the phone is sent at once", async () => {
+  const p = phone({ seed: { stays: [INN] } });
+  await p.store.boot();
+  p.net.offline = true;
+  await p.store.checkRev();
+  assert.equal(p.store.state.online, false);
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]).toString("base64");
+  const token = p.store.addTicket({ stay: INN.id, who: "", seat: "", page: 1, mime: "image/png", w: 10, h: 10, data: png });
+  assert.equal((await p.store.ticketOutcome(token)).reason, "queued");
+  await p.store.idle();
+  assert.equal(p.fake.tables.Tickets.length, 0);
+  // Signal back, and the first answer is History's (not a check): the picture goes up without waiting for the next check.
+  p.net.offline = false;
+  await p.store.loadHistory();
+  await p.store.idle();
+  assert.equal(p.store.state.online, true);
+  assert.equal(p.fake.tables.Tickets.length, 1);
+  assert.equal(p.store.outbox().unsent, 0);
+});
+
+test("the hidden-page rule still holds alongside: a failure while hidden is not no signal", async () => {
+  let hidden = false;
+  const p = phone({ seed: SEED, isHidden: () => hidden });
+  await p.store.boot();
+  hidden = true;
+  p.net.offline = true;
+  await p.store.checkRev();
+  assert.equal(p.store.state.online, true);
 });

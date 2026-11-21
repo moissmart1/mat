@@ -133,6 +133,32 @@ export function readReceipt(tree, root = ROOT) {
   }
 }
 
+// Where the gate's browser tests ran, in words: "GitHub (run …)" or "this Mac"
+// (a receipt from before issue 9 has no runner: it was this Mac).
+export function runnerText(receipt) {
+  const r = receipt && receipt.runner;
+  if (r && r.kind === "github") return "GitHub, run " + r.runId + (r.attempt > 1 ? " attempt " + r.attempt : "") + " (" + r.url + ")";
+  return "this Mac";
+}
+
+// Why a receipt does not let this commit out, or null when it does. The same
+// rules for a receipt from either runner: for this tree and version, and every
+// test counted and passed.
+export function judgeReceipt(receipt, { tree, appVersion }) {
+  if (!receipt) return "This commit has not passed the gate.";
+  if (receipt.tree !== tree) return "The gate's receipt is for other files (" + String(receipt.tree).slice(0, 7) + ").";
+  if (receipt.appVersion !== appVersion) return "The gate passed version " + receipt.appVersion + ", but this commit is version " + appVersion + ".";
+  const u = receipt.unit || {};
+  const e = receipt.e2e || {};
+  if (u.fail || e.fail) return "The gate's receipt for this commit records failing tests.";
+  if (!(u.pass > 0) || !(e.pass > 0)) return "The gate's receipt counts no unit or no browser tests.";
+  const r = receipt.runner;
+  if (r && r.kind === "github" && (!r.runId || !/^https:\/\/github\.com\//.test(String(r.url || "")) || r.headSha !== receipt.head)) {
+    return "The gate's receipt names no GitHub run for this commit.";
+  }
+  return null;
+}
+
 // --- the live backend --------------------------------------------------------
 
 // The stamp the live backend answers with ("" from a backend older than the
@@ -184,6 +210,34 @@ export async function askUntil(ask, ok, { tries = 7, waitMs = 5000, sleep = (ms)
 export async function liveStampUntil(apiUrl, wanted, { ask = liveStamp, sleep, tries = 11, waitMs = 3000 } = {}) {
   const last = await askUntil(() => ask(apiUrl), (v) => v === wanted, { tries, waitMs, ...(sleep ? { sleep } : {}) });
   return last === null ? "" : last;
+}
+
+// Calls migrate until an answer comes from the backend that carries `wanted`
+// (this commit's stamp), then trusts that answer's `added` list. Right after a
+// deploy a request can still land on the previous version, which answers ok with
+// "nothing to add" (2026-11-18, and again 2026-11-20); such an answer, and a
+// refusal from the old version, are asked again with a growing wait (3 s, then
+// 1.5 times longer, at most 15 s each) until about `budgetMs` of waiting has
+// passed. Resolves { ok: true, added, calls } or { ok: false, why, calls }.
+// ask and sleep stand in for the network and the clock in tests.
+export async function migrateUntilCurrent(ask, wanted, { sleep = (ms) => new Promise((r) => setTimeout(r, ms)), budgetMs = 120000 } = {}) {
+  let waited = 0;
+  let calls = 0;
+  let seen = "no answer";
+  // A missing wanted stamp can never be "this commit": refuse rather than match an answer without one.
+  if (typeof wanted !== "string" || wanted.trim() === "") return { ok: false, added: [], calls: 0, why: "no commit stamp to wait for" };
+  for (let wait = 3000; ; wait = Math.min(Math.round(wait * 1.5), 15000)) {
+    const r = await ask().catch(() => null);
+    calls++;
+    if (r && r.ok === true && r.data && r.data.stamp === wanted) {
+      return { ok: true, added: Array.isArray(r.data.added) ? r.data.added : [], calls };
+    }
+    seen = !r ? "no answer" : r.ok === true ? "answered by backend " + ((r.data && r.data.stamp) || "older than the stamp") : "refused (" + (r.error || r.message || "no reason") + ")";
+    if (waited + wait > budgetMs) break;
+    await sleep(wait);
+    waited += wait;
+  }
+  return { ok: false, why: "migrate was only ever answered by the wrong backend (last: " + seen + "; wanted " + wanted + ") after " + calls + " calls over about " + Math.round(waited / 1000) + " seconds.", calls };
 }
 
 // --- rules that are pure, so tests can pin them -----------------------------

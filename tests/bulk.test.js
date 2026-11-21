@@ -3,7 +3,7 @@
 // Everything is made up: people A, B and C, invented places, references and codes.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseCsv, parseList, listRefused, idsAtStart, rowsForFile, sortFiles, factsFor, seatFor, stopLabel, refUsable, nameHasRef, LIST_CUT, listTwice } from "../js/bulk.js";
+import { parseCsv, parseList, listRefused, idsAtStart, rowsForFile, sortFiles, factsFor, seatFor, stopLabel, refUsable, nameHasRef, LIST_CUT, listTwice, newStopFrom, placeOf } from "../js/bulk.js";
 
 const HEAD = "ticket_id,booking_key,start_date,start_time,end_date,end_time,type,title,provider,confirmation,traveler,ticket_ref,seat,holder,how_to_use,file_url,manage_url,deadline,deadline_what,notes,status,book_now_no,updated,added_by";
 const COLS = HEAD.split(",");
@@ -194,13 +194,13 @@ test("two stops close: a word of the title or provider settles it; otherwise odd
   assert.deepEqual(odd.cards[0].choices.map((c) => c.stop), ["s-tr1", "s-tr2"]);
 });
 
-test("no stop that day near the time: odd, 'No stop on Day N at HH:MM', no choices (pick a stop or leave it out)", () => {
+test("no stop that day near the time: odd, 'No stop on Day N at HH:MM', the one choice a stop to add from the line (or pick a stop, or leave it out)", () => {
   const out = sortFiles({ files: [png("f", "T019 lantern boat.png")], rows: [R({ ticket_id: "T019", start_date: "2026-12-16", start_time: "19:30", title: "Lantern boat" })], state: state() });
   const c = out.cards[0];
   assert.equal(c.kind, "nostop");
   assert.equal(c.ask, "No stop on Day 7 at 19:30.");
   assert.equal(c.short, "no stop on D7");
-  assert.deepEqual(c.choices, []);
+  assert.deepEqual(c.choices, [{ newStop: { date: "2026-12-16", time: "19:30", title: "Lantern boat" }, who: "", rowIds: ["T019"] }]);
   assert.equal(c.label, "T019 · Lantern boat");
 });
 
@@ -539,4 +539,67 @@ test("lodging: a line dated the second night of a 3-night stay is on that stay, 
   const wins = sortFiles({ files: [png("f", "T043 x.png")], rows: [L({ ticket_id: "T043", start_date: "2026-12-11", title: "Booking" })], state: state({ stays: both }) });
   assert.deepEqual(wins.cards, []);
   assert.deepEqual(wins.items.map((i) => i.stay), ["y-new"]);
+});
+
+// ---------- a stop to add (bulk C) ----------
+
+test("newStopFrom: a trip day and a name; no time; a bad time; no name; a day outside the trip; 80 letters", () => {
+  assert.deepEqual(newStopFrom(R({ ticket_id: "T010", start_date: "2026-12-16", start_time: "16:30", title: "  Lantern boat " }), DAYS), { date: "2026-12-16", time: "16:30", title: "Lantern boat" });
+  assert.deepEqual(newStopFrom(R({ ticket_id: "T010", start_date: "2026-12-16", start_time: "", title: "Lantern boat" }), DAYS), { date: "2026-12-16", time: "", title: "Lantern boat" });
+  for (const bad of ["7pm", "24:00", "9:30", "16:30:00", "ab:cd"]) assert.equal(newStopFrom(R({ start_date: "2026-12-16", start_time: bad, title: "Lantern boat" }), DAYS).time, "", bad);
+  assert.equal(newStopFrom(R({ start_date: "2026-12-16", start_time: "16:30", title: "", provider: "Boat Co" }), DAYS).title, "Boat Co");
+  assert.equal(newStopFrom(R({ start_date: "2026-12-16", start_time: "16:30", title: "  ", provider: "" }), DAYS), null);
+  assert.equal(newStopFrom(R({ start_date: "2026-12-08", start_time: "16:30", title: "Lantern boat" }), DAYS), null);
+  assert.equal(newStopFrom(R({ start_date: "", title: "Lantern boat" }), DAYS), null);
+  assert.equal(newStopFrom(R({ start_date: "2026-12-16", title: "Lantern boat" }), []), null);
+  const long = "Lantern boat ".repeat(10);
+  const got = newStopFrom(R({ start_date: "2026-12-16", title: long }), DAYS).title;
+  assert.equal(got, long.slice(0, 80).trim());
+  assert.ok(got.length <= 80);
+  assert.equal(newStopFrom(null, DAYS), null);
+});
+
+test("the nostop card offers the stop to add only when the line names it", () => {
+  const rows = [R({ ticket_id: "T019", start_date: "2026-12-16", start_time: "19:30", title: "", provider: "" })];
+  const out = sortFiles({ files: [png("f", "T019 x.png")], rows, state: state() });
+  assert.equal(out.cards[0].kind, "nostop");
+  assert.deepEqual(out.cards[0].choices, []);
+});
+
+test("placeKey and placeOf: a stop to add", () => {
+  const ns = { date: "2026-12-16", time: "16:30", title: "Lantern boat" };
+  assert.equal(placeKey({ newStop: ns }), "newstop:2026-12-16:16:30:Lantern boat");
+  assert.equal(placeKey({ newStop: { ...ns, time: "" } }), "newstop:2026-12-16::Lantern boat");
+  assert.deepEqual(placeOf({ newStop: ns, who: "A", rowIds: ["T010"] }), { newStop: ns });
+  assert.equal(placeKey({ stop: "s-aq" }), "stop:s-aq");
+  assert.deepEqual(placeOf({ stop: "s-aq", newStop: undefined }), { stop: "s-aq" });
+});
+
+test("answered with the stop to add: in, on the new stop; two files of one line share it; it is in the trip's order", () => {
+  const rows = [R({ ticket_id: "T019", start_date: "2026-12-16", start_time: "19:30", title: "Lantern boat" }), R({ ticket_id: "T001", start_date: "2026-12-15", start_time: "13:00", title: "Sakuragawa Aquarium" })];
+  const files = [png("f1", "T019 lantern boat.png"), pdf("f2", "T019 second.pdf", 2), png("f3", "T001 aq.png")];
+  const first = sortFiles({ files, rows, state: state() });
+  assert.deepEqual(first.cards.map((c) => [c.key, c.kind]), [["f1#0", "nostop"], ["f2#0", "nostop"]]);
+  const pick = (c) => ({ ...placeOf(c.choices[0]), who: c.choices[0].who, rowIds: c.choices[0].rowIds, pages: null });
+  const answers = new Map(first.cards.map((c) => [c.key, pick(c)]));
+  const out = sortFiles({ files, rows, state: state(), answers });
+  assert.equal(out.cards.length, 0);
+  assert.deepEqual(out.items.map((i) => [i.key, placeKey(i)]), [["f3#0", "stop:s-aq"], ["f1#0", "newstop:2026-12-16:19:30:Lantern boat"], ["f2#0", "newstop:2026-12-16:19:30:Lantern boat"]]);
+  assert.equal(new Set(out.items.slice(1).map(placeKey)).size, 1, "one new stop for both files");
+  assert.equal(out.after, 4);
+});
+
+test("limits on a stop to add: it holds 8, counting every file going to it; nothing is ever already there", () => {
+  const rows = [R({ ticket_id: "T019", start_date: "2026-12-16", start_time: "19:30", title: "Lantern boat" })];
+  const files = [pdf("f1", "T019 a.pdf", 5), pdf("f2", "T019 b.pdf", 5)];
+  const ns = { date: "2026-12-16", time: "19:30", title: "Lantern boat" };
+  const answers = new Map([["f1#0", { newStop: ns, who: "", rowIds: ["T019"], pages: null }], ["f2#0", { newStop: ns, who: "", rowIds: ["T019"], pages: null }]]);
+  const out = sortFiles({ files, rows, state: state(), answers, isThere: () => true });
+  assert.deepEqual(out.items.map((i) => [i.key, i.pages]), [["f1#0", 5]]);
+  assert.equal(out.cards.length, 1);
+  assert.equal(out.cards[0].kind, "limit");
+  assert.equal(out.cards[0].short, "5 pages, 3 fit");
+  assert.equal(out.cards[0].hint, "A stop holds 8 pictures; Lantern boat has 5.");
+  assert.deepEqual(out.cards[0].choices.map((c) => [placeKey(c), c.pages]), [["newstop:2026-12-16:19:30:Lantern boat", 3]]);
+  assert.equal(out.out.filter((o) => o.kind === "there").length, 0);
 });

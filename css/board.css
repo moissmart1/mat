@@ -19,7 +19,13 @@
 .led-txt{min-width:0;display:grid;gap:1px}
 .led-1{font-size:16px;font-weight:900;color:#FFB04A;text-shadow:0 0 6px rgba(255,140,30,.55);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2}
 .led-2{font-size:12.5px;font-weight:900;color:#6FE08A;text-shadow:0 0 5px rgba(80,220,120,.45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2}
-@media (max-width:350px){ .led-in{gap:7px;padding-left:8px} .led-big b{font-size:24px} }
+@media (max-width:350px){
+  .led-in{gap:7px;padding-left:8px}
+  .led-big b{font-size:24px}
+  .brd[data-kind="trip"]{height:auto;min-height:52px}
+  .brd[data-kind="trip"] .led-in{padding-block:2px}
+  .brd[data-kind="trip"] .led-2{white-space:normal;text-wrap:balance}
+}
 .led-wipe{animation:wipe .7s steps(28,end) both}
 @keyframes wipe{from{clip-path:inset(0 100% 0 0)}to{clip-path:inset(0 0 0 0)}}
 .led .brd-x{position:relative;z-index:1}

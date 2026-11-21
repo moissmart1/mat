@@ -15,8 +15,12 @@ import { fillSeal } from "../picture.js";
 
 export const HOW_LINES = ["Ring up what you paid.", "The slip says who pays whom.", "Stamp it the moment you send."];
 // Under the three lines, only in Safari (not from the Home Screen).
-const HOW_HOME = "Add it to your Home Screen from You 設定, so this phone stays signed in.";
-const NO_KEY = "This phone needs the trip link. Open it from your chat again, or paste it here.";
+const HOW_HOME = "Add it to your Home Screen from You 設定. The Home Screen app asks for your link once: paste it from your email.";
+const NO_KEY = "This phone needs the trip link. Open it from your email again, or paste it here.";
+// The Home Screen app keeps its own storage, so opening the link elsewhere never signs it in.
+const HOME_STEPS = "Find the email with your own MAT link, press and hold the link, tap Copy Link, then paste it here.";
+const NO_KEY_HOME = "The Home Screen app keeps its own sign-in. " + HOME_STEPS;
+const KEY_REFUSED_HOME = "That link no longer works here. " + HOME_STEPS;
 const KEY_REFUSED = "That trip link didn’t work. Ask Mo for the current one.";
 // After a refused key the trip is taken off the phone (js/store.js), and the screen says so.
 const CLEARED = "The trip was taken off this phone.";
@@ -24,6 +28,11 @@ export function clearedText(kept) {
   if (!(kept > 0)) return CLEARED;
   return CLEARED + (kept === 1 ? " Your unsent line is kept: it goes out once you open your new link." : " Your " + kept + " unsent lines are kept: they go out once you open your new link.");
 }
+// With no key, unsent changes the phone could not save are only in this page's
+// memory (js/store.js takeTripOff): pasting the link here keeps them; the Home
+// Screen app's steps (version 36) send people to their email, so this says not
+// to close the app rather than to keep it open (#20 review).
+const MEMORY_ONLY = "Unsent changes are only in this app’s memory: don’t close it while you copy your link.";
 const NOT_CONNECTED = "This app isn’t connected yet.";
 const BAD_PASTE = "That doesn’t look like a trip link.";
 const KEY_SHAPE = /^[A-Za-z0-9_-]{6,200}$/;
@@ -211,10 +220,10 @@ export function mountFirst(root, store, { connected = true, storage = defaultSto
 
   function render(s) {
     const keyless = connected && s.status === "nokey";
-    const refused = s.keyRefused ? KEY_REFUSED + (s.cleared ? " " + clearedText(s.cleared.kept) : "") : NO_KEY;
+    const refused = s.keyRefused ? (standalone() ? KEY_REFUSED_HOME : KEY_REFUSED) + (s.cleared ? " " + clearedText(s.cleared.kept) : "") : standalone() ? NO_KEY_HOME : NO_KEY;
     const blocked = !connected ? NOT_CONNECTED : keyless ? refused : null;
     gate.hidden = !blocked;
-    if (blocked) gateText.textContent = blocked;
+    if (blocked) gateText.textContent = keyless && s.queueStorageFailed ? blocked + " " + MEMORY_ONLY : blocked;
     paste.hidden = !keyless;
     const needMe = !blocked && s.status === "ready" && !s.me && s.people.length > 0;
     if (needMe) drawPeople(s.people);
