@@ -33,6 +33,8 @@ const SHOTS =
   (fs.existsSync(MAC_TMP) ? path.join(MAC_TMP, "mat-shots", "failures") : path.join(require("os").tmpdir(), "mat-shots", "failures"));
 const CASE_TIMEOUT_MS = 30000;
 const CLOSE_TIMEOUT_MS = 8000;
+// How long a fresh browser may take to open the app once before its first case.
+const WARM_TIMEOUT_MS = 120000;
 
 const CONTEXT = {
   viewport: { width: 390, height: 844 },
@@ -61,6 +63,25 @@ function watch(page, problems) {
     if (msg.type() === "error") problems.push("console error: " + msg.text());
   });
   page.on("pageerror", (err) => problems.push("page error: " + err.message));
+}
+
+// Opens the app once in a fresh browser, outside any case's 30 seconds. On a
+// freshly started GitHub Mac the first page Chrome draws can take half a
+// minute or more (its helper programs and the app's files are read from a
+// cold disk); that wait used to land on the first case of each browser, and
+// on 2026-11-21 both first cases of slice 3 timed out together. A case's
+// time now measures the case. Nothing is checked here and the page is not
+// watched: a browser that cannot open the app still fails its cases.
+async function warm(browser) {
+  const context = await browser.newContext(CONTEXT);
+  try {
+    await hermetic(context);
+    const page = await context.newPage();
+    await page.goto("http://localhost:" + process.env.MAT_PORT + "/", { timeout: WARM_TIMEOUT_MS });
+    await page.evaluate(() => document.fonts.ready.then(() => true));
+  } finally {
+    await withTimeout(context.close(), CLOSE_TIMEOUT_MS).catch(() => {});
+  }
 }
 
 function casesOf(file) {
@@ -196,7 +217,20 @@ async function main() {
   })).sort((a, b) => b.cases.length - a.cases.length);
   const retries = [];
   async function worker(pending, retrying) {
-    const launch = () => chromium.launch({ channel: "chrome", headless: true });
+    const launch = async () => {
+      const started = Date.now();
+      const b = await chromium.launch({ channel: "chrome", headless: true });
+      const up = Date.now();
+      let note = "";
+      try {
+        await withTimeout(warm(b), WARM_TIMEOUT_MS);
+      } catch (e) {
+        note = "; it did not open the app: " + e.message.split("\n")[0];
+      }
+      const s = (ms) => (ms / 1000).toFixed(1) + " s";
+      console.log("      (browser started in " + s(up - started) + ", app opened once in " + s(Date.now() - up) + note + ")");
+      return b;
+    };
     let browser = await launch();
     try {
       for (const { base, cases } of pending) {
