@@ -123,22 +123,28 @@ test("yours first: a stop where only others have codes is passed over for your n
   assert.equal(m.id, "tea");
   assert.equal(m.whose.kind, "all");
   assert.deepEqual(m.label, LABELS.all, "the label words stay in the model");
-  assert.deepEqual(m.warn, { id: "sky", title: "Shibuya Sky", when: "Sat", text: "No code for you at Shibuya Sky · Sat" });
-  assert.equal(m.line, "Sat Dec 12 · 17:00 · Mat 2");
+  // Another day: the weekday and the day of the month, as the pockets print it (never a bare "Sat", which on a Saturday reads as today).
+  assert.deepEqual(m.warn, { id: "sky", title: "Shibuya Sky", when: "Sat 12", text: "No code for you at Shibuya Sky · Sat 12" });
+  // The label's place is taken: the second line starts with whose it is.
+  assert.equal(m.lineWhose, "All of us");
+  assert.equal(m.line, "All of us · Sat Dec 12 · 17:00 · Mat 2");
   assert.equal(m.aria, "Show the ticket for all of us: Tea ceremony, Sat Dec 12 17:00, Mat 2. No code for you at Shibuya Sky, Sat Dec 12 14:00");
   // On the day: its own leave line (it is not the case's window), the warning by the time.
   const day = slotModel(s, NOON, { have });
   assert.equal(day.id, "tea");
-  assert.equal(day.tag, "こんど");
-  assert.equal(day.line, "In 3 h 40 min");
+  assert.equal(day.tag, "", "こんど stays on the day's next stop (Sky), as Days and the Tickets window have it");
+  assert.equal(day.line, "All of us · In 3 h 40 min");
   assert.equal(day.warn.text, "No code for you at Shibuya Sky · 14:00");
   assert.equal(day.aria, "Show the ticket for all of us: Tea ceremony, In 3 h 40 min, Mat 2. No code for you at Shibuya Sky, today 14:00");
   // Past Sky: no warning.
   const later = slotModel(s, at("2026-12-12T14:31:00+09:00"), { have });
-  assert.deepEqual([later.id, later.warn], ["tea", null]);
+  assert.deepEqual([later.id, later.warn, later.lineWhose, later.tag], ["tea", null, "", "こんど"], "past Sky: no warning, the label is back, and tea is the day's next stop");
   // The tea ceremony with no ticket at all: your own code on the next day, the same warning.
   const own = slotModel({ ...s, stops: s.stops.map((x) => (x.id === "tea" ? { ...x, tkSeat: "" } : x)), tickets: s.tickets.filter((t) => t.id !== "o") }, BEFORE, { have });
-  assert.deepEqual([own.id, own.whose.kind, own.warn.text], ["nara", "mine", "No code for you at Shibuya Sky · Sat"]);
+  assert.deepEqual([own.id, own.whose.kind, own.warn.text, own.line], ["nara", "mine", "No code for you at Shibuya Sky · Sat 12", "Yours · Sun Dec 13 · 10:08 · Car 5 · 3B"]);
+  // A reference after the skipped stop.
+  const ref = slotModel({ ...s, tickets: s.tickets.filter((t) => t.id !== "o") }, BEFORE, { have });
+  assert.deepEqual([ref.id, ref.whose.kind, ref.line], ["tea", "ref", "Reference · Sat Dec 12 · 17:00 · Mat 2"]);
   // None of yours at all: the next ticket, none for you yet, as before.
   const only = slotModel({ ...s, stops: s.stops.map((x) => ({ ...x, tkSeat: "" })), tickets: s.tickets.filter((t) => t.stop === "sky") }, BEFORE, { have });
   assert.deepEqual([only.id, only.whose.kind, only.warn], ["sky", "none", null]);

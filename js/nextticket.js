@@ -14,12 +14,13 @@
 // is never in it; it works before the trip too.
 //
 // slotModel(state, nowMs, { have, here }) -> null, or
-//   { id, whose, label: { jp, en }, tag, title, line, aria, colour, ink, warn }
+//   { id, whose, label: { jp, en }, tag, title, line, lineWhose, aria, colour, ink, warn }
 // - null: no trip key, the tickets not loaded, no ticket at all, every one
 //   used (the trip over too).
 // - whose: js/tickets.js whoseOf ({ kind, seat, holders, count }).
 // - label: the small line over the title (jp is decoration, not read out).
-// - tag: "こんど" on the trip when the ticket is today's, else "".
+// - tag: "こんど" on the trip when the ticket is the day's next stop (the
+//   Tickets tab's window, as Days marks it), else "".
 // - title: the stop's title ("Ticket" when it has none).
 // - line: the second line: another day "Sat Dec 12 · 14:00 · Car 7 · 10B";
 //   today, the leave line when there is one (the case's own words), else
@@ -27,7 +28,11 @@
 //   you yet" in place of the seat.
 // - warn: null, or { id, title, when, text } for the earlier stop where you
 //   have no code: text "No code for you at <title> · <when>", when its
-//   weekday ("Sat"), or today its time ("14:00", "today" with none).
+//   weekday and day of the month as the pockets print it ("Mon 14"), or
+//   today its time ("14:00", "today" with none).
+// - lineWhose: while warned, whose your ticket is in words ("Yours", "All of
+//   us", "Reference"), and line then starts with it ("Yours · Tue Dec 15 ·
+//   18:00"), since the warning stands in the label's place; else "".
 // - aria: the button's label, whose in words, then the warning.
 // - colour, ink: the day's line colour and the ink on it (the band).
 
@@ -49,6 +54,8 @@ const ARIA = {
   none: "Show ticket: ",
 };
 export const NONE_YET = "none for you yet";
+// Whose the ticket is, in words, at the start of the second line while a warning has the label's place.
+const WHOSE_WORD = { mine: "Yours", all: "All of us", ref: "Reference" };
 
 const join = (parts, by) => parts.filter(Boolean).join(by);
 
@@ -93,9 +100,11 @@ export function slotModel(s, nowMs, { have = () => false, here = null } = {}) {
   let warn = null;
   if (skipped) {
     const wt = skipped.title || "Ticket";
-    const wwhen = skipped.date === c.date ? skipped.time || "today" : dayHead(skipped.date, []).en.split(" ")[0];
+    const [wd, , dn] = dayHead(skipped.date, []).en.split(" ");
+    const wwhen = skipped.date === c.date ? skipped.time || "today" : wd + " " + dn;
     warn = { id: skipped.id, title: wt, when: wwhen, text: "No code for you at " + wt + " · " + wwhen };
   }
+  const lineWhose = warn ? WHOSE_WORD[kind] || "" : "";
   const aria = ARIA[kind] + join([title, when, kind === "none" ? "no code for you yet" : whose.seat], ", ") +
     (skipped ? ". No code for you at " + warn.title + ", " + (skipped.date === c.date ? "today" + (skipped.time ? " " + skipped.time : "") : join([dayHead(skipped.date, []).en, skipped.time], " ")) : "");
 
@@ -103,9 +112,10 @@ export function slotModel(s, nowMs, { have = () => false, here = null } = {}) {
     id: t.id,
     whose: { ...whose, kind },
     label: { ...LABELS[kind] },
-    tag: c.on && today ? "こんど" : "",
+    tag: c.on && today && t === c.next ? "こんど" : "",
     title,
-    line,
+    line: lineWhose ? join([lineWhose, line], " · ") : line,
+    lineWhose,
     aria,
     colour: t.colour || "",
     ink: t.ink || "",

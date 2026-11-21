@@ -385,7 +385,7 @@ cases.push({
     const w = await slot(page);
     assert.deepEqual(
       [w.whose, w.warn, w.label, w.title, w.line, w.sealText],
-      ["all", "No code for you at Snow park lift pass · Mon", "No code for you at Snow park lift pass · Mon", "Kaiseki dinner", "Tue Dec 15 · 18:00", "全"],
+      ["all", "No code for you at Snow park lift pass · Mon 14", "No code for you at Snow park lift pass · Mon 14", "Kaiseki dinner", "All of us · Tue Dec 15 · 18:00", "全"],
     );
     assert.equal(w.aria, "Show the ticket for all of us: Kaiseki dinner, Tue Dec 15 18:00. No code for you at Snow park lift pass, Mon Dec 14 09:30");
     const look = await page.evaluate(() => {
@@ -404,7 +404,7 @@ cases.push({
     await advance(page, backend, (22 * 60 + 31) * 60 * 1000);
     await until(async () => (await slot(page)).warn === "", "the warning goes once the lift pass is past");
     const after = await slot(page);
-    assert.deepEqual([after.title, after.label], ["Kaiseki dinner", "全員 Next ticket · all of us"]);
+    assert.deepEqual([after.title, after.label, after.line], ["Kaiseki dinner", "全員 Next ticket · all of us", "Tue Dec 15 · 18:00"]);
   },
 });
 
@@ -632,9 +632,17 @@ cases.push({
       const r = (s) => document.querySelector(s).getBoundingClientRect();
       const go = r("#nextTicket .ntk-go");
       const w2 = document.querySelector("#nextTicket .ntk-w2");
-      return { day: document.querySelector("#nextTicket .ntk-w3").textContent, dayIn: r("#nextTicket .ntk-w3").right <= go.left + 0.5 && r("#nextTicket .ntk-w3").width > 0, h: r("#nextTicket .ntk-l").height, cut: w2.scrollWidth > w2.clientWidth };
+      const lw = document.querySelector("#nextTicket .ntk-lw");
+      return {
+        day: document.querySelector("#nextTicket .ntk-w3").textContent,
+        dayIn: r("#nextTicket .ntk-w3").right <= go.left + 0.5 && r("#nextTicket .ntk-w3").width > 0,
+        h: r("#nextTicket .ntk-l").height,
+        cut: w2.scrollWidth > w2.clientWidth,
+        whose: lw.textContent,
+        whoseWhole: lw.scrollWidth <= lw.clientWidth + 0.5 && r("#nextTicket .ntk-lw").right <= go.left + 0.5,
+      };
     });
-    assert.deepEqual({ day: wf.day, dayIn: wf.dayIn }, { day: " · Mon", dayIn: true });
+    assert.deepEqual({ day: wf.day, dayIn: wf.dayIn, whose: wf.whose, whoseWhole: wf.whoseWhole }, { day: " · Mon 14", dayIn: true, whose: "All of us · ", whoseWhole: true });
     assert.ok(wf.h < 20, "one line");
     await shot(warned, "slot-warn-320.jpg");
   },
@@ -653,6 +661,28 @@ cases.push({
     });
     assert.deepEqual({ h: g.h, right: g.right, bottom: g.bottom, oneLine: g.oneLine, label: g.label }, { h: 52, right: 0, bottom: 0, oneLine: true, label: "none" });
     assert.ok(g.bh >= 44);
+  },
+});
+cases.push({
+  name: "sideways with a warning: your ticket's title and line stay whole, the warning gives way first, its day always shows",
+  viewport: { width: 844, height: 390 },
+  async run({ page }) {
+    await ready(page, { nowMs: at("2026-12-13T12:00:00") });
+    await kept(page, [SNOW, KAISEKI]);
+    await waitSlot(page);
+    await settle(page);
+    const w = await page.evaluate(() => {
+      const q = (s) => document.querySelector("#nextTicket " + s);
+      const whole = (e) => e.scrollWidth <= e.clientWidth + 0.5;
+      const go = q(".ntk-go").getBoundingClientRect();
+      return {
+        title: q(".ntk-t").textContent, line: q(".ntk-ln").textContent, warn: q(".ntk-w").textContent,
+        titleWhole: whole(q(".ntk-t")), lineWhole: whole(q(".ntk-ld")),
+        warnShown: getComputedStyle(q(".ntk-l")).display !== "none", dayIn: q(".ntk-w3").getBoundingClientRect().right <= go.left + 0.5,
+      };
+    });
+    assert.deepEqual(w, { title: "Kaiseki dinner", line: "All of us · Tue Dec 15 · 18:00", warn: "No code for you at Snow park lift pass · Mon 14", titleWhole: true, lineWhole: true, warnShown: true, dayIn: true });
+    await shot(page, "slot-warn-sideways.jpg");
   },
 });
 cases.push({

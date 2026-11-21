@@ -74,7 +74,11 @@ export function mountNextTicket(phone, store, { clock = null, keep = null, where
   tag.setAttribute("aria-hidden", "true");
   const tt = el("span", "ntk-tt");
   title.append(tag, tt);
+  // The second line: while warned, whose it is (kept whole) and then the details (they end in an ellipsis).
   const line = el("span", "ntk-ln");
+  const lw = el("span", "ntk-lw");
+  const ld = el("span", "ntk-ld");
+  line.append(lw, ld);
   mid.append(label, title, line);
   const go = el("span", "ntk-go");
   const gj = el("b", "", "切符");
@@ -128,7 +132,9 @@ export function mountNextTicket(phone, store, { clock = null, keep = null, where
     tag.hidden = !m.tag;
     set(tag, m.tag);
     set(tt, m.title);
-    set(line, m.line);
+    const head = m.lineWhose ? m.lineWhose + " · " : "";
+    set(lw, head);
+    set(ld, m.line.slice(head.length));
     if (b.getAttribute("aria-label") !== m.aria) b.setAttribute("aria-label", m.aria);
     // The seal: your picture (mine), 全 (all of us, a reference), an empty dashed ring (none).
     const me = typeof s.me === "string" ? s.me : "";

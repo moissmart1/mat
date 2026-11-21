@@ -38,12 +38,17 @@
 .ntk-l{display:block;font-size:10.5px;font-weight:700;letter-spacing:.02em;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* The warning: one line, the stop's name ends in an ellipsis, its day always shows. Vermilion at 5.4:1 on the paper. */
 .ntk-w{display:flex;min-width:0;color:#B83218;font-weight:900;letter-spacing:0}
-.ntk-w1,.ntk-w3{flex:none;white-space:pre}
-.ntk-w2{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Giving way: the stop's name first (a far larger shrink), then "No code for you at"; the day never. */
+.ntk-w3{flex:none;white-space:pre}
+.ntk-w1{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:pre}
+.ntk-w2{flex:0 1000 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ntk-w[hidden]{display:none !important}
 .ntk-t{display:block;font-size:17px;font-weight:900;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ntk-tag{display:inline-block;margin-right:6px;padding:1px 6px 2px;border-radius:2px;background:var(--print);color:var(--paper);font-style:normal;font-size:11px;vertical-align:2px}
-.ntk-ln{display:block;font-size:12.5px;font-weight:700;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ntk-ln{display:flex;min-width:0;font-size:12.5px;font-weight:700;line-height:1.3;white-space:nowrap}
+.ntk-lw{flex:none;font-weight:900;white-space:pre}
+.ntk-lw:empty{display:none}
+.ntk-ld{min-width:0;overflow:hidden;text-overflow:ellipsis}
 .ntk-go{align-self:stretch;display:grid;align-content:center;justify-items:center;gap:1px;padding:0 13px 0 12px;border-left:1.5px dashed rgba(21,18,15,.5);font-size:12px;font-weight:900}
 .ntk-go b{font-size:16px;letter-spacing:.08em}
 .ntk-lip{position:absolute;left:0;right:0;bottom:0;height:9px;border-radius:5px;background:linear-gradient(#050404,#1d1816);
@@ -86,9 +91,11 @@
   .ntk-m{display:flex;align-items:baseline;gap:10px}
   .ntk-l{display:none}
   /* Sideways the warning stands at the end of the one line. */
-  .ntk.has-warn .ntk-l{display:block;order:3;flex:0 1 auto;min-width:0;font-size:11.5px}
+  .ntk.has-warn .ntk-l{display:block;order:3;flex:1 1 0;min-width:0;font-size:11.5px}
   .ntk-t{flex:0 1 auto;min-width:0}
   .ntk-ln{flex:0 1 auto;min-width:0}
+  /* With a warning, your own ticket's title and line keep their room; the warning gives way first. */
+  .ntk.has-warn .ntk-t,.ntk.has-warn .ntk-ln{flex:0 0 auto;max-width:40%}
   .ntk-go{display:flex;align-items:center;gap:6px;padding:0 13px 0 12px}
   #vDays{padding-bottom:calc(24px + env(safe-area-inset-bottom, 0px) + var(--slot-h, 0px))}
   :where(.phone.has-slot:not(.reg-open):has(#vDays.is-active)) .ubar{bottom:calc(12px + env(safe-area-inset-bottom, 0px) + var(--slot-h, 0px))}
