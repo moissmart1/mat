@@ -1316,7 +1316,7 @@ function syncTodos_(args, ctx) {
   queue.forEach(function (job) {
     setProp_("TODOS_RETRY_AFTER", job.key);
     try {
-      if (job.was !== undefined) settleUntick_(job.id, plannerUntick_(job.id, job.item, job.was, job.by), null, job.item);
+      if (job.was !== undefined) settleUntick_(job.id, plannerUntick_(job.id, job.item, job.was, job.by, null, true), null, job.item);
       else settleTick_(job.id, job.item, job.by, plannerTick_(job.id, job.item, job.by));
     } catch (e) {
       // Best effort (R45): the tick stands and a later pull tries again.
@@ -1386,10 +1386,10 @@ function pullTodos_(read, by) {
     if (Object.keys(patch).length) jobs.push({ id: it.id, patch: patch, takeoff: takeoff, dropped: dropped, dropWas: dropWas });
   });
   Object.keys(byId).forEach(function (id) {
-    if (!inPlanner[id] && cellText_(byId[id].gone) !== "yes") {
-      dropTodoWasIf_(id, wasOf[id]);
-      jobs.push({ id: id, patch: { gone: "yes" } });
-    }
+    if (inPlanner[id]) return;
+    // A row gone, or going now, keeps nothing aside (review M4).
+    dropTodoWasIf_(id, wasOf[id]);
+    if (cellText_(byId[id].gone) !== "yes") jobs.push({ id: id, patch: { gone: "yes" } });
   });
 
   // One Sheet write per row (the app's Sheet helpers write a row at a time),
@@ -1525,7 +1525,13 @@ function plannerTick_(id, item, actor) {
       // under the planner lock, until the app records it (settleTick_). An
       // undo that lands before then, or a put-back waiting for this lock
       // with the was an undo read earlier, puts back this one, never an older.
-      try { keepTodoWas_(id, found.status); } catch (e2) { /* best effort: settleTick_ records it */ }
+      try {
+        keepTodoWas_(id, found.status);
+      } catch (e2) {
+        // Best effort: settleTick_ records it. An older value must not stand
+        // in for it meanwhile (review M2).
+        try { delProp_("TODO_WAS_" + id); } catch (e3) { /* nothing more to do */ }
+      }
       return { result: "written", was: found.status };
     } catch (e) {
       return { result: "pending" };
@@ -1536,9 +1542,14 @@ function plannerTick_(id, item, actor) {
 
 // The planner part of undoing a written tick, under the planner lock: puts
 // back `was` only while the row still holds this item and says exactly
-// Booked. -> "written" | "kept" (someone changed it since: left alone) |
+// Booked. owed: the put-back an undo left owed (afterUntick_, a pull's
+// retry), not settleTick_'s own take-back: its `was` was read under the
+// app's lock some time before, so with nothing kept aside the Todos row is
+// read again here (review I1): no longer owed means the Booked there is a
+// tick recorded since, left alone ("kept"); still owed, its planner_was now.
+// -> "written" | "kept" (someone changed it since: left alone) |
 // "pending" (could not; the planner may still say Booked)
-function plannerUntick_(id, item, was, actor, why) {
+function plannerUntick_(id, item, was, actor, why, owed) {
   if (typeof was !== "string") return "pending";
   var out = withPlannerLock_(function () {
     try {
@@ -1549,6 +1560,11 @@ function plannerUntick_(id, item, was, actor, why) {
       // Issue 16: a was kept aside is what the app's latest Booked replaced
       // (plannerTick_, under this lock): it wins over the one handed in.
       var kept = todoWas_(id);
+      if (kept === null && owed) {
+        var row = findRow_("Todos", id);
+        if (!row || cellText_(row.planner_written) !== "undo") return "kept";
+        was = cellText_(row.planner_was);
+      }
       var put = plannerWriteStatus_(logRows, found, kept !== null ? kept : was, why || TODO_UNTICK_WHY_, actor);
       if (put === "written" && kept !== null) dropTodoWasIf_(id, kept);
       return put === "formula" ? "kept" : put;
@@ -1887,7 +1903,7 @@ function undoTodo_(entry, rows, ctx) {
 }
 
 function afterUntick_(env, id, item, was, by) {
-  var said = plannerUntick_(id, item, was, by);
+  var said = plannerUntick_(id, item, was, by, null, true);
   // Recording it is best effort: a row left owed is settled by the next pull,
   // which finds the planner put back ("kept") or puts it back itself.
   try { settleUntick_(id, said, { actor: by, via: "app" }, item); } catch (e) { /* best effort */ }
