@@ -3,7 +3,9 @@
 // on 2026-11-21): a paper-white stub standing in a dark lip just above the
 // bar, on Days only. One tap opens the same stub the stop's Show ticket
 // opens. The words are js/nextticket.js slotModel; this only draws them.
-// It simply shows: no rise (Mo dislikes decorative motion).
+// It simply shows: no rise (Mo dislikes decorative motion). An earlier stop
+// where you have no code is said in the label's place, in vermilion:
+// "No code for you at Shibuya Sky · Sat".
 //
 // mountNextTicket(phone, store, { clock, keep, where, onTicket }) -> { update, button }
 // - The node (#nextTicket) stands just before #nav, so Tab goes day, slot, bar.
@@ -24,6 +26,7 @@
 
 import { slotModel } from "../nextticket.js";
 import { fillSeal } from "../picture.js";
+import { sameName } from "../tickets.js";
 
 const LOOK_MS = 30000;
 
@@ -58,7 +61,14 @@ export function mountNextTicket(phone, store, { clock = null, keep = null, where
   const lj = el("span", "ntk-lj");
   lj.setAttribute("aria-hidden", "true");
   const le = el("span", "ntk-le");
-  label.append(lj, le);
+  // The warning in the label's place: an earlier stop where you have no code.
+  const warn = el("span", "ntk-w");
+  const w1 = el("span", "ntk-w1");
+  const w2 = el("span", "ntk-w2");
+  const w3 = el("span", "ntk-w3");
+  warn.append(w1, w2, w3);
+  warn.hidden = true;
+  label.append(lj, le, warn);
   const title = el("b", "ntk-t");
   const tag = el("em", "ntk-tag");
   tag.setAttribute("aria-hidden", "true");
@@ -105,8 +115,16 @@ export function mountNextTicket(phone, store, { clock = null, keep = null, where
       box.style.removeProperty("--line");
       box.style.removeProperty("--line-ink");
     }
-    set(lj, m.label.jp + " ");
-    set(le, m.label.en);
+    const warned = !!m.warn;
+    set(lj, warned ? "" : m.label.jp + " ");
+    set(le, warned ? "" : m.label.en);
+    box.classList.toggle("has-warn", warned);
+    lj.hidden = warned;
+    le.hidden = warned;
+    warn.hidden = !warned;
+    set(w1, warned ? "No code for you at " : "");
+    set(w2, warned ? m.warn.title : "");
+    set(w3, warned ? " · " + m.warn.when : "");
     tag.hidden = !m.tag;
     set(tag, m.tag);
     set(tt, m.title);
@@ -114,7 +132,7 @@ export function mountNextTicket(phone, store, { clock = null, keep = null, where
     if (b.getAttribute("aria-label") !== m.aria) b.setAttribute("aria-label", m.aria);
     // The seal: your picture (mine), 全 (all of us, a reference), an empty dashed ring (none).
     const me = typeof s.me === "string" ? s.me : "";
-    const person = k === "mine" ? (s.people || []).find((p) => p && p.name === me) || null : null;
+    const person = k === "mine" ? (s.people || []).find((p) => p && sameName(p.name, me)) || null : null;
     const want = JSON.stringify([k, me, photoSig(person)]);
     if (want !== sealSig) {
       sealSig = want;

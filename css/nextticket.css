@@ -36,6 +36,11 @@
 .ntk-seal .wh-s.is-none{border-width:1.5px}
 .ntk-m{display:block;min-width:0}
 .ntk-l{display:block;font-size:10.5px;font-weight:700;letter-spacing:.02em;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* The warning: one line, the stop's name ends in an ellipsis, its day always shows. Vermilion at 5.4:1 on the paper. */
+.ntk-w{display:flex;min-width:0;color:#B83218;font-weight:900;letter-spacing:0}
+.ntk-w1,.ntk-w3{flex:none;white-space:pre}
+.ntk-w2{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ntk-w[hidden]{display:none !important}
 .ntk-t{display:block;font-size:17px;font-weight:900;line-height:1.15;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ntk-tag{display:inline-block;margin-right:6px;padding:1px 6px 2px;border-radius:2px;background:var(--print);color:var(--paper);font-style:normal;font-size:11px;vertical-align:2px}
 .ntk-ln{display:block;font-size:12.5px;font-weight:700;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -45,17 +50,20 @@
   box-shadow:inset 0 2px 3px #000, 0 1px 0 rgba(255,255,255,.09)}
 
 /* Only on Days, and never under anything that stands over Days (a sheet, the
-   register, the stub, the Before pad, the driver's card, the first-open veil):
+   register, the stub, the Before pad, the stamp book, the driver's card, the first-open veil):
    visibility, so it also leaves the tab order and the reader's tree. */
 .phone:not(:has(#vDays.is-active)) .ntk,
 .phone:has(.sheet.is-open) .ntk,
-.phone.reg-open .ntk,.phone.stub-open .ntk,.phone.before-open .ntk,
+.phone.reg-open .ntk,.phone.stub-open .ntk,.phone.before-open .ntk,.phone.book-open .ntk,
 .phone:has(#driver:not([hidden])) .ntk,
 .phone:has(.veil:not([hidden])) .ntk{visibility:hidden}
 
-/* Nothing on Days is hidden behind it: the day ends above it, and the undo line stands above it. */
-#vDays{padding-bottom:calc(96px + var(--slot-h, 0px))}
-.phone.has-slot:not(.reg-open):has(#vDays.is-active) .ubar{bottom:calc(86px + env(safe-area-inset-bottom, 0px) + var(--slot-h, 0px))}
+/* Nothing on Days is hidden behind it: the day ends above it (the Home Screen
+   inset too), and the undo line stands above it. :where() keeps that last rule
+   as weak as .ubar alone, so every "a sheet is open: the undo line goes to the
+   top" rule (.phone.you-open .ubar and the rest) still wins. */
+#vDays{padding-bottom:calc(96px + env(safe-area-inset-bottom, 0px) + var(--slot-h, 0px))}
+:where(.phone.has-slot:not(.reg-open):has(#vDays.is-active)) .ubar{bottom:calc(86px + env(safe-area-inset-bottom, 0px) + var(--slot-h, 0px))}
 
 /* 320 px: a smaller seal, the Japanese label only for your own, words end in an ellipsis. */
 @media (max-width:350px){
@@ -77,11 +85,13 @@
   .ntk-seal .wh-s{width:30px;height:30px;font-size:14px;border-width:2px}
   .ntk-m{display:flex;align-items:baseline;gap:10px}
   .ntk-l{display:none}
+  /* Sideways the warning stands at the end of the one line. */
+  .ntk.has-warn .ntk-l{display:block;order:3;flex:0 1 auto;min-width:0;font-size:11.5px}
   .ntk-t{flex:0 1 auto;min-width:0}
   .ntk-ln{flex:0 1 auto;min-width:0}
   .ntk-go{display:flex;align-items:center;gap:6px;padding:0 13px 0 12px}
   #vDays{padding-bottom:calc(24px + env(safe-area-inset-bottom, 0px) + var(--slot-h, 0px))}
-  .phone.has-slot:not(.reg-open):has(#vDays.is-active) .ubar{bottom:calc(12px + env(safe-area-inset-bottom, 0px) + var(--slot-h, 0px))}
+  :where(.phone.has-slot:not(.reg-open):has(#vDays.is-active)) .ubar{bottom:calc(12px + env(safe-area-inset-bottom, 0px) + var(--slot-h, 0px))}
 }
 
 /* A computer's two panes: at the foot of the Days pane (gone while Before or Tickets stands in it). */
@@ -89,5 +99,5 @@
   .ntk{left:0;right:calc(50% + var(--rail) / 2);bottom:0}
   .ntk::before{left:0;right:0}
   #vDays{padding-bottom:calc(28px + var(--slot-h, 0px))}
-  .phone.has-slot:not(.reg-open):has(#vDays.is-active) .ubar{bottom:calc(16px + var(--slot-h, 0px))}
+  :where(.phone.has-slot:not(.reg-open):has(#vDays.is-active)) .ubar{bottom:calc(16px + var(--slot-h, 0px))}
 }

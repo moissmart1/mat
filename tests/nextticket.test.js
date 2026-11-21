@@ -114,6 +114,42 @@ test("none for you yet: others have codes, you have none; shown on purpose", () 
   assert.equal(slotModel({ ...sky(), me: null }, BEFORE, { have }).whose.kind, "none");
 });
 
+test("yours first: a stop where only others have codes is passed over for your next one, and said in the label's place", () => {
+  const s = state({
+    stops: [stop("sky", "2026-12-12", "14:00", { travelMin: 30 }), stop("tea", "2026-12-12", "17:00", { title: "Tea ceremony", tkSeat: "Mat 2" }), stop("nara", "2026-12-13", "10:08", { title: "Limited express to Nara" })],
+    tickets: [pic("m", "sky", { who: "Mo" }), pic("t", "sky", { who: "Trenton" }), pic("o", "tea"), pic("n", "nara", { who: "Ajen", seat: "Car 5 · 3B" })],
+  });
+  const m = slotModel(s, BEFORE, { have });
+  assert.equal(m.id, "tea");
+  assert.equal(m.whose.kind, "all");
+  assert.deepEqual(m.label, LABELS.all, "the label words stay in the model");
+  assert.deepEqual(m.warn, { id: "sky", title: "Shibuya Sky", when: "Sat", text: "No code for you at Shibuya Sky · Sat" });
+  assert.equal(m.line, "Sat Dec 12 · 17:00 · Mat 2");
+  assert.equal(m.aria, "Show the ticket for all of us: Tea ceremony, Sat Dec 12 17:00, Mat 2. No code for you at Shibuya Sky, Sat Dec 12 14:00");
+  // On the day: its own leave line (it is not the case's window), the warning by the time.
+  const day = slotModel(s, NOON, { have });
+  assert.equal(day.id, "tea");
+  assert.equal(day.tag, "こんど");
+  assert.equal(day.line, "In 3 h 40 min");
+  assert.equal(day.warn.text, "No code for you at Shibuya Sky · 14:00");
+  assert.equal(day.aria, "Show the ticket for all of us: Tea ceremony, In 3 h 40 min, Mat 2. No code for you at Shibuya Sky, today 14:00");
+  // Past Sky: no warning.
+  const later = slotModel(s, at("2026-12-12T14:31:00+09:00"), { have });
+  assert.deepEqual([later.id, later.warn], ["tea", null]);
+  // The tea ceremony with no ticket at all: your own code on the next day, the same warning.
+  const own = slotModel({ ...s, stops: s.stops.map((x) => (x.id === "tea" ? { ...x, tkSeat: "" } : x)), tickets: s.tickets.filter((t) => t.id !== "o") }, BEFORE, { have });
+  assert.deepEqual([own.id, own.whose.kind, own.warn.text], ["nara", "mine", "No code for you at Shibuya Sky · Sat"]);
+  // None of yours at all: the next ticket, none for you yet, as before.
+  const only = slotModel({ ...s, stops: s.stops.map((x) => ({ ...x, tkSeat: "" })), tickets: s.tickets.filter((t) => t.stop === "sky") }, BEFORE, { have });
+  assert.deepEqual([only.id, only.whose.kind, only.warn], ["sky", "none", null]);
+});
+
+test("your name matches trimmed and in any case, as the backend matches it", () => {
+  const m = slotModel({ ...sky(), me: " ajen" }, BEFORE, { have });
+  assert.equal(m.whose.kind, "mine");
+  assert.equal(m.line, "Sat Dec 12 · 14:00 · Car 7 · 10B");
+});
+
 test("no title: Ticket", () => {
   assert.equal(slotModel(sky({ title: "" }), BEFORE, { have }).title, "Ticket");
 });

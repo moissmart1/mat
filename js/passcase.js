@@ -39,7 +39,7 @@
 //   are never in the window, a pocket or a count.
 
 import { tripNow, stopsFor, nextStopId, isPast, minutesOf, nextLine, hereLine, header, stayShownFor, nightOf } from "./plan.js";
-import { ticketMark, ticketKinds, stayMark, whoseOf } from "./tickets.js";
+import { ticketMark, ticketKinds, stayMark, whoseOf, sameName } from "./tickets.js";
 import { tidyLine } from "./board.js";
 
 const str = (v) => (typeof v === "string" ? v.trim() : "");
@@ -63,7 +63,7 @@ function statusOf(mark, stop) {
 function firstPicture(pics, me, have) {
   const k = ticketKinds(pics);
   if (!k.kind) return null;
-  const sorted = k.list.slice().sort((a, b) => (a.who === me ? 0 : 1) - (b.who === me ? 0 : 1) || (Number(a.page) || 0) - (Number(b.page) || 0));
+  const sorted = k.list.slice().sort((a, b) => (sameName(a.who, me) ? 0 : 1) - (sameName(b.who, me) ? 0 : 1) || (Number(a.page) || 0) - (Number(b.page) || 0));
   const first = sorted[0];
   return first && have(first.id) ? first.id : null;
 }

@@ -37,6 +37,7 @@
 
 import { passCase } from "../passcase.js";
 import { sealFor, photoSig } from "./nextticket.js";
+import { sameName } from "../tickets.js";
 import { dayHead } from "../format.js";
 import { nightsShort, nightsLong } from "../staywords.js";
 
@@ -82,7 +83,7 @@ function whoseWords(t) {
   const w = t.whose;
   if (!w || w.kind === "ref") return "";
   if (w.kind === "mine") return ", yours" + (w.seat ? ", " + w.seat : "");
-  if (w.kind === "all") return t.status.label && / pages$/.test(t.status.label) ? ", " + t.status.label + " for all of us" : ", one code for all of us";
+  if (w.kind === "all") return w.count > 0 ? ", a code for all of us" : t.status.label && / pages$/.test(t.status.label) ? ", " + t.status.label + " for all of us" : ", one code for all of us";
   const h = (w.holders || []).filter(Boolean);
   return ", no code for you yet" + (h.length ? ", " + names(h) + (h.length === 1 ? " has theirs" : " have theirs") : "");
 }
@@ -112,7 +113,7 @@ export function mountPassCase(root, store, { clock, keep, where = null, onTicket
     urls = [];
   };
 
-  const personOf = (name) => (store.state.people || []).find((p) => p && p.name === name) || null;
+  const personOf = (name) => (store.state.people || []).find((p) => p && sameName(p.name, name)) || null;
   const meName = () => (typeof store.state.me === "string" ? store.state.me : "");
 
   // The holder's line along the foot of the window's ticket, under a rule.
@@ -122,7 +123,7 @@ export function mountPassCase(root, store, { clock, keep, where = null, onTicket
     const me = meName();
     const line = el("span", "wh-name");
     line.dataset.whose = w.kind;
-    const others = (w.holders || []).filter((n) => n && n !== me);
+    const others = (w.holders || []).filter((n) => n && !sameName(n, me));
     if (w.kind === "mine") {
       const b = el("b", "", me.toUpperCase());
       b.append(el("i", "", "様"));

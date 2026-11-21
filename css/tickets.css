@@ -110,7 +110,8 @@
 #tix .stub-who .wh-head b{display:block;line-height:1}
 #tix .stub-who .wh-head small{display:block;margin-top:4px;font-size:12.5px;font-weight:700;text-align:left}
 #tix .stub-who .wh-head small span{font-size:inherit;font-weight:inherit}
-#tix .stub-who .wh-head small.is-not{color:var(--shu);font-size:13px;font-weight:900}
+/* A darker vermilion than --shu: 5.4:1 on the stub's paper, as small text needs. */
+#tix .stub-who .wh-head small.is-not{color:#B83218;font-size:13px;font-weight:900}
 #tix .who3 button{display:grid;justify-items:center;gap:3px;border:0;background:none;padding:0;font-size:12px;font-weight:900;color:inherit;min-width:44px}
 #tix .who3 .seal{display:grid;place-items:center;pointer-events:none}
 

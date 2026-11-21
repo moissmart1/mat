@@ -666,19 +666,30 @@ export const hasFacts = (stop) => !!stop && ["tkRef", "tkName", "tkPeople", "tkS
 //   ref, the stop's; none, "".
 // - holders: the names that have their own code, in trip order (people, the
 //   state's names in order; a name not among them after, by name); count:
-//   how many. me "" (nobody chosen) is nobody's.
+//   how many. me "" (nobody chosen) is nobody's. Names match as the backend
+//   matches them (sameName: trimmed, in any case).
 // pics: the stop's pictures (only live ones count).
+// Two people's names are the same person when they match trimmed and in any
+// case (as the backend matches a name: Pure.js, Mcp.js).
+const nameKey = (n) => (typeof n === "string" ? n.trim().toLowerCase() : "");
+export const sameName = (a, b) => nameKey(a) !== "" && nameKey(a) === nameKey(b);
+
 export function whoseOf(stop, pics, me, people = []) {
   if (!stop) return null;
   const tkSeat = typeof stop.tkSeat === "string" ? stop.tkSeat.trim() : "";
   const k = ticketKinds((Array.isArray(pics) ? pics : []).filter((t) => t && t.stop === stop.id));
   if (!k.kind) return hasFacts(stop) ? { kind: "ref", seat: tkSeat, holders: [], count: 0 } : null;
   const names = Array.isArray(people) ? people : [];
-  const rank = (n) => (names.indexOf(n) === -1 ? 1e6 : names.indexOf(n));
-  const holders = [...new Set(k.list.filter((t) => t.who).map((t) => t.who))].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+  const rank = (n) => {
+    const i = names.findIndex((x) => sameName(x, n));
+    return i === -1 ? 1e6 : i;
+  };
+  const holders = [];
+  for (const t of k.list) if (t.who && !holders.some((h) => sameName(h, t.who))) holders.push(t.who);
+  holders.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
   const out = (kind, seat) => ({ kind, seat, holders, count: holders.length });
   if (k.kind !== "pp") return out("all", tkSeat);
-  const mine = me ? k.list.filter((t) => t.who === me).sort((a, b) => (Number(a.page) || 0) - (Number(b.page) || 0)) : [];
+  const mine = k.list.filter((t) => sameName(t.who, me)).sort((a, b) => (Number(a.page) || 0) - (Number(b.page) || 0));
   if (mine.length) {
     const own = typeof mine[0].seat === "string" ? mine[0].seat.trim() : "";
     return out("mine", own || tkSeat);

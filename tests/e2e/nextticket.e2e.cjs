@@ -21,6 +21,7 @@ const GLOVES = "planstop1205"; // no time: one code for all, which this phone ca
 const TEA = "planstop1206"; // 17:00: one code for all of us
 const EXPRESS = "planstop1301"; // Sun Dec 13, 10:08: three per-person codes
 const SNOW = "planstop1401"; // Mon Dec 14, 09:30: only Mo and Trenton have codes
+const KAISEKI = "planstop1501"; // Tue Dec 15, 18:00: one code for all of us
 
 const BEFORE = Date.parse("2026-11-21T10:00:00+09:00");
 const at = (iso) => Date.parse(iso + "+09:00");
@@ -101,6 +102,7 @@ function seed({ photos = {}, items = true } = {}) {
   s.stops.push({ id: TEA, date: "2026-12-12", time: "17:00", title: "Tea ceremony" });
   s.stops.push({ id: EXPRESS, date: "2026-12-13", time: "10:08", title: "Limited express to Nara", detail: "Platform 4" });
   s.stops.push({ id: SNOW, date: "2026-12-14", time: "09:30", title: "Snow park lift pass" });
+  s.stops.push({ id: KAISEKI, date: "2026-12-15", time: "18:00", title: "Kaiseki dinner" });
   s.people = Object.fromEntries(Object.entries(photos).map(([k, v]) => [k, { photo: v }]));
   if (items) {
     s.plannerId = PLANNER_ID;
@@ -146,6 +148,7 @@ async function slotBackend(page, { nowMs = NOON12, photos = null, only = null } 
     await add(SNOW, "Mo", "", 1, png(300, 300, 41));
     await add(SNOW, "Trenton", "", 1, png(300, 300, 43));
   }
+  if (want(KAISEKI)) await add(KAISEKI, "", "", 1, png(300, 300, 95));
   backend.now = nowMs;
   backend.requests.length = 0;
   const handle = backend.handle;
@@ -163,7 +166,7 @@ async function ready(page, opts = {}) {
   return backend;
 }
 const kept = (page, ids) => until(() => page.evaluate((ids) => ids.every((id) => document.querySelector('#rail .r[data-id="' + id + '"] .tk-mark b:not(.is-dash)')), ids), "the pictures reach this phone", 10000);
-const ALL_KEPT = [LUNCH, SKY, TEA, EXPRESS, SNOW];
+const ALL_KEPT = [LUNCH, SKY, TEA, EXPRESS, SNOW, KAISEKI];
 
 // The slot as the person sees it.
 const slotShown = (page) => page.evaluate(() => {
@@ -183,6 +186,7 @@ const slot = (page) => page.evaluate(() => {
   return {
     whose: n.dataset.whose,
     label: t(".ntk-l"),
+    warn: n.querySelector(".ntk-w").hidden ? "" : t(".ntk-w"),
     tag: n.querySelector(".ntk-tag").hidden ? "" : t(".ntk-tag"),
     title: t(".ntk-tt"),
     line: t(".ntk-ln"),
@@ -210,7 +214,8 @@ async function settle(page) {
   let last = "";
   let same = 0;
   let why = "";
-  const end = Date.now() + 8000;
+  // Generous: a busy test machine can take a while to lay out and fade.
+  const end = Date.now() + 20000;
   await page.evaluate(() => document.fonts.ready.then(() => true));
   while (same < 3) {
     const now = await page.evaluate(() => {
@@ -222,7 +227,7 @@ async function settle(page) {
     same = now.sig === last && now.still ? same + 1 : 0;
     last = now.sig;
     why = JSON.stringify(now.run);
-    if (Date.now() > end) throw new Error("the page does not settle: " + why);
+    if (Date.now() > end) throw new Error("the page did not settle in 20 s (still moving: " + why + ", fonts " + (await page.evaluate(() => document.fonts.status)) + ")");
     await new Promise((r) => setTimeout(r, 50));
   }
 }
@@ -372,19 +377,50 @@ cases.push({
 });
 
 cases.push({
-  name: "none for you yet: Mo and Trenton have codes, you have none: a dashed seal and the words; the stub opens on Mo’s code, not yours, in vermilion; past it the slot goes",
+  name: "yours first: the lift pass where only Mo and Trenton have codes is passed over for your next ticket, and said in vermilion in the label's place; past it, no warning",
   async run({ page }) {
     const backend = await ready(page, { nowMs: at("2026-12-13T12:00:00") });
+    await kept(page, [SNOW, KAISEKI]);
+    await waitSlot(page);
+    const w = await slot(page);
+    assert.deepEqual(
+      [w.whose, w.warn, w.label, w.title, w.line, w.sealText],
+      ["all", "No code for you at Snow park lift pass · Mon", "No code for you at Snow park lift pass · Mon", "Kaiseki dinner", "Tue Dec 15 · 18:00", "全"],
+    );
+    assert.equal(w.aria, "Show the ticket for all of us: Kaiseki dinner, Tue Dec 15 18:00. No code for you at Snow park lift pass, Mon Dec 14 09:30");
+    const look = await page.evaluate(() => {
+      const st = getComputedStyle(document.querySelector("#nextTicket .ntk-w"));
+      return { colour: st.color, weight: st.fontWeight, jp: getComputedStyle(document.querySelector("#nextTicket .ntk-lj")).display };
+    });
+    assert.deepEqual(look, { colour: "rgb(184, 50, 24)", weight: "900", jp: "none" });
+    await shot(page, "slot-none.jpg");
+    // One tap opens your ticket, not the lift pass.
+    await page.click("#ntBtn");
+    await stubUp(page);
+    await expectText(page, "#tix .stub-t", "Kaiseki dinner");
+    await torn(page);
+    await closeStub(page);
+    // Dec 14, 10:31: the lift pass is used; the warning goes, your ticket stays.
+    await advance(page, backend, (22 * 60 + 31) * 60 * 1000);
+    await until(async () => (await slot(page)).warn === "", "the warning goes once the lift pass is past");
+    const after = await slot(page);
+    assert.deepEqual([after.title, after.label], ["Kaiseki dinner", "全員 Next ticket · all of us"]);
+  },
+});
+
+cases.push({
+  name: "none for you yet, with no ticket of yours at all: a dashed seal and the words; the stub opens on Mo’s code, not yours, in vermilion; past it the slot goes",
+  async run({ page }) {
+    const backend = await ready(page, { nowMs: at("2026-12-13T12:00:00"), only: [SNOW] });
     await kept(page, [SNOW]);
     await waitSlot(page);
     const none = await slot(page);
     assert.deepEqual(
-      [none.whose, none.label, none.title, none.line, none.aria],
-      ["none", "つぎの切符 Next ticket", "Snow park lift pass", "Mon Dec 14 · 09:30 · none for you yet", "Show ticket: Snow park lift pass, Mon Dec 14 09:30, no code for you yet"],
+      [none.whose, none.warn, none.label, none.title, none.line, none.aria],
+      ["none", "", "つぎの切符 Next ticket", "Snow park lift pass", "Mon Dec 14 · 09:30 · none for you yet", "Show ticket: Snow park lift pass, Mon Dec 14 09:30, no code for you yet"],
     );
     assert.ok(none.seal.includes("is-none"), "the empty dashed seal");
     assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector("#nextTicket .wh-s")).borderTopStyle), "dashed");
-    await shot(page, "slot-none.jpg");
     await page.click("#ntBtn");
     await stubUp(page);
     const head = await page.evaluate(() => {
@@ -393,7 +429,7 @@ cases.push({
       const st = getComputedStyle(small);
       return { who: pg.dataset.who, words: small.textContent, colour: st.color, weight: st.fontWeight, size: parseFloat(st.fontSize), img: pg.querySelector(".wh-head .wh-s img").getAttribute("src") };
     });
-    assert.deepEqual({ who: head.who, words: head.words, colour: head.colour, weight: head.weight }, { who: "Mo", words: "Mo’s code, not yours", colour: "rgb(214, 60, 30)", weight: "900" });
+    assert.deepEqual({ who: head.who, words: head.words, colour: head.colour, weight: head.weight }, { who: "Mo", words: "Mo’s code, not yours", colour: "rgb(184, 50, 24)", weight: "900" });
     assert.ok(head.size >= 12, "12 px or more");
     assert.equal(head.img, backend.photos.Mo, "Mo’s own picture by his name");
     await torn(page);
@@ -504,6 +540,32 @@ cases.push({
   },
 });
 
+cases.push({
+  name: "the undo line keeps its place over You and the stay card while the slot shows (at the top, its own height)",
+  async run({ page }) {
+    await ready(page);
+    await kept(page, ALL_KEPT);
+    await waitSlot(page);
+    const change = async (what, n) => {
+      await page.evaluate((note) => globalThis.__matTest.store.updateStop("planstop1102", { note }), "Made-up note " + n);
+      await until(() => page.evaluate(() => !document.getElementById("ubar").hidden), "the undo line shows over " + what);
+      await settle(page);
+      const r = await page.evaluate(() => document.getElementById("ubar").getBoundingClientRect().toJSON());
+      assert.ok(r.height < 80, what + ": the undo line is " + r.height + " px high");
+      assert.ok(r.top < 120, what + ": the undo line stands at the top (" + r.top + ")");
+    };
+    await page.click("#youBtn");
+    await until(() => page.evaluate(() => document.getElementById("you").classList.contains("is-open")), "You opens");
+    await change("You", 1);
+    await page.keyboard.press("Escape");
+    await until(() => page.evaluate(() => !document.getElementById("you").classList.contains("is-open")), "You closes");
+    await page.evaluate(() => document.querySelector('#rail .pg[data-date="2026-12-12"] .tk-stay').scrollIntoView({ block: "center" }));
+    await page.click('#rail .pg[data-date="2026-12-12"] .tk-stay');
+    await until(() => page.evaluate(() => document.getElementById("stay").classList.contains("is-open")), "the stay card opens");
+    await change("the stay card", 2);
+  },
+});
+
 // Nothing behind it: the last stop of a long day open and scrolled to its end,
 // and today's next stop brought into view by the day itself; the undo line above it.
 async function nothingBehind(page, name, picture = "") {
@@ -560,6 +622,21 @@ cases.push({
     const off = await mine.evaluate(() => [...document.querySelectorAll("#nextTicket *")].filter((e) => e.getClientRects().length && e.getBoundingClientRect().right > innerWidth + 0.5).map((e) => e.className));
     assert.deepEqual(off, []);
     await shot(mine, "slot-320.jpg");
+    // The warning at 320: the stop's name ends in an ellipsis, its day always shows, nothing runs off.
+    const warned = await newPhone();
+    await ready(warned, { nowMs: at("2026-12-13T12:00:00") });
+    await kept(warned, [SNOW, KAISEKI]);
+    await waitSlot(warned);
+    await settle(warned);
+    const wf = await warned.evaluate(() => {
+      const r = (s) => document.querySelector(s).getBoundingClientRect();
+      const go = r("#nextTicket .ntk-go");
+      const w2 = document.querySelector("#nextTicket .ntk-w2");
+      return { day: document.querySelector("#nextTicket .ntk-w3").textContent, dayIn: r("#nextTicket .ntk-w3").right <= go.left + 0.5 && r("#nextTicket .ntk-w3").width > 0, h: r("#nextTicket .ntk-l").height, cut: w2.scrollWidth > w2.clientWidth };
+    });
+    assert.deepEqual({ day: wf.day, dayIn: wf.dayIn }, { day: " · Mon", dayIn: true });
+    assert.ok(wf.h < 20, "one line");
+    await shot(warned, "slot-warn-320.jpg");
   },
 });
 cases.push({
@@ -726,7 +803,13 @@ cases.push({
       return x ? { cls: x.className, img: x.querySelector("img") ? x.querySelector("img").getAttribute("src") : "", w: x.getBoundingClientRect().width, style: getComputedStyle(x).borderTopStyle } : null;
     }, id);
     const sky = await seal(SKY);
-    assert.deepEqual([sky.img, sky.w], [backend.photos.Ajen, 20]);
+    // Your picture, from a short blob: address (never the picture's data in the day's markup).
+    assert.match(sky.img, /^blob:/);
+    assert.equal(sky.w, 20);
+    assert.equal(await page.evaluate((i) => {
+      const img = document.querySelector('#rail .r[data-id="' + i + '"] .tk-mark .wh-s img');
+      return img.complete && img.naturalWidth > 0 && !document.getElementById("rail").innerHTML.includes("data:image/jpeg");
+    }, SKY), true, "it draws, and no picture data is in the day");
     assert.ok(sky.cls.includes("is-me"));
     assert.equal((await seal(SNOW)).style, "dashed");
     assert.equal(await seal(DINNER), null, "a reference has no seal");

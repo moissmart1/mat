@@ -795,7 +795,9 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
       const on = phoneEl.classList.contains("has-slot");
       if (on === slotWas) return;
       slotWas = on;
-      if (on && root.classList.contains("is-active") && dates.length && settledOn === cur && !held()) revealNext();
+      // Never under something standing over the day (any sheet, the stub, the register, the book).
+      const covered = !!phoneEl.querySelector(".sheet.is-open") || /(^|\s)[a-z]+-open(\s|$)/.test(phoneEl.className);
+      if (on && root.classList.contains("is-active") && dates.length && settledOn === cur && !held() && !covered) revealNext();
     }).observe(phoneEl, { attributes: true, attributeFilter: ["class"] });
   }
 

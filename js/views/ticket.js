@@ -62,7 +62,7 @@
 //   exactly as it did. With whose ({ kind, seat, count }, js/tickets.js
 //   whoseOf) the 券 line says whose it is (a seal and words: Yours, all of
 //   us, none for you yet) and so does Show ticket's right side; seal
-//   ({ name, photo }) is your picture for your own code.
+//   ({ name, url }) is your picture for your own code (url a blob: address).
 
 import { minutesOf, issueLine, isPast, nextLine, mapsUrl, safeHref, gateDate } from "../plan.js";
 import { dayHead, yen, weekdayOf } from "../format.js";
@@ -233,10 +233,22 @@ function markLine(tix) {
     words.append(el("u", "", "All of us"), " · needs signal once");
   } else if (tix.kind === "pages") {
     words.append(tix.label + " for all of us");
+  } else if (w.count > 0) {
+    // Codes of their own for some, and a page for everyone: that page is yours.
+    words.append("A code for all of us");
   } else {
     words.append("One code for all of us");
   }
-  const seal = k === "mine" ? sealFor("me", tix.seal ? { name: tix.seal.name, photo: tix.seal.photo } : null, tix.seal ? tix.seal.name : "", "s20") : sealFor(k === "none" ? "none" : "all", null, "", "s20");
+  const seal = k === "mine" ? sealFor("me", null, tix.seal ? tix.seal.name : "", "s20") : sealFor(k === "none" ? "none" : "all", null, "", "s20");
+  // Your picture, from its blob: address (the app makes it once per picture).
+  if (k === "mine" && tix.seal && /^blob:/.test(tix.seal.url || "")) {
+    const img = el("img");
+    img.alt = "";
+    img.draggable = false;
+    img.src = tix.seal.url;
+    seal.classList.add("has-pic");
+    seal.replaceChildren(img);
+  }
   const sp = el("span", "wh-l");
   sp.append(seal, words);
   fx.append(sp);
@@ -249,6 +261,8 @@ function showWords(tix) {
   if (!w || tix.kind === "ref") return tix.label;
   if (w.kind === "mine") return w.count > 1 ? "Yours · 1 of " + w.count : "Yours";
   if (w.kind === "none") return "Not yours · " + tix.label;
+  // Per-person codes with a page for everyone, none yours: the key says so as the 券 line does.
+  if (w.kind === "all" && w.count > 0) return "All of us";
   return tix.label;
 }
 

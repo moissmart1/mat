@@ -6,7 +6,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { LIMITS, sniff, shrink, createKeep, keptOrLate, readKept, fetchMissing, toBase64, fromBase64, ticketKinds, ticketMark, whoseOf, fetchMode, setFetchMode, fetchesAll, pruneKeep, fetchOrder } from "../js/tickets.js";
+import { LIMITS, sniff, shrink, createKeep, keptOrLate, readKept, fetchMissing, toBase64, fromBase64, ticketKinds, ticketMark, whoseOf, sameName, fetchMode, setFetchMode, fetchesAll, pruneKeep, fetchOrder } from "../js/tickets.js";
 import { createApi } from "../js/api.js";
 import { createStore } from "../js/store.js";
 import { changeText } from "../js/format.js";
@@ -402,6 +402,12 @@ test("whoseOf: mine (my first picture's seat by page, else the stop's, else none
   assert.equal(whoseOf(stop, pp, "", people).kind, "none");
   assert.equal(whoseOf(stop, pp, null, people).kind, "none");
   assert.equal(whoseOf(stop, withAll, "", people).kind, "all");
+  // Names match trimmed and in any case (as the backend matches a name); a holder is counted once.
+  assert.equal(sameName(" Ajen ", "ajen"), true);
+  assert.equal(sameName("", ""), false);
+  assert.equal(sameName(null, "Ajen"), false);
+  assert.deepEqual(whoseOf(stop, [T("a", "s", { who: "ajen ", seat: "Car 7 · 10B" }), T("m", "s", { who: "Mo" })], "Ajen", people), { kind: "mine", seat: "Car 7 · 10B", holders: ["Mo", "ajen "], count: 2 });
+  assert.deepEqual(whoseOf(stop, [T("a", "s", { who: "Ajen" }), T("b", "s", { who: "AJEN", page: 2 })], "Mo", people).holders, ["Ajen"]);
   // A holder not among the people stands after them, by name.
   assert.deepEqual(whoseOf(stop, [T("z", "s", { who: "Zed" }), T("b", "s", { who: "Bea" }), T("t", "s", { who: "Trenton" })], "Mo", people).holders, ["Trenton", "Bea", "Zed"]);
 });

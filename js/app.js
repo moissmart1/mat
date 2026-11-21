@@ -29,7 +29,8 @@ import { createUpdater, otherVersionIn } from "./update.js";
 import { APP_VERSION } from "./config.js";
 import { isWide, onWide } from "./shape.js";
 import { createWhere } from "./where.js";
-import { createKeep, fetchMissing, ticketMark, stayMark, whoseOf, fetchesAll, pruneKeep, readKept } from "./tickets.js";
+import { createKeep, fetchMissing, ticketMark, stayMark, whoseOf, sameName, fetchesAll, pruneKeep, readKept } from "./tickets.js";
+import { isPicture } from "./picture.js";
 import { mountStub } from "./views/stub.js";
 import { mountStaySheet } from "./views/staysheet.js";
 import { tripNow, zoneOf, daySpan } from "./plan.js";
@@ -644,6 +645,26 @@ function start() {
   tabs.onShown((t) => {
     if (t === "before") todos.shown();
   });
+  // Your picture on the Days 券 line goes in as a short blob: address made once
+  // per picture, so the day's drawn rows and their signatures never carry the
+  // picture's data (a new picture is a new address, and redraws the line).
+  const sealUrls = new Map(); // the picture's data address -> its blob: address
+  const sealUrl = (photo) => {
+    if (!isPicture(photo)) return "";
+    if (!sealUrls.has(photo)) {
+      let url = "";
+      try {
+        const bin = atob(photo.slice(photo.indexOf(",") + 1));
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        url = URL.createObjectURL(new Blob([bytes], { type: "image/jpeg" }));
+      } catch {
+        url = "";
+      }
+      sealUrls.set(photo, url);
+    }
+    return sealUrls.get(photo);
+  };
   // A stop's 券 mark on Days, with whose it is (js/tickets.js whoseOf): for
   // your own code, your name and picture too, so a changed picture redraws the day.
   const tixMark = (stop, s) => {
@@ -656,8 +677,8 @@ function start() {
     if (!w) return m;
     const out = { ...m, whose: { kind: w.kind, seat: w.seat, count: w.count } };
     if (w.kind === "mine") {
-      const p = people.find((x) => x.name === me);
-      out.seal = { name: me, photo: p && typeof p.photo === "string" ? p.photo : "" };
+      const p = people.find((x) => sameName(x.name, me));
+      out.seal = { name: me, url: p ? sealUrl(p.photo) : "" };
     }
     return out;
   };
