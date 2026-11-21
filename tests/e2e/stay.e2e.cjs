@@ -4,7 +4,7 @@
 // seed; the clock is 13:20 on Dec 12 in Japan, Day 3.
 
 const assert = require("node:assert/strict");
-const { WITH_PLAN, open, advance, until, text, expectText } = require("./helpers.cjs");
+const { WITH_PLAN, open, advance, until, atRest, text, expectText } = require("./helpers.cjs");
 
 // A 1x1 PNG in place of a real photo, and a stay seed with a photo address.
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==", "base64");
@@ -37,7 +37,7 @@ const lastPart = (page, date) => page.evaluate((sel) => {
 
 async function openCard(page, date) {
   await page.click(tk(date) + " .tk-stay");
-  await until(() => isOpen(page, "stay"), "the hotel card opens");
+  await atRest(page, "#stay", { message: "the hotel card opens" });
 }
 
 const cardText = (page) => text(page, "#stay");
@@ -135,7 +135,7 @@ module.exports = [
       const t = await cardText(page);
       for (const s of ["浅草ホテル", "東京都台東区浅草1-1-1"]) assert.ok(t.includes(s), "the card reads " + s + ": " + t);
       await page.click("#stayDone");
-      await until(async () => !(await isOpen(page, "stay")), "the card closed");
+      await atRest(page, "#stay", { open: false, message: "the card closed" });
       await advance(page, backend, 3.5 * 3600000); // 04:00
       await until(async () => (await stayOf("2026-12-13")).id === "planstay0002", "from 04:00, tonight's stay");
       assert.ok((await stayOf("2026-12-13")).text.includes("Niseko lodge"));
@@ -163,7 +163,7 @@ module.exports = [
       assert.ok((await size(page, "#stay .sy-ad")) >= 20, "the address is large: " + (await size(page, "#stay .sy-ad")));
       assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.id), "stayDone", "focus on Done");
       await page.click("#stayDone");
-      await until(async () => !(await isOpen(page, "stay")), "Done closes it");
+      await atRest(page, "#stay", { open: false, message: "Done closes it" });
       assert.equal(await page.evaluate(() => document.getElementById("stay").inert), true);
       assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.classList.contains("tk-stay")), true, "focus back on the stay row");
     },
@@ -209,7 +209,7 @@ module.exports = [
       await expectFullCard(page);
       assert.equal(asked, 1);
       await page.click("#stayDone");
-      await until(async () => !(await isOpen(page, "stay")), "the card closed");
+      await atRest(page, "#stay", { open: false, message: "the card closed" });
       await openCard(page, "2026-12-12");
       await new Promise((r) => setTimeout(r, 200));
       assert.equal(await page.evaluate(() => document.querySelectorAll("#stay .sy-ph").length), 0, "not drawn again");
@@ -284,7 +284,7 @@ module.exports = [
     async run({ page }) {
       await ready(page);
       await page.click("#dayCount");
-      await until(() => isOpen(page, "allDays"), "the list opens");
+      await atRest(page, "#allDays", { message: "the list opens" });
       const rows = await dayRows(page);
       assert.equal(rows.length, 11);
       for (const s of ["D 03", "Sat Dec 12", "Tokyo", "today"]) assert.ok(rows[2].includes(s), "the third row reads " + s + ": " + rows[2]);
@@ -293,7 +293,7 @@ module.exports = [
       assert.equal(rows.some((r) => r.includes("undefined")), false);
       assert.equal(await page.evaluate(() => document.querySelector("#allDays .ad-row").tagName), "BUTTON");
       await page.click("#allDays .ad-row:nth-child(6)");
-      await until(async () => !(await isOpen(page, "allDays")), "the list closes");
+      await atRest(page, "#allDays", { open: false, message: "the list closes" });
       await expectText(page, "#dayCount", /^Day 6 of 11/);
     },
   },
@@ -302,14 +302,14 @@ module.exports = [
     async run({ page }) {
       const backend = await ready(page, { nowMs: Date.parse("2026-12-12T23:40:00+09:00") });
       await page.click("#dayCount");
-      await until(() => isOpen(page, "allDays"), "the list opens");
+      await atRest(page, "#allDays", { message: "the list opens" });
       assert.ok((await dayRows(page))[2].includes("today"));
       await page.click("#allDaysDone");
-      await until(async () => !(await isOpen(page, "allDays")), "the list closes");
+      await atRest(page, "#allDays", { open: false, message: "the list closes" });
       await page.clock.fastForward(50 * 60000);
       backend.now += 50 * 60000;
       await page.evaluate(() => document.getElementById("dayCount").click());
-      await until(() => isOpen(page, "allDays"), "the list opens again");
+      await atRest(page, "#allDays", { message: "the list opens again" });
       const rows = await dayRows(page);
       assert.ok(rows[2].includes("used"), rows[2]);
       assert.ok(rows[3].includes("today"), rows[3]);
@@ -320,7 +320,7 @@ module.exports = [
     async run({ page }) {
       const backend = await ready(page);
       await page.click("#dayCount");
-      await until(() => isOpen(page, "allDays"), "the list opens");
+      await atRest(page, "#allDays", { message: "the list opens" });
       await page.evaluate(() => { document.querySelector("#allDays .ad-row:nth-child(3)").__kept = 1; });
       const kept = () => page.evaluate(() => document.querySelector("#allDays .ad-row:nth-child(3)").__kept === 1);
       const syncs = () => backend.requests.length;
@@ -353,43 +353,43 @@ module.exports = [
       // Settings is under the list's and the card's dimmed area: a person
       // closes the sheet first, then taps it.
       await page.click("#dayCount");
-      await until(() => isOpen(page, "allDays"), "the list opens");
+      await atRest(page, "#allDays", { message: "the list opens" });
       await page.click("#allDaysDone");
-      await until(async () => !(await isOpen(page, "allDays")), "the list closed");
+      await atRest(page, "#allDays", { open: false, message: "the list closed" });
       await page.click("#youBtn");
-      await until(() => isOpen(page, "you"), "Settings opens");
+      await atRest(page, "#you", { message: "Settings opens" });
       assert.equal(await isOpen(page, "allDays"), false);
 
       await page.click("#youDone");
-      await until(async () => !(await isOpen(page, "you")), "Settings closed");
+      await atRest(page, "#you", { open: false, message: "Settings closed" });
       await openCard(page, "2026-12-12");
       await page.click("#stayDone");
-      await until(async () => !(await isOpen(page, "stay")), "the card closed");
+      await atRest(page, "#stay", { open: false, message: "the card closed" });
       await page.click("#youBtn");
-      await until(() => isOpen(page, "you"), "Settings opens");
+      await atRest(page, "#you", { message: "Settings opens" });
       assert.equal(await isOpen(page, "stay"), false);
 
       // Opening the card or the list closes Settings, and each closes the other.
       await page.evaluate(() => document.querySelector('#rail .pg[data-date="2026-12-12"] .tk-stay').click());
-      await until(() => isOpen(page, "stay"), "the card opens");
-      await until(async () => !(await isOpen(page, "you")), "Settings closed");
+      await atRest(page, "#stay", { message: "the card opens" });
+      await atRest(page, "#you", { open: false, message: "Settings closed" });
       await page.evaluate(() => document.getElementById("dayCount").click());
-      await until(() => isOpen(page, "allDays"), "the list opens");
-      await until(async () => !(await isOpen(page, "stay")), "the card closed");
+      await atRest(page, "#allDays", { message: "the list opens" });
+      await atRest(page, "#stay", { open: false, message: "the card closed" });
       await page.evaluate(() => document.querySelector('#rail .pg[data-date="2026-12-12"] .tk-stay').click());
-      await until(() => isOpen(page, "stay"), "the card opens");
-      await until(async () => !(await isOpen(page, "allDays")), "the list closed");
+      await atRest(page, "#stay", { message: "the card opens" });
+      await atRest(page, "#allDays", { open: false, message: "the list closed" });
 
       // Ring up closes it; so does a tab switch.
       await page.evaluate(() => document.getElementById("ring").click());
-      await until(() => isOpen(page, "reg"), "the register opens");
+      await atRest(page, "#reg", { message: "the register opens" });
       assert.equal(await isOpen(page, "stay"), false, "Ring up closed the card");
       await page.evaluate(() => globalThis.__matTest.register.close());
-      await until(async () => !(await isOpen(page, "reg")), "the register closed");
+      await atRest(page, "#reg", { open: false, message: "the register closed" });
       await page.evaluate(() => document.getElementById("dayCount").click());
-      await until(() => isOpen(page, "allDays"), "the list opens");
+      await atRest(page, "#allDays", { message: "the list opens" });
       await page.evaluate(() => document.querySelector('#nav [data-tab="money"]').click());
-      await until(async () => !(await isOpen(page, "allDays")), "a tab switch closed the list");
+      await atRest(page, "#allDays", { open: false, message: "a tab switch closed the list" });
       assert.equal(await page.evaluate(() => document.getElementById("allDays").inert), true);
     },
   },
@@ -402,9 +402,9 @@ module.exports = [
       await expectReach(page, "#stayDone");
       await expectReach(page, "#stay .sy-map", true);
       await page.click("#stayDone");
-      await until(async () => !(await isOpen(page, "stay")), "the card closed");
+      await atRest(page, "#stay", { open: false, message: "the card closed" });
       await page.click("#dayCount");
-      await until(() => isOpen(page, "allDays"), "the list opens");
+      await atRest(page, "#allDays", { message: "the list opens" });
       await expectReach(page, "#allDaysDone");
       await expectReach(page, "#allDays .ad-row:last-child", true);
     },

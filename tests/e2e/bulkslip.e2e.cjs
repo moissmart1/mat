@@ -10,7 +10,7 @@
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
-const { SEED, PLAN, makeBackend, open, ownKey, until, text, expectText, visible } = require("./helpers.cjs");
+const { SEED, PLAN, makeBackend, open, ownKey, until, atRest, text, expectText, visible } = require("./helpers.cjs");
 const { pngBytes, pdfBytes } = require("./pictures.cjs");
 
 const SHOTS = process.env.MAT_TAB_SHOTS || "";
@@ -118,7 +118,7 @@ const noSideways = (page) => page.evaluate(() => {
 });
 async function openHistory(page) {
   await page.evaluate(() => document.getElementById("histBtn").click());
-  await until(() => page.evaluate(() => document.getElementById("hist").classList.contains("is-open")), "History opens");
+  await atRest(page, "#hist", { message: "History opens" });
 }
 
 const cases = [];
@@ -580,7 +580,7 @@ cases.push({
     assert.equal(await skipNow(page), null, "nothing remembered before the key");
     const sent = backend.requests.length;
     await page.click("#bulkPunch");
-    await until(() => page.evaluate(() => !document.getElementById("bulk").classList.contains("is-open")), "the sheet closes");
+    await atRest(page, "#bulk", { open: false, message: "the sheet closes" });
     await expectText(page, "#bulk .ba-vh[role=status]", "Saved. These won’t ask again.");
     assert.equal(backend.requests.slice(sent).some((b) => b.action === "removeTicket" || b.action === "addTicket"), false, "nothing sent");
     assert.deepEqual(JSON.parse(await skipNow(page)), ["keep:T012:ccccccccccc1"]);

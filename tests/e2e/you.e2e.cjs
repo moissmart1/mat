@@ -1,7 +1,7 @@
 // Settings (Task 12): the "You 設定" sheet.
 
 const assert = require("node:assert/strict");
-const { ORIGIN, SEED, NOON12, open, advance, until, text, expectText, visible } = require("./helpers.cjs");
+const { ORIGIN, SEED, NOON12, open, advance, until, atRest, text, expectText, visible } = require("./helpers.cjs");
 
 // ---- small tools for this file ----
 
@@ -21,15 +21,8 @@ const PLANNER = [
 
 const isOpen = (page) => page.evaluate(() => document.getElementById("you").classList.contains("is-open"));
 // Open, and risen all the way (the sheet slides up over 500 ms).
-const waitYou = (page) =>
-  until(
-    () => page.evaluate(() => {
-      const s = document.getElementById("you");
-      return s.classList.contains("is-open") && Math.abs(s.getBoundingClientRect().bottom - innerHeight) < 1;
-    }),
-    "the settings sheet opens",
-  );
-const waitYouClosed = (page) => until(async () => !(await isOpen(page)), "the settings sheet closes");
+const waitYou = (page) => atRest(page, "#you", { message: "the settings sheet opens" });
+const waitYouClosed = (page) => atRest(page, "#you", { open: false, message: "the settings sheet closes" });
 const loads = (backend) => backend.requests.filter((r) => r.action === "load").length;
 const setPersonRequests = (backend) => backend.requests.filter((r) => r.action === "setPerson").length;
 const people = (backend) => backend.fake.primitives.readTable_("People");
@@ -254,7 +247,7 @@ module.exports = [
       await openYou(page);
       await page.click("#setHist");
       await waitYouClosed(page);
-      await until(() => page.evaluate(() => document.getElementById("hist").classList.contains("is-open")), "the tape opens");
+      await atRest(page, "#hist", { message: "the tape opens" });
       await until(() => page.evaluate(() => document.querySelectorAll("#tape .tp-row").length > 0), "entries arrive");
     },
   },

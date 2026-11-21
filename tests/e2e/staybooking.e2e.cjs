@@ -7,7 +7,7 @@
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
-const { SEED, PLAN, makeBackend, open, until, text, expectText, visible } = require("./helpers.cjs");
+const { SEED, PLAN, makeBackend, open, until, atRest, text, expectText, visible } = require("./helpers.cjs");
 const { png } = require("./pictures.cjs");
 
 const SHOTS = process.env.MAT_TAB_SHOTS || "";
@@ -67,7 +67,7 @@ async function start(ctx, { over = {}, pages = 2, nowMs = EVE10, phone = ctx.pag
 }
 async function openCard(page, date = D10) {
   await page.click(tk(date) + " .tk-stay");
-  await until(() => isOpen(page, "stay"), "the hotel card opens");
+  await atRest(page, "#stay", { message: "the hotel card opens" });
 }
 async function goTickets(page) {
   await until(() => visible(page, "#ticketsBtn"), "the Tickets key is in the bar");
@@ -166,7 +166,7 @@ cases.push({
     await page.evaluate(() => { document.getElementById("stay").scrollTop = 0; });
     await shot(page, "A-1-390.png");
     await page.click("#stayDone");
-    await until(async () => !(await isOpen(page, "stay")), "the card closes");
+    await atRest(page, "#stay", { open: false, message: "the card closes" });
 
     // The Tickets tab.
     await goTickets(page);
@@ -219,7 +219,7 @@ cases.push({
     await page.evaluate(() => { document.getElementById("stay").scrollTop = 0; });
     await shot(page, "A-1-320.png");
     await page.click("#stayDone");
-    await until(async () => !(await isOpen(page, "stay")), "the card closes");
+    await atRest(page, "#stay", { open: false, message: "the card closes" });
 
     await goTickets(page);
     await until(() => page.evaluate(() => !!document.querySelector("#vTickets .pc-stay-r b")), "the stay on the tab");
@@ -264,7 +264,7 @@ cases.push({
     await page.evaluate(() => { document.getElementById("stay").scrollTop = 0; });
     await shot(page, "long-320.png");
     await page.click("#stayDone");
-    await until(async () => !(await isOpen(page, "stay")), "the card closes");
+    await atRest(page, "#stay", { open: false, message: "the card closes" });
 
     await goTickets(page);
     await until(() => page.evaluate(() => !!document.querySelector("#vTickets .pc-stay-n")), "the stay on the tab");
@@ -292,7 +292,7 @@ cases.push({
     await openCard(page);
     await expectText(page, "#stay .bk-g > div:first-child", "予約確認書Confirmation2 pages");
     await page.click("#stayDone");
-    await until(async () => !(await isOpen(page, "stay")), "the card closes");
+    await atRest(page, "#stay", { open: false, message: "the card closes" });
     await goTickets(page);
     await until(() => page.evaluate(() => !!document.querySelector("#vTickets .pc-stay")), "the stay on the tab");
     assert.equal(await page.evaluate(() => !!document.querySelector("#vTickets .pc-stay-r")), false);
@@ -334,7 +334,7 @@ cases.push({
     await expectText(page, "#stay .bk-hd i", "Dec 10 → Dec 11Dec 10 to 11");
     await expectText(page, "#stay .bk-key", "予約票Show booking1 night ›");
     await page.click("#stayDone");
-    await until(async () => !(await isOpen(page, "stay")), "the card closes");
+    await atRest(page, "#stay", { open: false, message: "the card closes" });
     await goTickets(page);
     await expectText(page, "#vTickets .pc-stay-l", "今夜の宿 Tonight’s stay1泊");
     await page.click("#vTickets .pc-stay-b");
@@ -357,7 +357,7 @@ cases.push({
     await expectText(page, "#stay .bk-key", "予約票Show booking3 nights ›");
     assert.equal(await page.getAttribute("#stay .bk-key", "aria-label"), "Show booking, 3 nights");
     await page.click("#stayDone");
-    await until(async () => !(await isOpen(page, "stay")), "the card closes");
+    await atRest(page, "#stay", { open: false, message: "the card closes" });
     await expectText(page, tk(D10) + " .tk-stay .tk-stay-nt", "1 / 3泊");
   },
 });
@@ -375,7 +375,7 @@ cases.push({
     assert.equal(await gone(), true, "the card");
     assert.deepEqual(await still("#stay .sy"), []);
     await page.click("#stayDone");
-    await until(async () => !(await isOpen(page, "stay")), "the card closes");
+    await atRest(page, "#stay", { open: false, message: "the card closes" });
     await goTickets(page);
     assert.equal(await gone(), true, "the tab");
     assert.deepEqual(await still("#vTickets .pc-stay"), []);

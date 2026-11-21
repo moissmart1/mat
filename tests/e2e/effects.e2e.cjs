@@ -6,7 +6,7 @@
 // filter, no CSS filter inside a list). Every item and name here is made up.
 
 const assert = require("node:assert/strict");
-const { SEED, WITH_PLAN, NOON12, makeBackend, open, advance, until, visible } = require("./helpers.cjs");
+const { SEED, WITH_PLAN, NOON12, makeBackend, open, advance, until, atRest, visible } = require("./helpers.cjs");
 
 const PLANNER_ID = "fakePlannerSheet_0123456789abcdefXYZ";
 const BHEAD = ["#", "Item", "Who", "Book by", "Status", "Notes", "Booking link"];
@@ -98,7 +98,7 @@ module.exports = [
     async run({ page }) {
       await daysReady(page);
       await page.click("#rail .tk-stay");
-      await until(() => page.evaluate(() => document.getElementById("stay").classList.contains("is-open")), "the hotel card opens");
+      await atRest(page, "#stay", { message: "the hotel card opens" });
       const s = await style(page, "#stay");
       assert.ok(layers(s.shadow) >= 4, "hotel card: " + s.shadow);
       assert.match(s.bg, /url\("data:image\/svg\+xml/);
@@ -140,7 +140,7 @@ module.exports = [
     async run({ page }) {
       await moneyReady(page);
       await page.click("#ring");
-      await until(() => page.evaluate(() => document.getElementById("reg").classList.contains("is-open")), "the register opens");
+      await atRest(page, "#reg", { message: "the register opens" });
       const lcd = await style(page, ".lcd");
       const parts = lcd.shadow.split(/,\s*(?=rgba?\()/).map((p) => p.trim());
       assert.ok(parts.some((p) => !/inset/.test(p) && /rgb/.test(p)), "an outer shadow layer: " + lcd.shadow);
@@ -155,7 +155,7 @@ module.exports = [
     async run({ page }) {
       await moneyReady(page);
       await page.click("#ring");
-      await until(() => page.evaluate(() => document.getElementById("reg").classList.contains("is-open")), "the register opens");
+      await atRest(page, "#reg", { message: "the register opens" });
       await until(() => page.evaluate(() => getComputedStyle(document.getElementById("reg")).transform === "none" || /matrix\(1, 0, 0, 1, 0, 0\)/.test(getComputedStyle(document.getElementById("reg")).transform)), "the register has settled");
       const rects = () => page.evaluate(() => [...document.querySelectorAll("#pad .key")].map((k) => { const r = k.getBoundingClientRect(); return [Math.round(r.x * 10) / 10, Math.round(r.y * 10) / 10, Math.round(r.width * 10) / 10, Math.round(r.height * 10) / 10]; }));
       const key = await style(page, '.key[data-k="5"]');
@@ -302,7 +302,7 @@ module.exports = [
       await moneyReady(page);
       await page.evaluate((p) => globalThis.__matTest.store.setPerson("Mo", { photo: p }), require("../fixtures/picture.json").jpeg);
       await page.click("#ring");
-      await until(() => page.evaluate(() => document.getElementById("reg").classList.contains("is-open")), "the register opens");
+      await atRest(page, "#reg", { message: "the register opens" });
       await until(() => page.evaluate(() => !!document.querySelector("#xPayer .seal.has-pic")), "the seal shows the picture");
       const ring = await style(page, "#xPayer .seal.has-pic", "::after");
       assert.equal(ring.pos, "absolute");

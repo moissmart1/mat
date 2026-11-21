@@ -6,7 +6,7 @@
 
 const assert = require("node:assert/strict");
 const fs = require("fs");
-const { WITH_PLAN, open, advance, until, text } = require("./helpers.cjs");
+const { WITH_PLAN, open, advance, until, atRest, text } = require("./helpers.cjs");
 const { geoStub, leaks } = require("./geostub.cjs");
 
 const SHOTS = require("./shots.cjs")("loc");
@@ -27,7 +27,7 @@ const calls = (page) => page.evaluate(() => window.__geoCalls.length);
 const askShown = (page) => page.evaluate((sel) => !!document.querySelector(sel + " .tk-ask"), D12);
 async function openYou(page) {
   await page.evaluate(() => document.getElementById("youBtn").click());
-  await until(() => isOpen(page, "you"), "You opens");
+  await atRest(page, "#you", { message: "You opens" });
   await until(() => page.evaluate(() => getComputedStyle(document.getElementById("you")).transform === "none"), "You has risen");
   await page.evaluate(() => document.getElementById("setWhere").scrollIntoView({ block: "center" }));
 }

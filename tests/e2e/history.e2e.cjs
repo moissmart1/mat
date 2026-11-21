@@ -3,7 +3,7 @@
 
 const assert = require("node:assert/strict");
 const P = require("../../backend/Pure.js");
-const { SEED, NOON12, makeBackend, open, advance, until, text, expectText, visible } = require("./helpers.cjs");
+const { SEED, NOON12, makeBackend, open, advance, until, atRest, text, expectText, visible } = require("./helpers.cjs");
 
 // ---- small tools for this file ----
 
@@ -11,16 +11,9 @@ const NAMES = ["Mo", "Ajen", "Trenton"];
 const classOf = (page, id) => page.evaluate((i) => document.getElementById(i).className, id);
 const isOpen = (page, id) => page.evaluate((i) => document.getElementById(i).classList.contains("is-open"), id);
 // Open, and risen all the way (the sheet slides up over 500 ms).
-const waitHist = (page) =>
-  until(
-    () => page.evaluate(() => {
-      const s = document.getElementById("hist");
-      // Risen and done sliding: measured mid-slide, a 40 px key reads 39.99998 px.
-      return s.classList.contains("is-open") && Math.abs(s.getBoundingClientRect().bottom - innerHeight) < 1 && getComputedStyle(s).transform === "none";
-    }),
-    "the history sheet opens",
-  );
-const waitHistClosed = (page) => until(async () => !(await isOpen(page, "hist")), "the history sheet closes");
+// Risen and done sliding: measured mid-slide, a 40 px key reads 39.99998 px.
+const waitHist = (page) => atRest(page, "#hist", { message: "the history sheet opens" });
+const waitHistClosed = (page) => atRest(page, "#hist", { open: false, message: "the history sheet closes" });
 const waitCachedHistory = (page) =>
   until(() => page.evaluate(() => {
     const { entries, loading } = globalThis.__matTest.store.state.history;
@@ -164,7 +157,7 @@ module.exports = [
 
       const id = await page.evaluate(() => [...document.querySelectorAll("#rc .rc-row")].find((r) => r.querySelector(".rc-t").firstChild.textContent === "Tempura").dataset.id);
       await page.click('#rc .rc-row[data-id="' + id + '"]');
-      await until(() => isOpen(page, "line"), "the line sheet opens");
+      await atRest(page, "#line", { message: "the line sheet opens" });
       await expectText(page, "#lnBy", "Rung up by Ajen, Fri Dec 11");
       await until(() => page.evaluate(() => /Fri Dec 11/.test(document.getElementById("lnLog").textContent)), "its history date");
     },
@@ -426,14 +419,14 @@ module.exports = [
       await ready(page);
       const row = await page.evaluate(() => document.querySelector("#rc .rc-row").dataset.id);
       await page.click('#rc .rc-row[data-id="' + row + '"]');
-      await until(() => isOpen(page, "line"), "the line sheet opens");
+      await atRest(page, "#line", { message: "the line sheet opens" });
       await page.evaluate(() => document.getElementById("histBtn").click());
       await waitHist(page);
       assert.equal(await isOpen(page, "line"), false, "the line sheet closed");
 
       await page.evaluate(() => document.getElementById("ring").click()); // the register (the sheet covers the real button)
-      await until(() => isOpen(page, "reg"), "the register opens");
-      await until(async () => !(await isOpen(page, "hist")), "History closed");
+      await atRest(page, "#reg", { message: "the register opens" });
+      await atRest(page, "#hist", { open: false, message: "History closed" });
 
       await page.evaluate(() => document.getElementById("histBtn").click());
       await waitHist(page);
@@ -477,7 +470,7 @@ module.exports.push({
   async run({ page }) {
     const backend = await ready(page, { own: "Mo" });
     await page.click("#youBtn");
-    await until(() => page.evaluate(() => document.getElementById("you").classList.contains("is-open")), "settings open");
+    await atRest(page, "#you", { message: "settings open" });
     await page.fill("#setMail", "mo@example.test");
     await page.click("#setMailSave");
     await until(() => backend.fake.tables.Log.some((r) => r.kind === "person"), "logged");

@@ -8,7 +8,7 @@
 // people are the test trip's own. 13:20 on Dec 12.
 
 const assert = require("node:assert/strict");
-const { SEED, PLAN, makeBackend, open, ownKey, until, text, expectText, visible } = require("./helpers.cjs");
+const { SEED, PLAN, makeBackend, open, ownKey, until, atRest, text, expectText, visible } = require("./helpers.cjs");
 const { pngBytes, pdfBytes } = require("./pictures.cjs");
 
 const NOON12 = Date.parse("2026-12-12T13:20:00+09:00");
@@ -343,7 +343,7 @@ for (const how of ["Forget this phone", "a refused key"]) {
       assert.ok(await page.evaluate(() => localStorage.getItem("mat.listSkip")));
       assert.ok(await page.evaluate(() => localStorage.getItem("mat.bulkBatch")));
       await page.keyboard.press("Escape");
-      await until(() => page.evaluate(() => !document.getElementById("bulk").classList.contains("is-open")), "closed");
+      await atRest(page, "#bulk", { open: false, message: "closed" });
       if (how === "a refused key") {
         backend.failWith = "bad_key";
         await page.evaluate(() => globalThis.__matTest.store.checkRev());

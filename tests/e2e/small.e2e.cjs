@@ -3,7 +3,7 @@
 // at 390x844, the Home Screen app's size.
 
 const assert = require("node:assert/strict");
-const { SEED, NOON12, open, until, visible } = require("./helpers.cjs");
+const { SEED, NOON12, open, until, atRest, visible } = require("./helpers.cjs");
 
 const VIEWPORT = { width: 390, height: 664 };
 
@@ -52,7 +52,7 @@ async function keys(page, seq) {
 
 async function ringOpen(page) {
   await page.click("#ring");
-  await until(() => isOpen(page, "reg"), "the register opens");
+  await atRest(page, "#reg", { message: "the register opens" });
 }
 
 module.exports = [
@@ -94,7 +94,7 @@ module.exports = [
     async run({ page }) {
       await ready(page);
       await page.click('#rc .rc-row[data-id="seedexp001"]');
-      await until(() => isOpen(page, "line"), "the line sheet opens");
+      await atRest(page, "#line", { message: "the line sheet opens" });
       await expectReach(page, "#lnDone");
       await expectReach(page, "#lnDel", true);
       await expectReach(page, "#lnNote", true);
@@ -117,7 +117,7 @@ module.exports = [
     async run({ page }) {
       await ready(page);
       await page.click("#youBtn");
-      await until(() => isOpen(page, "you"), "settings open");
+      await atRest(page, "#you", { message: "settings open" });
       await expectReach(page, "#youDone");
       await expectReach(page, "#setReport", true);
     },

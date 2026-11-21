@@ -5,7 +5,7 @@
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
-const { WITH_PLAN, makeBackend, open, until, text, expectText } = require("./helpers.cjs");
+const { WITH_PLAN, makeBackend, open, until, atRest, text, expectText } = require("./helpers.cjs");
 const { pngBytes, pdfBytes, SVG } = require("./pictures.cjs");
 
 const SHOTS = require("./shots.cjs")("tickets");
@@ -45,17 +45,14 @@ async function openRow(page, id) {
 async function edit(page, id) {
   await openRow(page, id);
   await page.dispatchEvent(row(id) + " .r-edit", "click");
-  await until(() => page.evaluate(() => {
-    const s = document.getElementById("stop");
-    return !!s && s.classList.contains("is-open") && Math.abs(s.getBoundingClientRect().bottom - innerHeight) < 1;
-  }), "the stop sheet opens");
+  await atRest(page, "#stop", { message: "the stop sheet opens" });
 }
 const picked = (page) => page.evaluate(() => [...document.querySelectorAll("#stTix .tkp-picked .file")].map((r) => ({
   name: r.querySelector(".file-n").firstChild.textContent,
   for: (r.querySelector(".file-for .is-on") || {}).textContent,
 })));
 const waitPicked = (page, n) => until(async () => (await picked(page)).length === n, n + " pictures picked", 15000);
-const sheetClosed = (page) => until(() => page.evaluate(() => !document.getElementById("stop").classList.contains("is-open")), "the sheet closes", 15000);
+const sheetClosed = (page) => atRest(page, "#stop", { open: false, timeout: 15000, message: "the sheet closes" });
 const scrollTo = (page, sel) => page.evaluate((s) => document.querySelector(s).scrollIntoView({ block: "center" }), sel);
 
 const SHOT_DIR = process.env.MAT_TAB_SHOTS || "";
