@@ -345,7 +345,7 @@ module.exports = [
     },
   },
   {
-    name: "a long name stays on one line inside the board (an ellipsis, never wrapped, never pushing the close)",
+    name: "a long name stays on one line inside the board (clipped at a hard edge, never wrapped, never pushing the close)",
     viewport: { width: 320, height: 568 },
     async run({ page }) {
       const stop = WITH_PLAN.stops.find((s) => s.title === "Shibuya Sky");
@@ -360,7 +360,7 @@ module.exports = [
       });
       assert.ok(one.h < 24, "one line: " + one.h);
       assert.equal(one.clipped, true);
-      assert.equal(one.ell, "ellipsis");
+      assert.equal(one.ell, "clip");
       await shot(page, "4B-320x568-long");
     },
   },

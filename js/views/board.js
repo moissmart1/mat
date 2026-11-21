@@ -32,7 +32,7 @@
 //   box changes size (rotation, the desktop window) and Reduce Motion is
 //   switched; it is stopped (everything at rest, first word, lit) when the
 //   board is closed, cleared, hidden, scrolled out of sight or on another tab
-//   of the app, and starts again from the hold when seen. Under Reduce Motion
+//   of the app (its screen goes inert), and starts again from the hold when seen. Under Reduce Motion
 //   nothing runs: the CSS wraps the words onto more rows.
 //   mountBoard is called once per page, so the listeners on document and
 //   matchMedia are never removed.
@@ -105,6 +105,7 @@ export function mountBoard({ storage = null } = {}) {
 
   let shown = false;
   let seen = true; // on screen (an IntersectionObserver, when there is one)
+  let view = null; // the app screen the board is in: another tab of the app makes it inert
   let todayNow = ""; // the Days clock's date at the last update
   let foldTimer = null;
 
@@ -167,7 +168,7 @@ export function mountBoard({ storage = null } = {}) {
   }
   function start() {
     rest();
-    if (calm() || !shown || !seen || document.hidden) return;
+    if (calm() || !shown || !seen || document.hidden || (view && view.inert)) return;
     const longs = lines.filter((L) => L.over > 0);
     if (!longs.length) return;
     after(RUN.hold, () => run(longs, 0));
@@ -196,11 +197,21 @@ export function mountBoard({ storage = null } = {}) {
     }).observe(brd);
   }
 
+  // Another tab of the app keeps this screen laid out but inert (and clear), so the
+  // observer above does not see it go: watch the screen's inert.
+  function watchView() {
+    if (view || typeof MutationObserver !== "function") return;
+    view = wrap.closest(".view");
+    if (!view) return;
+    new MutationObserver(() => (view.inert ? rest() : start())).observe(view, { attributes: true, attributeFilter: ["inert"] });
+  }
+
   function show(on) {
     if (on === shown) return;
     shown = on;
     clearTimeout(foldTimer);
     if (on) {
+      watchView();
       wrap.hidden = false;
       wrap.inert = false;
       wrap.classList.remove("is-shut");
