@@ -227,6 +227,23 @@ export async function pdfPages(file, { max = LIMITS.perStop, skipFirst = false, 
 
 export const OPEN_WAIT_MS = 3000;
 
+// A picture that waits for signal is only on the phone once its keep.put has
+// finished: until then its data is in memory, and closing MAT (or a reload)
+// loses it. So an add waits for the puts of its waiting pictures (`puts`,
+// the promises keep.put returned), at most `ms`: a keep that never answers
+// must not hold the add up for long. True only when every put kept its
+// picture, in time, in a keep that lasts (IndexedDB, not the memory keep);
+// false and the add says to keep MAT open instead of "on this phone".
+export function keptOrLate(keep, puts, ms = OPEN_WAIT_MS) {
+  if (!puts.length) return Promise.resolve(true);
+  let timer;
+  const late = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(false), ms);
+  });
+  const kept = Promise.all(puts.map((p) => Promise.resolve(p).catch(() => false))).then((all) => all.every((ok) => ok === true) && keep.lasting === true);
+  return Promise.race([kept, late]).finally(() => clearTimeout(timer));
+}
+
 export function createKeep({ indexedDB = globalThis.indexedDB, name = "mat-tickets", openWaitMs = OPEN_WAIT_MS } = {}) {
   const STORE = "pics";
   const known = new Set();

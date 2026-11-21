@@ -55,7 +55,7 @@
 // (js/bulkbatch.js, js/takeback.js), here and from History. Adding by hand
 // keeps its own screens.
 
-import { LIMITS, sniff, shrink, shrinkCanvas, pdfPages } from "../tickets.js";
+import { LIMITS, sniff, shrink, shrinkCanvas, pdfPages, keptOrLate } from "../tickets.js";
 import { parseList, sortFiles, factsFor, stayFactsFor, seatFor, stopLabel, placeKey, placeOf, spanOf, monthDay, nightsOf } from "../bulk.js";
 import { newId } from "../time.js";
 import { minutesOf } from "../plan.js";
@@ -1001,7 +1001,8 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
       if (ok.length) {
         const s = el("p", "ba-done-s");
         s.append(el("b", "", plural(pics, "picture", "pictures")), ", kept in the trip. Every phone shows them on its stubs the next time it opens MAT with signal.");
-        if (waiting) s.append(" " + (waiting === pics ? "They wait" : waiting + " wait") + " on this phone" + (a.busy && a.busy === waiting ? " and go up in a moment." : " and go up when there is signal."));
+        if (waiting && a.unkept) s.append(" Keep MAT open until " + (waiting === 1 ? "it goes" : "they go") + " up.");
+        else if (waiting) s.append(" " + (waiting === pics ? "They wait" : waiting + " wait") + " on this phone" + (a.busy && a.busy === waiting ? " and go up in a moment." : " and go up when there is signal."));
         nodes.push(s);
         const sure = ok.filter((i) => i.from === "sure").length;
         // The list's slip again, read only (bulk C), in place of the punched bundle.
@@ -1029,7 +1030,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
         for (const it of waitingNow) {
           const d = el("div");
           const lab = placeLabel(it);
-          d.append(el("span", "", [it.rowIds.join(" ") || it.file.name, lab.there ? lab.title : ""].filter(Boolean).join(" · ")), el("i", "", (it.waiting === it.saved + it.waiting ? "" : it.waiting + " of " + (it.saved + it.waiting) + " ") + "on this phone, goes up " + (it.busy === it.waiting ? "in a moment" : "when there is signal")));
+          d.append(el("span", "", [it.rowIds.join(" ") || it.file.name, lab.there ? lab.title : ""].filter(Boolean).join(" · ")), el("i", "", (it.waiting === it.saved + it.waiting ? "" : it.waiting + " of " + (it.saved + it.waiting) + " ") + (a.unkept ? "not on this phone yet, keep MAT open" : "on this phone, goes up " + (it.busy === it.waiting ? "in a moment" : "when there is signal"))));
           box.append(d);
         }
         nodes.push(box);
@@ -1540,12 +1541,13 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
     adding.pics = pics.length;
     const liveOn = (p) => (store.state.tickets || []).filter((t) => t && !t.gone && (p.stay ? t.stay === p.stay : t.stop === p.stop));
     draw();
+    const waitingKept = []; // the keep.put of each picture that waits on the phone
     for (const { it, id, pic, k } of pics.splice(0)) {
       if (dead()) break;
       // A stay that could not be added: its pictures stay out (said on the Not added list).
       if (it.newStay) continue;
-      // Into the keep right before its own add, as the single add does (fix round 3, R2): a load's cleanup of the keep can never take a picture this loop has not reached. Not waited for: a keep that never answers must not hold the rest up; the data travels with the add.
-      keep.put(id, pic.blob, { gen: at });
+      // Into the keep right before its own add, as the single add does (fix round 3, R2): a load's cleanup of the keep can never take a picture this loop has not reached. Not waited for here: a keep that never answers must not hold the rest up; the data travels with the add. One that waits for signal is waited for after the loop (keptOrLate).
+      const kept = keep.put(id, pic.blob, { gen: at });
       const sameWho = liveOn(it).filter((t) => (t.who || "") === it.who).length;
       // From the list: its tie, and its page within its own file, so another phone adding the same one is told it is already there.
       const tie = listing && typeof it.file.tie === "string" ? it.file.tie : "";
@@ -1556,6 +1558,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
       if (res && res.saved) it.saved += 1;
       else if (res && res.reason === "queued") {
         it.waiting += 1;
+        waitingKept.push(kept);
         if (res.busy) {
           it.busy += 1;
           adding.busy += 1;
@@ -1568,6 +1571,9 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
       adding.settled += 1;
       draw();
     }
+    // Only "waiting on this phone" once they are in the keep: closing MAT before then would lose them.
+    // Not kept (a write failed or never ended, or only the memory keep): the done screen says to keep MAT open.
+    if (waitingKept.length) adding.unkept = (await orAbort(keptOrLate(keep, waitingKept))) !== true;
     if (mine !== gen) return;
     keepOnly(offAfter, (mineNew) => mineNew.length > 0 && mineNew.every((i) => !i.failed && !i.short && i.saved + i.waiting > 0));
     if (offAfter.length) {
