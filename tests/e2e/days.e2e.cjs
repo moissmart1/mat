@@ -163,14 +163,27 @@ module.exports = [
       await until(async () => (await inView(page)) === "2026-12-12", "today is in view");
       const rail = await page.locator("#rail").boundingBox();
       const y = Math.max(rail.y, 0) + 40;
+      // The rail's scrollend: the swipe and its snap have finished.
+      await page.evaluate(() => {
+        globalThis.__railRest = false;
+        document.getElementById("rail").addEventListener("scrollend", () => (globalThis.__railRest = true), { once: true });
+      });
       const touch = await page.context().newCDPSession(page);
+      // Each touch carries its own time, 16 ms apart (a finger at 60 Hz, a
+      // brisk swipe). Unstamped, Chrome dates a touch when it receives it, and
+      // on a stalled runner the queued moves arrive a millisecond apart: a
+      // flick of about 10,000 px/s, which Chrome flings past the next ticket's
+      // scroll-snap-stop (CI 2026-11-21 came to rest on Dec 14; stamped 1-4 ms
+      // apart it does so every time, 8 ms and slower never).
+      const t0 = Date.now() / 1000;
       for (let n = 8; n >= 2; n--) {
         const x = rail.x + rail.width * n / 10;
-        await touch.send("Input.dispatchTouchEvent", { type: n === 8 ? "touchStart" : "touchMove", touchPoints: [{ x, y }] });
+        await touch.send("Input.dispatchTouchEvent", { type: n === 8 ? "touchStart" : "touchMove", touchPoints: [{ x, y }], timestamp: t0 + (8 - n) * 0.016 });
       }
-      await touch.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+      await touch.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [], timestamp: t0 + 7 * 0.016 });
+      await until(() => page.evaluate(() => globalThis.__railRest), "the rail comes to rest");
+      assert.equal(await inView(page), "2026-12-13", "the Dec 13 ticket is in view");
       await expectText(page, "#dayCount", /^Day 4 of 11/);
-      await until(async () => (await inView(page)) === "2026-12-13", "the Dec 13 ticket is in view");
     },
   },
   {
