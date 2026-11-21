@@ -9,6 +9,15 @@ function setProp_(key, value) {
   PropertiesService.getScriptProperties().setProperty(key, String(value));
 }
 
+// Several Script Properties in one read, as { key: value or null }, so a
+// pair written together (setProps_) is never seen half old, half new.
+function getProps_(keys) {
+  var all = PropertiesService.getScriptProperties().getProperties() || {};
+  var out = {};
+  keys.forEach(function (k) { out[k] = Object.prototype.hasOwnProperty.call(all, k) ? all[k] : null; });
+  return out;
+}
+
 function delProp_(key) {
   PropertiesService.getScriptProperties().deleteProperty(key);
 }
