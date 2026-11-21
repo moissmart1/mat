@@ -76,7 +76,12 @@ const drawn = new WeakMap();
 // line, and without its distances (they move as the phone does).
 const LEAD = /(<b class="r-lv)(?: is-late)?(">)[^<]*(<\/b>)/;
 const DIST = /(<span class="dist">)[^<]*(<\/span>)/g;
-const withoutLead = (html) => html.replace(LEAD, "$1$2$3").replace(DIST, "$1$2");
+// And without its 券 line and the words on Show ticket's right (whose it is,
+// a picture reaching this phone, a person's picture changed: issue #83), so a
+// row keeps its node, and Show ticket the focus the stub hands back to it.
+const MARK = /<div class="r-fx tk-mark[^"]*">[\s\S]*?<\/div>/;
+const TKI = /(<button class="r-tk"[^>]*>[\s\S]*?<i>)[^<]*(<\/i>)/;
+const withoutLead = (html) => html.replace(LEAD, "$1$2$3").replace(DIST, "$1$2").replace(MARK, "").replace(TKI, "$1$2");
 
 // Puts the fresh rows into `rows` in order, keeping each old row that is
 // drawn the same. A row that differs only in its leave-by line's words (the
@@ -100,6 +105,12 @@ function patchRows(rows, fresh) {
         lead.textContent = next.textContent;
         if (lead.className !== next.className) lead.className = next.className;
       }
+      const mk = keep.querySelector(".tk-mark");
+      const nmk = r.querySelector(".tk-mark");
+      if (mk && nmk && mk.outerHTML !== nmk.outerHTML) mk.replaceWith(nmk);
+      const ti = keep.querySelector(".r-tk i");
+      const nti = r.querySelector(".r-tk i");
+      if (ti && nti && ti.textContent !== nti.textContent) ti.textContent = nti.textContent;
       const from = r.querySelectorAll(".dist");
       keep.querySelectorAll(".dist").forEach((d, i) => {
         if (from[i] && d.textContent !== from[i].textContent) d.textContent = from[i].textContent;
