@@ -638,11 +638,12 @@ cases.push({
         dayIn: r("#nextTicket .ntk-w3").right <= go.left + 0.5 && r("#nextTicket .ntk-w3").width > 0,
         h: r("#nextTicket .ntk-l").height,
         cut: w2.scrollWidth > w2.clientWidth,
+        words: (() => { const w1 = document.querySelector("#nextTicket .ntk-w1"); return w1.textContent + (w1.scrollWidth <= w1.clientWidth + 0.5 ? "" : " (cut)"); })(),
         whose: lw.textContent,
         whoseWhole: lw.scrollWidth <= lw.clientWidth + 0.5 && r("#nextTicket .ntk-lw").right <= go.left + 0.5,
       };
     });
-    assert.deepEqual({ day: wf.day, dayIn: wf.dayIn, whose: wf.whose, whoseWhole: wf.whoseWhole }, { day: " · Mon 14", dayIn: true, whose: "All of us · ", whoseWhole: true });
+    assert.deepEqual({ day: wf.day, dayIn: wf.dayIn, words: wf.words, whose: wf.whose, whoseWhole: wf.whoseWhole }, { day: " · Mon 14", dayIn: true, words: "No code for you at ", whose: "All of us · ", whoseWhole: true });
     assert.ok(wf.h < 20, "one line");
     await shot(warned, "slot-warn-320.jpg");
   },
