@@ -263,7 +263,7 @@ module.exports = [
     name: "find: the trip not ready shows no field and no paper",
     async run({ page }) {
       await open(page, { seed: SEED, nowMs: NOON12, key: null });
-      await expectText(page, "#gate p", "This phone needs the trip link. Open it from your email again, or paste it here.");
+      await expectText(page, "#gate p", "Nothing of the trip is on this phone yet. Open your MAT link from your email again, or paste it here.");
       assert.equal(await visible(page, "#rcQuery"), false);
       assert.equal(await visible(page, "#rc"), false);
     },

@@ -3,7 +3,7 @@
 // lettering on black, the second line green (mock-up 4B). What it says comes
 // from js/board.js; this only draws it.
 //
-// mountBoard({ storage }) -> { el, update(model, today), clear() }
+// mountBoard({ storage, onToggle(shown) }) -> { el, update(model, today), clear(), foot(on), isShown() }
 // - el: the board's box (place it in Days, between the bar and the rail).
 // - update(model, today): model is what boardFor gives, or null (no board);
 //   today: the Days clock's date (plan.js tripNow, by the real clock). The
@@ -11,6 +11,11 @@
 //   (mat.board keeps only the date it was closed on). Called on every Days redraw: a text that is the same is left
 //   alone, so the lines fill in once, when the board appears, and never on a
 //   minute's change. Under reduced motion there is no fill and no fold.
+//   A model may say red (line 2 in red, class is-red) and open (shown even if
+//   it was closed today, and the × hidden: the board from two days before
+//   while this phone is not ready for no signal, issue 84; mat.board is not
+//   touched). foot(on): the line "This phone" stands under it (has-foot: no
+//   bottom margin or corners). onToggle(shown): it appeared or went.
 // - clear(): the trip was taken off the phone: out of the page at once with
 //   every word taken off it (update(null) leaves the last words in the page).
 // - The × closes it for today (44 px wide). A closed board is not in the
@@ -51,7 +56,7 @@ function el(tag, cls, text) {
 const calm = () => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 const FOLD_MS = 220;
 
-export function mountBoard({ storage = null } = {}) {
+export function mountBoard({ storage = null, onToggle = () => {} } = {}) {
   const store = storage || (() => {
     try {
       return globalThis.localStorage;
@@ -222,6 +227,7 @@ export function mountBoard({ storage = null } = {}) {
   function show(on) {
     if (on === shown) return;
     shown = on;
+    onToggle(on);
     clearTimeout(foldTimer);
     if (on) {
       watchView();
@@ -257,11 +263,20 @@ export function mountBoard({ storage = null } = {}) {
 
   function update(model, today) {
     todayNow = typeof today === "string" ? today : "";
-    if (!model || isClosed(get(), todayNow)) {
+    // open: shown even if it was closed today, and with no × (nothing is written to mat.board).
+    if (!model || (!model.open && isClosed(get(), todayNow))) {
       show(false);
       return;
     }
     brd.dataset.kind = model.kind;
+    l2.classList.toggle("is-red", !!model.red);
+    if (x.hidden !== !!model.open) {
+      if (model.open && document.activeElement === x) {
+        const count = wrap.closest("section, .view") && wrap.closest("section, .view").querySelector("#dayCount");
+        if (count && !count.hidden) count.focus({ preventScroll: true });
+      }
+      x.hidden = !!model.open;
+    }
     put(small, model.small);
     if (bigN.data !== model.big) bigN.data = model.big;
     put(unit, model.unit);
@@ -288,6 +303,7 @@ export function mountBoard({ storage = null } = {}) {
 
   function clear() {
     clearTimeout(foldTimer);
+    if (shown) onToggle(false);
     shown = false;
     wrap.inert = true;
     wrap.hidden = true;
@@ -301,5 +317,8 @@ export function mountBoard({ storage = null } = {}) {
     }
   }
 
-  return { el: wrap, update, clear };
+  // The line "This phone" (js/views/ready.js) under the board: the board gives up its foot to it.
+  const foot = (on) => brd.classList.toggle("has-foot", !!on);
+
+  return { el: wrap, update, clear, foot, isShown: () => shown };
 }

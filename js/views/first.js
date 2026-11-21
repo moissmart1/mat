@@ -6,6 +6,9 @@
 // booted), storage (where mat.how is kept; default localStorage), onKey(key)
 // (a trip key pasted on the no-key screen: keep it and start again).
 //
+// Never loaded (no key, nothing refused): the board's glass reads 調整中 above
+// the paper, which says nothing of the trip is here yet (issue 84).
+//
 // The no-key screen also takes a pasted trip link (or the bare key): an app
 // opened from the Home Screen has storage of its own, without the key Safari
 // kept, and Safari itself clears a site's storage after a week without a
@@ -34,6 +37,16 @@ export function clearedText(kept) {
 // to close the app rather than to keep it open (#20 review).
 const MEMORY_ONLY = "Unsent changes are only in this app’s memory: don’t close it while you copy your link.";
 const NOT_CONNECTED = "This app isn’t connected yet.";
+// Never loaded (issue 84): no key and nothing refused. The board's glass reads
+// 調整中 (a machine not yet in service) above the paper. Its two small lines
+// come from GLASS_NEW alone, so issue 85's branch (a link kept, waiting for
+// signal) only passes other words to setGlass.
+export const GLASS_NEW = { mark: "調整中", top: "Not set up yet", under: "Needs your link and signal, once" };
+export const NEW_HOME = { head: "Nothing of the trip is in this app yet.", text: "The Home Screen app keeps its own copy, apart from Safari. " + HOME_STEPS };
+export const NEW_SAFARI = { head: "Nothing of the trip is on this phone yet.", text: "Open your MAT link from your email again, or paste it here." };
+export const NEW_NOTE = "With signal it fetches the trip and every ticket picture, once.";
+// The never-loaded paper: { head, text } for the Home Screen app or Safari.
+export const newPaper = (home) => (home ? NEW_HOME : NEW_SAFARI);
 const BAD_PASTE = "That doesn’t look like a trip link.";
 const KEY_SHAPE = /^[A-Za-z0-9_-]{6,200}$/;
 
@@ -148,7 +161,27 @@ export function mountFirst(root, store, { connected = true, storage = defaultSto
   pasteMsg.setAttribute("role", "alert");
   pasteRow.append(pasteField, pasteGo);
   paste.append(pasteRow, pasteMsg);
-  gate.append(gateText, paste);
+  // The never-loaded screen's glass and the line under the field (issue 84).
+  const glass = el("div", "rdy-gboard led");
+  glass.id = "gateGlass";
+  glass.hidden = true;
+  const glassMark = el("b");
+  glassMark.setAttribute("aria-hidden", "true");
+  const glassWords = el("span");
+  const glassTop = document.createTextNode("");
+  const glassUnder = el("i");
+  glassWords.append(glassTop, glassUnder);
+  glass.append(glassMark, glassWords);
+  const setGlass = ({ mark, top, under }) => {
+    glassMark.textContent = mark;
+    glassTop.data = top;
+    glassUnder.textContent = under;
+  };
+  setGlass(GLASS_NEW);
+  const gateNote = el("div", "rdy-g-note", NEW_NOTE);
+  gateNote.id = "gateNote";
+  gateNote.hidden = true;
+  gate.append(glass, gateText, paste, gateNote);
 
   function usePaste() {
     const key = keyFromPaste(pasteField.value);
@@ -223,7 +256,16 @@ export function mountFirst(root, store, { connected = true, storage = defaultSto
     const refused = s.keyRefused ? (standalone() ? KEY_REFUSED_HOME : KEY_REFUSED) + (s.cleared ? " " + clearedText(s.cleared.kept) : "") : standalone() ? NO_KEY_HOME : NO_KEY;
     const blocked = !connected ? NOT_CONNECTED : keyless ? refused : null;
     gate.hidden = !blocked;
-    if (blocked) gateText.textContent = keyless && s.queueStorageFailed ? blocked + " " + MEMORY_ONLY : blocked;
+    // Never loaded: no key, nothing refused, nothing held only in memory.
+    const fresh = keyless && !s.keyRefused && !s.queueStorageFailed;
+    glass.hidden = !fresh;
+    gateNote.hidden = !fresh;
+    gate.classList.toggle("rdy-gate", fresh);
+    if (fresh) {
+      const paper = newPaper(standalone());
+      const head = el("b", "", paper.head);
+      gateText.replaceChildren(head, document.createTextNode(" " + paper.text));
+    } else if (blocked) gateText.textContent = keyless && s.queueStorageFailed ? blocked + " " + MEMORY_ONLY : blocked;
     paste.hidden = !keyless;
     const needMe = !blocked && s.status === "ready" && !s.me && s.people.length > 0;
     if (needMe) drawPeople(s.people);

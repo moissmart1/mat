@@ -6,7 +6,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { LIMITS, sniff, shrink, createKeep, keptOrLate, readKept, fetchMissing, toBase64, fromBase64, ticketKinds, ticketMark, fetchMode, setFetchMode, fetchesAll, pruneKeep, fetchOrder } from "../js/tickets.js";
+import { LIMITS, sniff, shrink, createKeep, keptOrLate, readKept, fetchMissing, toBase64, fromBase64, ticketKinds, ticketMark, fetchMode, setFetchMode, fetchesAll, pruneKeep, fetchOrder, aheadPictures, isFetching } from "../js/tickets.js";
 import { createApi } from "../js/api.js";
 import { createStore } from "../js/store.js";
 import { changeText } from "../js/format.js";
@@ -352,6 +352,41 @@ test("fetchMissing does nothing before migrate, or when nothing lasts (private m
   await brief.ready;
   await fetchMissing(store, brief, { now: () => NOW12 });
   assert.equal(calls.ids.length, 0);
+});
+
+test("aheadPictures: the stay you are in, then from today on; never past, deleted, pending or failed ones (issue 84)", () => {
+  const s = {
+    trip: { tz: "Asia/Tokyo" },
+    stops: [...STOPS, { id: "gone0001", date: "2026-12-13", time: "09:00", deleted: true }],
+    stays: [{ id: "inn00001", firstNight: "2026-12-10", lastNight: "2026-12-12" }],
+    tickets: [T("t1", "past0001"), T("t2", "late0001"), T("t3", "soon0001"), T("t4", "soon0002"), T("t5", "soon0001", { pending: true }), T("t6", "gone0001"), T("t7", "soon0001", { failed: true }), { ...T("i1", null), stop: undefined, stay: "inn00001" }],
+  };
+  assert.deepEqual(aheadPictures(s, NOW12).map((t) => t.id), ["i1", "t4", "t3", "t2"]);
+  // fetchOrder is the same groups with the past ones after them.
+  assert.deepEqual(fetchOrder(s, NOW12).map((t) => t.id), ["i1", "t4", "t3", "t2", "t1"]);
+});
+
+test("fetchMissing with force forgets the back-off first; isFetching says a pass runs", async () => {
+  const keep = createKeep({ indexedDB: fakeIndexedDB() });
+  await keep.ready;
+  let broken = true;
+  const { store, calls } = fakeStore({
+    tickets: [T("t1", "soon0001")],
+    stops: STOPS,
+    answer: (id) => (broken ? { id, mime: "image/png", data: Buffer.from("<svg/>").toString("base64") } : { id, mime: "image/png", data: pngData }),
+  });
+  assert.equal(isFetching(store), false);
+  const p = fetchMissing(store, keep, { now: () => NOW12 });
+  assert.equal(isFetching(store), true);
+  await p;
+  assert.equal(isFetching(store), false);
+  assert.equal(keep.have("t1"), false);
+  broken = false;
+  await fetchMissing(store, keep, { now: () => NOW12 + 1000 });
+  assert.equal(calls.ids.length, 1, "backing off: not asked again at once");
+  await fetchMissing(store, keep, { now: () => NOW12 + 2000, force: true });
+  assert.equal(calls.ids.length, 2, "force: asked again");
+  assert.equal(keep.have("t1"), true);
 });
 
 // ---------- what a stop's tickets look like ----------

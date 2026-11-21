@@ -368,7 +368,7 @@ module.exports = [
     name: "no key: says so and loads nothing",
     async run({ page }) {
       const backend = await open(page, { seed: SEED, nowMs: NOON12, key: null });
-      await expectText(page, "#gate p", "This phone needs the trip link. Open it from your email again, or paste it here.");
+      await expectText(page, "#gate p", "Nothing of the trip is on this phone yet. Open your MAT link from your email again, or paste it here.");
       assert.ok(await visible(page, "#gate"));
       assert.equal(await page.evaluate(() => document.getElementById("rc").childElementCount), 0, "#rc is empty");
       assert.equal(backend.requests.length, 0, "no calls without a key");
@@ -378,7 +378,7 @@ module.exports = [
     name: "no key: pasting the trip link opens the trip without a reload, and keeps the key off the screen and the address",
     async run({ page }) {
       const backend = await open(page, { seed: SEED, nowMs: NOON12, key: null });
-      await expectText(page, "#gate p", "This phone needs the trip link. Open it from your email again, or paste it here.");
+      await expectText(page, "#gate p", "Nothing of the trip is on this phone yet. Open your MAT link from your email again, or paste it here.");
       assert.ok(await visible(page, "#keyPaste"));
       assert.equal(await page.locator('label[for="keyPaste"]').count(), 0, "no label: the sentence says what the field is for");
       assert.equal(await page.getAttribute("#keyPaste", "aria-label"), "Trip link");
@@ -418,7 +418,7 @@ module.exports = [
     name: "no key in Safari: the gate says to open the email again; pictures when MAT_TAB_SHOTS is set",
     async run({ page }) {
       await open(page, { seed: SEED, nowMs: NOON12, key: null });
-      await expectText(page, "#gate p", "This phone needs the trip link. Open it from your email again, or paste it here.");
+      await expectText(page, "#gate p", "Nothing of the trip is on this phone yet. Open your MAT link from your email again, or paste it here.");
       assert.equal(await page.evaluate(() => navigator.standalone === true), false);
       await homelinkShot(page, "gate-safari.png");
     },
@@ -428,7 +428,7 @@ module.exports = [
     async run({ page }) {
       await page.addInitScript(() => Object.defineProperty(navigator, "standalone", { value: true, configurable: true }));
       const backend = await open(page, { seed: SEED, nowMs: NOON12, key: null });
-      await expectText(page, "#gate p", "The Home Screen app keeps its own sign-in. Find the email with your own MAT link, press and hold the link, tap Copy Link, then paste it here.");
+      await expectText(page, "#gate p", "Nothing of the trip is in this app yet. The Home Screen app keeps its own copy, apart from Safari. Find the email with your own MAT link, press and hold the link, tap Copy Link, then paste it here.");
       assert.ok(await visible(page, "#keyPaste"));
       await homelinkShot(page, "gate-standalone.png");
       await page.fill("#keyPaste", ORIGIN + "/#k=test-key");

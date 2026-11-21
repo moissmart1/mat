@@ -28,7 +28,10 @@
 //   restart() (open again, for a new link).
 //   lasting is false when there is no IndexedDB (a private window, blocked):
 //   pictures are then kept in memory for this visit only. Nothing throws.
-// - fetchMissing(store, keep): fetches, one at a time, every picture this
+// - aheadPictures(s, nowMs): the pictures still ahead, the first two of
+//   fetchOrder's groups (the stay you are in, then from today on): what
+//   "ready for no signal" counts (js/ready.js). isFetching(store): a pass runs.
+// - fetchMissing(store, keep, { force }): fetches, one at a time, every picture this
 //   phone lacks, upcoming stops first (soonest first), then past ones; never
 //   two requests at once (a second call joins the first), never while the
 //   store is saving, never without signal (and stops when it goes), never
@@ -539,12 +542,13 @@ const nextDay = (date) => {
   return new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10);
 };
 
-// The live pictures in the order they are fetched: the pictures of the stay
-// you are in first of all (from its first night to the morning after its
-// last), then upcoming stops and stays (soonest first; a stay's at its first
-// night, 15:00), then past ones (most recent first); none whose stop or stay
-// is removed or not on the plan.
-export function fetchOrder(s, nowMs) {
+// The live pictures sorted into the order's three groups: `first` the pictures
+// of the stay you are in (from its first night to the morning after its
+// last), `ahead` upcoming stops and stays (soonest first; a stay's at its
+// first night, 15:00), `past` past ones (most recent first); none whose stop
+// or stay is removed or not on the plan, and none of this phone's own still
+// waiting to be sent.
+function fetchGroups(s, nowMs) {
   // Today by the Days clock (a day in its own zone is that place's).
   const today = tripNow(s, nowMs).date;
   const stops = new Map((Array.isArray(s.stops) ? s.stops : []).filter((x) => x && !x.deleted).map((x) => [x.id, x]));
@@ -578,7 +582,22 @@ export function fetchOrder(s, nowMs) {
   first.sort(up);
   ahead.sort(up);
   past.sort((a, b) => (a[0] > b[0] ? -1 : a[0] < b[0] ? 1 : 0));
-  return [...first.map((x) => x[1]), ...ahead.map((x) => x[1]), ...past.map((x) => x[1])];
+  const only = (g) => g.map((x) => x[1]);
+  return { first: only(first), ahead: only(ahead), past: only(past) };
+}
+
+// The live pictures in the order they are fetched: the stay you are in, then
+// upcoming stops and stays, then past ones (fetchGroups).
+export function fetchOrder(s, nowMs) {
+  const g = fetchGroups(s, nowMs);
+  return [...g.first, ...g.ahead, ...g.past];
+}
+
+// The pictures still ahead (issue 84): the first two groups of fetchOrder, in
+// that order. What "every picture still ahead is on this phone" counts.
+export function aheadPictures(s, nowMs) {
+  const g = fetchGroups(s, nowMs);
+  return [...g.first, ...g.ahead];
 }
 
 // After a load: pictures the trip no longer has (removed, refused, on a stop
@@ -597,12 +616,15 @@ export const RETRY_MS = 10 * 60 * 1000;
 const failures = new WeakMap(); // store -> Map(id -> when it failed)
 
 // allowed(): asked at the top of every picture, so a change of the You setting
-// stops a pass at the next one.
-export function fetchMissing(store, keep, { now = () => Date.now(), allowed = () => true } = {}) {
+// stops a pass at the next one. force (Fetch now, issue 84): the back-off is
+// forgotten before the pass starts, so a picture refused or broken a minute
+// ago is asked for once more. A pass already running is joined, as always.
+export function fetchMissing(store, keep, { now = () => Date.now(), allowed = () => true, force = false } = {}) {
   const cur = running.get(store);
   if (cur) return cur;
   if (!failures.has(store)) failures.set(store, new Map());
   const failed = failures.get(store);
+  if (force) failed.clear();
   const p = (async () => {
     await keep.ready;
     if (!keep.lasting) return;
@@ -641,6 +663,9 @@ export function fetchMissing(store, keep, { now = () => Date.now(), allowed = ()
   running.set(store, p);
   return p;
 }
+
+// Whether a fetching pass is running for this store now.
+export const isFetching = (store) => running.has(store);
 
 // ---------- what a stop's tickets are ----------
 

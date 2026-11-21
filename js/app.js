@@ -28,7 +28,8 @@ import { createUpdater, otherVersionIn } from "./update.js";
 import { APP_VERSION } from "./config.js";
 import { isWide, onWide } from "./shape.js";
 import { createWhere } from "./where.js";
-import { createKeep, fetchMissing, ticketMark, stayMark, fetchesAll, pruneKeep, readKept } from "./tickets.js";
+import { createKeep, fetchMissing, isFetching, ticketMark, stayMark, fetchesAll, pruneKeep, readKept } from "./tickets.js";
+import { mountReady } from "./views/ready.js";
 import { mountStub } from "./views/stub.js";
 import { mountStaySheet } from "./views/staysheet.js";
 import { tripNow, zoneOf, daySpan } from "./plan.js";
@@ -275,12 +276,43 @@ function start() {
     ticketData: readKept(keep),
     afterLoad: () => {
       pruneKeep(store, keep);
-      if (fetchesAll(raw)) fetchMissing(store, keep, { allowed: () => fetchesAll(raw) });
+      if (fetchesAll(raw)) background();
     },
   });
+
+  // Every fetching pass goes through here, so the line "This phone" (issue 84,
+  // js/views/ready.js) knows when one starts and when it settles. A call
+  // while one runs joins it (js/tickets.js) and tells nobody.
+  let ready = null;
+  let retryForced = false; // Fetch now met the store saving: once more when it is idle
+  function pass(opts, forced = false) {
+    const joined = isFetching(store);
+    const p = fetchMissing(store, keep, opts);
+    if (joined || !ready) return p;
+    ready.passStarted(forced);
+    p.finally(() => {
+      // Ended only because the store was saving: not a failure; tried again when it is idle.
+      const again = store.busy();
+      if (again && forced) retryForced = true;
+      ready.passSettled(again);
+    });
+    return p;
+  }
+  const background = () => pass({ allowed: () => fetchesAll(raw) });
+  // Fetch now (the line's key, the board's paper key, the strip's key, the
+  // sheet's key): every missing picture once, soonest first, whatever the You
+  // setting says. The setting is not changed. A second tap while a pass runs does nothing.
+  function fetchNow() {
+    if (isFetching(store) || store.state.online === false || !store.state.ticketsReady) return;
+    pass({ force: true, allowed: () => true }, true);
+  }
   // A picture just kept may unblock the next one once saving ends: look again then.
   store.subscribe(() => {
-    if (!store.busy() && store.state.ticketsReady && fetchesAll(raw)) fetchMissing(store, keep, { allowed: () => fetchesAll(raw) });
+    if (store.busy() || !store.state.ticketsReady) return;
+    if (retryForced) {
+      retryForced = false;
+      pass({ force: true, allowed: () => true }, true);
+    } else if (fetchesAll(raw)) background();
   });
 
   // Where the phone is: kept in memory only, never sent or stored (js/where.js).
@@ -297,6 +329,16 @@ function start() {
   const tabs = mountTabs(store, raw);
 
   const phone = document.getElementById("phone");
+  // Is this phone ready for no signal (issue 84): the line under the board on
+  // Days, its sheet, and what the strip at the top says (js/views/ready.js).
+  ready = mountReady(phone, store, {
+    keep,
+    clock,
+    storage: raw,
+    durable: durableStorage,
+    onFetch: () => fetchNow(),
+    beforeOpen: () => closeForDays(),
+  });
   // Ring up on Days shows Money while the register is open, so each line is
   // seen printing onto the receipt, and goes back to Days when it closes.
   // Borrowed: mat.tab is left as it was.
@@ -342,6 +384,7 @@ function start() {
     stopSheet.close(false);
     staySheet.close(false);
     book.close(false);
+    ready.close(false);
   };
   // A tab switch closes them (they belong to Days).
   document.getElementById("nav").addEventListener("click", (ev) => {
@@ -418,7 +461,8 @@ function start() {
     },
     // Ticket pictures: back to every one, the fetching starts at once.
     onTixMode: (mode) => {
-      if (mode === "all" && store.state.ticketsReady) fetchMissing(store, keep, { allowed: () => fetchesAll(raw) });
+      if (mode === "all" && store.state.ticketsReady) background();
+      ready.update();
     },
     // Forget this phone: the trip, the key and every setting, the offline
     // copy and the worker, then the no-key screen.
@@ -647,6 +691,7 @@ function start() {
     clock,
     where,
     storage: raw,
+    ready,
     onStay: (id) => {
       closeForDays();
       stayCard.open(id);
@@ -697,7 +742,9 @@ function start() {
     },
   });
   mountUndoBar(phone, store);
-  mountNet(phone, store);
+  mountNet(phone, store, {
+    ready: { model: () => ready.model(), subscribe: (fn) => ready.subscribe(fn), seen: () => ready.seen(), onFetch: () => fetchNow(), onOpen: (from) => ready.open(from) },
+  });
   mountFirst(phone, store, {
     connected,
     storage,
