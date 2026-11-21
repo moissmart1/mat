@@ -169,6 +169,12 @@ button.set-r:active,a.set-r:active{background:var(--key-hi);transform:translateY
 .st-btns button:disabled{opacity:.3;transform:none}
 #stSave{flex:1;border:0;background:var(--print);color:var(--stock)}
 #stDel{flex:none;padding:0 18px;border:1.5px solid var(--shu);background:none;color:var(--shu)}
+/* Discard draft: the sheet's secondary button, as Remove, on its own line
+   above Save. It shows only when the sheet opened with typing brought back. */
+#stDiscard{justify-self:start;height:52px;padding:0 18px;border:1.5px solid var(--shu);border-radius:6px;background:none;color:var(--shu);
+  font-weight:900;font-size:16px;transition:transform .12s ease-out}
+#stDiscard:active{transform:scale(.97)}
+#stDiscard:disabled{opacity:.3;transform:none}
 /* Saving (R36): the fields cannot be changed but stay in black print, and
    Saving… on the button stays readable. */
 .st-f input:disabled,.st-f textarea:disabled{opacity:1;color:var(--print);-webkit-text-fill-color:var(--print);border-style:dashed}

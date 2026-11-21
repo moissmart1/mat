@@ -33,6 +33,13 @@ const waitSheet = (page) =>
   );
 const waitSheetClosed = (page) => until(async () => !(await isOpen(page, "stop")), "the stop sheet closes");
 const idle = (page) => page.evaluate(() => globalThis.__matTest.store.idle());
+// Pictures are taken only when MAT_TAB_SHOTS names an output folder.
+const SHOTS = process.env.MAT_TAB_SHOTS || "";
+async function shot(page, name) {
+  if (!SHOTS) return;
+  require("node:fs").mkdirSync(SHOTS, { recursive: true });
+  await page.screenshot({ path: SHOTS + "/" + name });
+}
 
 // The stop names on a ticket, without the こんど tag the next stop carries.
 const rowTitles = (page, date) => page.evaluate((sel) => [...document.querySelectorAll(sel + " .r[data-id] .r-n")].map((n) => n.lastChild.textContent), tk(date));
@@ -170,15 +177,19 @@ function reach(page, selector, scroll = false) {
 
 module.exports = [
   {
-    name: "a failed stop edit survives closing and reloading until Discard draft",
+    name: "a failed stop edit survives closing and reloading, says so at the top, until Discard draft",
     async run({ page }) {
       const backend = await ready(page);
       await openEdit(page, SKY);
       const original = await value(page, "#stDetail");
       await page.fill("#stDetail", "Draft meeting point");
+      // Typing in an ordinary edit: no Discard draft and no line yet.
+      assert.equal(await visible(page, "#stDiscard"), false, "no Discard draft while typing");
+      assert.equal(await visible(page, "#stBack"), false, "no brought-back line while typing");
       backend.failWith = "network";
       await page.click("#stSave");
       await until(async () => !(await disabled(page, "#stDone")), "Done is available after the failed save");
+      assert.equal(await visible(page, "#stDiscard"), false, "a failed save brings nothing back, so no Discard draft");
       await page.click("#stDone");
       await waitSheetClosed(page);
       backend.failWith = null;
@@ -186,29 +197,120 @@ module.exports = [
       await until(() => visible(page, row(SKY)), "the stop is back");
       await openEdit(page, SKY);
       assert.equal(await value(page, "#stDetail"), "Draft meeting point");
+      assert.equal(await visible(page, "#stBack"), true, "the line says the typing is back");
+      assert.equal(await text(page, "#stBack"), "Your unsaved changes are back.");
+      assert.equal(await visible(page, "#stDiscard"), true);
+      assert.equal(await text(page, "#stDiscard"), "Discard draft");
+      // The line is the first thing in the sheet, above the day.
+      const order = await page.evaluate(() => document.getElementById("stBack").getBoundingClientRect().bottom <= document.getElementById("stDay").getBoundingClientRect().top + 0.5);
+      assert.ok(order, "the line sits at the top of the sheet");
+      // Discard draft is drawn as the sheet's secondary button (as Remove), not the browser's.
+      const look = await page.evaluate(() => {
+        const pick = (id) => {
+          const c = getComputedStyle(document.getElementById(id));
+          return [c.borderTopWidth, c.borderTopStyle, c.borderTopColor, c.backgroundColor, c.color, c.borderRadius, c.fontWeight, c.height];
+        };
+        return { discard: pick("stDiscard"), remove: pick("stDel") };
+      });
+      assert.deepEqual(look.discard, look.remove);
+      // Pictures: the top (the line) and the foot (Discard draft above Save), 390 and 320 wide.
+      const foot = (to) => page.evaluate((end) => {
+        const sh = document.getElementById("stop");
+        sh.scrollTop = end ? sh.scrollHeight : 0;
+      }, to);
+      for (const [w, h] of [[390, 844], [320, 700]]) {
+        await page.setViewportSize({ width: w, height: h });
+        await foot(false);
+        await shot(page, "stop-draft-restored-" + w + ".png");
+        await foot(true);
+        await shot(page, "stop-draft-restored-" + w + "-foot.png");
+      }
+      await page.setViewportSize({ width: 390, height: 844 });
+      await foot(false);
       await page.click("#stDiscard");
       assert.equal(await value(page, "#stDetail"), original);
+      assert.equal(await visible(page, "#stBack"), false, "the line goes with the draft");
+      assert.equal(await visible(page, "#stDiscard"), false);
       await page.click("#stDone");
       await openEdit(page, SKY);
       assert.equal(await visible(page, "#stDiscard"), false);
+      assert.equal(await visible(page, "#stBack"), false);
     },
   },
   {
-    name: "unsent new stops on the same day have separate drafts after a reload",
+    name: "a new stop whose save failed comes back on that day with its first id, and Discard draft clears it",
+    async run({ page }) {
+      const backend = await ready(page);
+      await openAdd(page);
+      await page.fill("#stWhat", "Walk");
+      backend.failWith = "network";
+      await page.click("#stSave");
+      await until(async () => !(await disabled(page, "#stDone")), "Done is available after the failed save");
+      await page.click("#stDone");
+      await waitSheetClosed(page);
+      backend.failWith = null;
+      const firstId = await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("mat.stopDraft.")).map((k) => JSON.parse(k.slice(14)).at(-1)));
+      assert.equal(firstId.length, 1);
+      await page.reload();
+      await until(() => page.evaluate(() => document.querySelectorAll("#rail .pg .tk").length === 11), "the tickets draw");
+      await openAdd(page);
+      assert.equal(await value(page, "#stWhat"), "Walk", "the typing is back");
+      assert.equal(await text(page, "#stBack"), "Your unsaved changes are back.");
+      assert.equal(await visible(page, "#stDiscard"), true);
+      await page.click("#stDiscard");
+      assert.equal(await value(page, "#stWhat"), "");
+      assert.equal(await visible(page, "#stBack"), false);
+      assert.equal(await visible(page, "#stDiscard"), false);
+      await page.click("#stDone");
+      await waitSheetClosed(page);
+      await openAdd(page);
+      assert.equal(await value(page, "#stWhat"), "", "nothing comes back after Discard draft");
+      assert.equal(await visible(page, "#stDiscard"), false);
+      const left = await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("mat.stopDraft.")).length);
+      assert.equal(left, 0, "no draft is left on the phone");
+      // Typed again, closed, and saved on the next opening: one stop, with the kept id.
+      await page.fill("#stWhat", "Walk");
+      await page.click("#stDone");
+      await waitSheetClosed(page);
+      const keptId = await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("mat.stopDraft.")).map((k) => JSON.parse(k.slice(14)).at(-1))[0]);
+      await openAdd(page);
+      assert.equal(await value(page, "#stWhat"), "Walk");
+      await page.click("#stSave");
+      await waitSheetClosed(page);
+      await idle(page);
+      const sent = backend.requests.filter((r) => r.action === "addStop");
+      assert.equal(sent.length, 1);
+      assert.equal(sent[0].args.stop.id, keptId, "the retry reuses the draft's id");
+      assert.equal((await rowTitles(page, D12)).filter((t) => t === "Walk").length, 1);
+      const after = await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("mat.stopDraft.")).length);
+      assert.equal(after, 0, "a saved stop leaves no draft");
+    },
+  },
+  {
+    name: "new stops abandoned on the same day: the newest comes back and the older drafts are taken off",
     async run({ page }) {
       await ready(page);
       for (const title of ["Walk", "Lunch"]) {
         await openAdd(page);
+        // The second opening brings Walk back; Lunch replaces it.
         await page.fill("#stWhat", title);
         await page.click("#stDone");
         await waitSheetClosed(page);
       }
+      // An older orphan from before (another try's id) on the same day, and one on a day the trip doesn't have.
+      await page.evaluate(([day]) => {
+        const keys = Object.keys(localStorage).filter((k) => k.startsWith("mat.stopDraft."));
+        const scope = JSON.parse(keys[0].slice(14));
+        localStorage.setItem("mat.stopDraft." + JSON.stringify([...scope.slice(0, 4), day, "orphan001"]), JSON.stringify({ fields: { stWhat: "Old" }, base: { stWhat: "" }, savedAt: 1 }));
+        localStorage.setItem("mat.stopDraft." + JSON.stringify([...scope.slice(0, 4), "2025-01-01", "orphan002"]), JSON.stringify({ fields: { stWhat: "Gone day" }, base: { stWhat: "" }, savedAt: 2 }));
+      }, [D12]);
       await page.reload();
-      const drafts = await page.evaluate(() => Object.keys(localStorage)
-        .filter((key) => key.startsWith("mat.stopDraft."))
-        .map((key) => JSON.parse(localStorage.getItem(key))));
-      assert.deepEqual(drafts.map((draft) => draft.fields.stWhat).sort(), ["Lunch", "Walk"]);
-      assert.equal(new Set(drafts.map((draft) => draft.addId)).size, 2);
+      await until(() => page.evaluate(() => document.querySelectorAll("#rail .pg .tk").length === 11), "the tickets draw");
+      await until(() => page.evaluate(() => !Object.keys(localStorage).some((k) => k.includes("orphan002"))), "the draft on a day the trip doesn't have is pruned at load");
+      await openAdd(page);
+      assert.equal(await value(page, "#stWhat"), "Lunch", "the newest draft comes back");
+      const drafts = await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("mat.stopDraft.")).map((k) => JSON.parse(localStorage.getItem(k)).fields.stWhat));
+      assert.deepEqual(drafts, ["Lunch"], "one draft for the day: the older ones are gone");
     },
   },
   {
