@@ -24,6 +24,22 @@ export function setAsideText(list) {
     : list.length + " lines in the Sheet can’t be read (" + why + "). They’re left out of the totals. Tell Mo.";
 }
 
+// Find an item on the receipt (issue 26): pure helpers, no DOM.
+export function findQuery(raw) {
+  return String(raw ?? "").trim();
+}
+export function findLines(lines, q) {
+  if (!q) return lines;
+  const low = q.toLowerCase();
+  return lines.filter((e) => String(e.title ?? "").toLowerCase().includes(low));
+}
+export function findCount(shown, total) {
+  return "Showing " + shown + " of " + total + (total === 1 ? " item" : " items");
+}
+export function noItemText(q) {
+  return "No item says \u201c" + q + "\u201d.";
+}
+
 function el(tag, cls, text) {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
@@ -117,9 +133,12 @@ function drawDay(day, lines, ctx) {
   return group;
 }
 
-function drawReceipt(rc, s, live, ctx, query) {
-  const head = el("div", "rc-h");
-  head.append(el("b", "", issuer(s.people)), document.createTextNode([s.trip.name, tripSpan(s.trip)].filter(Boolean).join(", ")));
+// parts = { head, find }: two nodes built once in mountMoney. The header is
+// refilled on every draw; the find line (with the real input) is never rebuilt,
+// moved or re-appended, so the keyboard and caret survive every redraw.
+function drawReceipt(rc, s, live, ctx, parts, query) {
+  const head = parts.head;
+  head.replaceChildren(el("b", "", issuer(s.people)), document.createTextNode([s.trip.name, tripSpan(s.trip)].filter(Boolean).join(", ")));
   head.append(el("div", "rc-no", "レシート No." + String(live.length).padStart(4, "0")));
   if (s.loadedAt !== null) {
     const fresh = el("button", "rc-fresh", freshText(s.loadedAt));
@@ -131,12 +150,19 @@ function drawReceipt(rc, s, live, ctx, query) {
   // Newest line first. Sorted oldest first (the sort is stable) and then turned
   // over, so lines with the same time also flip: a later Sheet row sits higher.
   const newestFirst = live.slice().sort((a, b) => ((a.addedAt || "") < (b.addedAt || "") ? -1 : (a.addedAt || "") > (b.addedAt || "") ? 1 : 0)).reverse();
-  const matches = query ? newestFirst.filter((e) => String(e.title ?? "").toLowerCase().includes(query)) : newestFirst;
+  const matches = findLines(newestFirst, query);
   const matchDays = new Set(matches.map((e) => e.day));
   const days = receiptDays(s, live, ctx.nowMs)
     .filter((day) => !query || matchDays.has(day))
     .map((day) => drawDay(day, matches.filter((e) => e.day === day), ctx));
-  if (query && !matches.length) days.push(el("p", "rc-empty", "No matching expenses."));
+  if (query && !matches.length) {
+    const none = el("div", "rc-empty rc-none");
+    const all = el("button", "", "Show all");
+    all.type = "button";
+    all.id = "rcShowAll";
+    none.append(el("span", "", noItemText(query)), all);
+    days.push(none, el("div", "rule"));
+  }
 
   const totalYen = sum(live, jpyOf);
   const tot = el("div", "rc-tot");
@@ -148,7 +174,14 @@ function drawReceipt(rc, s, live, ctx, query) {
   const foot = el("div", "rc-f");
   foot.append(el("i", "", "毎度ありがとうございます"), document.createTextNode("Thank you, come again."), el("div", "bars"));
 
-  rc.replaceChildren(head, el("div", "rule"), ...days, tot, inDollars, each, el("div", "rule"), foot);
+  // The frame only when it is not already there (first draw, or after the
+  // no-trip branch emptied #rc). Everything below the find line's rule is
+  // thrown away and drawn again; nothing at or above it is touched.
+  if (parts.find.parentNode !== rc) rc.replaceChildren(parts.head, el("div", "rule"), parts.find, el("div", "rule"));
+  const mark = parts.find.nextSibling;
+  while (mark.nextSibling) mark.nextSibling.remove();
+  rc.append(...days, tot, inDollars, each, el("div", "rule"), foot);
+  return { shown: matches.length, total: live.length };
 }
 
 export function mountMoney(root, store, { onRing = () => {}, onLine = () => {}, onHistory = () => {}, now = () => Date.now() } = {}) {
@@ -182,22 +215,47 @@ export function mountMoney(root, store, { onRing = () => {}, onLine = () => {}, 
   slip.id = "slip";
   const rc = el("div", "rc");
   rc.id = "rc";
-  const search = el("div", "rc-search");
-  search.hidden = true;
-  const label = el("label", "", "Search expenses");
-  label.htmlFor = "rcQuery";
-  const input = el("input");
+  const rcHead = el("div", "rc-h");
+  const find = el("div", "rc-find");
+  find.id = "rcFind";
+  find.setAttribute("role", "search");
+  const findRow = el("div", "rc-find-row");
+  const findL = el("label", "rc-find-l");
+  findL.htmlFor = "rcQuery";
+  const findJa = el("i", "", "品名");
+  findJa.lang = "ja";
+  findJa.setAttribute("aria-hidden", "true");
+  findL.append(findJa, document.createTextNode("Find"));
+  const input = el("input", "rc-q");
   input.id = "rcQuery";
   input.type = "search";
+  input.placeholder = "an item, like ramen";
+  input.setAttribute("aria-label", "Find an item on the receipt");
+  input.setAttribute("aria-describedby", "rcFindN");
   input.autocomplete = "off";
-  input.setAttribute("aria-controls", rc.id);
-  search.append(label, input);
-  root.replaceChildren(top, slip, search, rc);
+  input.setAttribute("autocapitalize", "off");
+  input.setAttribute("autocorrect", "off");
+  input.spellcheck = false;
+  input.setAttribute("enterkeyhint", "search");
+  const clear = el("button", "rc-clr", "Clear");
+  clear.type = "button";
+  clear.id = "rcClear";
+  clear.hidden = true;
+  findRow.append(findL, input, clear);
+  const count = el("p", "rc-find-n");
+  count.id = "rcFindN";
+  count.setAttribute("role", "status");
+  count.setAttribute("aria-live", "polite");
+  count.hidden = true;
+  find.append(findRow, count);
+  const parts = { head: rcHead, find };
+  root.replaceChildren(top, slip, rc);
   mountSlip(slip, store);
 
   histBtn.addEventListener("click", () => onHistory());
   const act = (target) => {
     if (target.closest("#fresh")) return store.refresh();
+    if (target.closest("#rcClear, #rcShowAll")) return clearFind();
     const add = target.closest("[data-addday]");
     if (add) return onRing(add.dataset.addday);
     const row = target.closest(".rc-row[data-id]");
@@ -212,6 +270,20 @@ export function mountMoney(root, store, { onRing = () => {}, onLine = () => {}, 
     }
   });
 
+  function clearFind() {
+    input.value = "";
+    render(store.state);
+    input.focus({ preventScroll: true });
+  }
+
+  function syncFind(shown, total) {
+    const q = findQuery(input.value);
+    clear.hidden = !q;
+    const words = q ? findCount(shown, total) : "";
+    if (count.textContent !== words) count.textContent = words;
+    count.hidden = !q;
+  }
+
   function render(s) {
     const names = s.people.map((p) => p.name);
     if (!s.trip || !s.trip.start || !names.length) {
@@ -222,14 +294,13 @@ export function mountMoney(root, store, { onRing = () => {}, onLine = () => {}, 
       asideNote.hidden = true;
       histBtn.hidden = true;
       slip.hidden = true;
-      search.hidden = true;
       input.value = "";
       rc.replaceChildren();
+      syncFind(0, 0);
       return;
     }
     histBtn.hidden = false;
     slip.hidden = false;
-    search.hidden = false;
     // The same reading the slip shows (one source: viewerOwed).
     const { live, list, bal, provisional } = viewerOwed(s);
     say.textContent = s.me ? sentence(standing(s.me, list, bal)) : "";
@@ -251,10 +322,21 @@ export function mountMoney(root, store, { onRing = () => {}, onLine = () => {}, 
     histN.textContent = String(fresh);
     histN.hidden = fresh === 0;
 
-    drawReceipt(rc, s, live, ctx, input.value.trim().toLowerCase());
+    const r = drawReceipt(rc, s, live, ctx, parts, findQuery(input.value));
+    syncFind(r.shown, r.total);
   }
 
   input.addEventListener("input", () => render(store.state));
+  input.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") {
+      if (!input.value) return;
+      ev.preventDefault();
+      clearFind();
+    } else if (ev.key === "Enter") {
+      ev.preventDefault();
+      input.blur();
+    }
+  });
   render(store.state);
   store.subscribe(render);
 }

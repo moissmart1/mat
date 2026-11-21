@@ -32,16 +32,26 @@ const BOARD = {
 
 module.exports = [
   ...[[393, 852], [320, 568], [844, 390], [1440, 900]].map(([width, height]) => ({
-    name: "expense search fits the receipt gutters at " + width + "x" + height,
+    name: "the find line sits on the receipt paper at " + width + "x" + height,
     viewport: { width, height },
     mobile: width < 1000,
     async run({ page }) {
       await open(page, { seed: SEED, nowMs: NOON12 });
       await waitRows(page, 8);
+      const rc = await page.locator("#rc").boundingBox();
       const box = await page.locator("#rcQuery").boundingBox();
-      const slip = await page.locator("#slip").boundingBox();
       assert.ok(box.height >= 44);
-      assert.ok(Math.abs(box.x - slip.x) < 1 && Math.abs(box.width - slip.width) < 1);
+      assert.ok(box.x >= rc.x + 14 - 1 && box.x + box.width <= rc.x + rc.width - 14 + 1, "inside the paper's padding");
+      const order = await page.evaluate(() => {
+        const rcEl = document.getElementById("rc");
+        const find = document.getElementById("rcFind");
+        const head = rcEl.querySelector(":scope > .rc-h");
+        const group = rcEl.querySelector(":scope > .rc-group");
+        return { child: find.parentNode === rcEl, afterHead: !!(head.compareDocumentPosition(find) & Node.DOCUMENT_POSITION_FOLLOWING), beforeGroup: !!(find.compareDocumentPosition(group) & Node.DOCUMENT_POSITION_FOLLOWING) };
+      });
+      assert.deepEqual(order, { child: true, afterHead: true, beforeGroup: true });
+      assert.ok(await page.evaluate(() => document.scrollingElement.scrollWidth <= window.innerWidth), "no sideways scroll");
+      assert.ok(await page.evaluate(() => { const q = document.getElementById("rcQuery"); return q.scrollWidth <= q.clientWidth; }), "the placeholder shows whole");
     },
   })),
   {
@@ -54,15 +64,20 @@ module.exports = [
 
       await page.fill("#rcQuery", "  RAMEN  ");
       await waitRows(page, 1);
+      await expectText(page, "#rcFindN", "Showing 1 of 8 items");
+      await expectText(page, "#rc .rc-tot span", "合計 Trip total");
       assert.match(await text(page, "#rc .rc-row"), /Ramen/);
       assert.equal(await page.locator("#rc .rc-group").count(), 1);
       assert.equal(await text(page, "#say"), balance);
       assert.equal(await text(page, "#rc .rc-tot b"), total);
 
       await page.fill("#rcQuery", "no such expense");
-      await expectText(page, "#rc .rc-empty", "No matching expenses.");
+      await expectText(page, "#rc .rc-none span", "No item says “no such expense”.");
       await page.fill("#rcQuery", "");
       await waitRows(page, 8);
+      await expectText(page, "#rc .rc-tot span", "合計 Total");
+      assert.equal(await visible(page, "#rcFindN"), false);
+      assert.equal(await visible(page, "#rcClear"), false);
     },
   },
   {
