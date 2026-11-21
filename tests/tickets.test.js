@@ -6,7 +6,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { LIMITS, sniff, shrink, createKeep, fetchMissing, toBase64, fromBase64, ticketKinds, ticketMark, fetchMode, setFetchMode, fetchesAll, pruneKeep, fetchOrder } from "../js/tickets.js";
+import { LIMITS, sniff, shrink, createKeep, keptOrLate, fetchMissing, toBase64, fromBase64, ticketKinds, ticketMark, fetchMode, setFetchMode, fetchesAll, pruneKeep, fetchOrder } from "../js/tickets.js";
 import { createApi } from "../js/api.js";
 import { createStore } from "../js/store.js";
 import { changeText } from "../js/format.js";
@@ -852,4 +852,20 @@ test("fetchOrder: today is the Days clock's day (Dec 9 in its own zone after Jap
     tickets: [{ id: "inn", stay: "dec9stay0801" }, { id: "later", stay: "laterstay01" }, { id: "fl", stop: "dec9stop0903" }],
   });
   assert.deepEqual(fetchOrder(s, et("2026-12-09T11:45")).map((t) => t.id), ["inn", "fl", "later"]);
+});
+
+test("keptOrLate: waits for every waiting picture's put, and no longer than its limit for a keep that never answers", async () => {
+  let doneA;
+  const a = new Promise((r) => { doneA = r; });
+  let over = false;
+  const waiting = keptOrLate([a, Promise.resolve(true), Promise.reject(new Error("IndexedDB"))], 10000).then(() => { over = true; });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(over, false, "a put still writing is waited for");
+  doneA(true);
+  await waiting;
+  assert.equal(over, true);
+  const t0 = Date.now();
+  await keptOrLate([new Promise(() => {})], 50);
+  assert.ok(Date.now() - t0 < 1000, "a put that never answers is given up on");
+  await keptOrLate([]);
 });

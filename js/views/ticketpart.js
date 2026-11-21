@@ -27,7 +27,7 @@
 // textContent; a thumbnail is an <img> from a blob: URL of bytes the phone
 // made itself (or checked, from the keep).
 
-import { LIMITS, NOT_A_TICKET, sniff, shrink, shrinkCanvas, pdfPages } from "../tickets.js";
+import { LIMITS, NOT_A_TICKET, sniff, shrink, shrinkCanvas, pdfPages, keptOrLate } from "../tickets.js";
 import { newId } from "../time.js";
 import { fillSeal } from "../picture.js";
 
@@ -392,6 +392,7 @@ export function mountTicketPart(box, store, keep, { on = "stop" } = {}) {
     stop = (store.state[onStay ? "stays" : "stops"] || []).find((s) => s && s.id === stopId) || { id: stopId };
     const todo = picks.filter((p) => p.state !== "saved");
     const at = keep.gen; // a wipe meanwhile: nothing more is kept or sent
+    const waitingKept = []; // the keep.put of each picture that waits on the phone
     for (const p of todo) {
       if (at !== keep.gen || store.state.status === "nokey") break;
       p.state = "saving";
@@ -402,7 +403,8 @@ export function mountTicketPart(box, store, keep, { on = "stop" } = {}) {
       // Into the keep too, so a picture that has to wait for signal is sent from
       // there after a reload. Not waited for (fix round 1, I3): a keep that
       // never answers must not hold up Save; the data travels with the add.
-      keep.put(id, p.blob, { gen: at });
+      // One that waits for signal is waited for after the loop (keptOrLate).
+      const kept = keep.put(id, p.blob, { gen: at });
       const sameWho = liveOn(stopId).filter((t) => (t.who || "") === p.who).length;
       const where = onStay ? { stay: stopId } : { stop: stopId };
       const token = store.addTicket({ id, ...where, who: p.who, seat: p.seat.trim(), page: Math.min(LIMITS.perStop, Math.max(p.page, sameWho + 1)), mime: p.mime, w: p.w, h: p.h, data: p.data });
@@ -413,6 +415,7 @@ export function mountTicketPart(box, store, keep, { on = "stop" } = {}) {
       } else if (res && res.reason === "queued") {
         p.state = "saved";
         out.waiting += 1;
+        waitingKept.push(kept);
         if (res.busy) out.busy += 1;
       } else {
         p.state = "failed";
@@ -423,6 +426,8 @@ export function mountTicketPart(box, store, keep, { on = "stop" } = {}) {
       picks = picks.filter((x) => x.state !== "saved");
       drawPicked();
     }
+    // Only "waiting on this phone" once they are in the keep: closing MAT before then would lose them.
+    if (waitingKept.length) await keptOrLate(waitingKept);
     say.textContent = out.failed
       ? (out.failed === 1 ? "One picture wasn’t saved. " : out.failed + " pictures weren’t saved. ") + W.rest
       : out.waiting

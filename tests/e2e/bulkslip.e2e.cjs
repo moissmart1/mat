@@ -396,6 +396,50 @@ cases.push({
   },
 });
 
+// 2026-11-21 (the bulkslip flake): a picture that waits for signal is in the
+// keep before the slip says it waits, so MAT closed (here, reloaded) at once
+// after Add still has it. The keep's writes are slowed here; before the fix
+// the slip said "waits on this phone" while the bytes were only in memory,
+// and after the reload the picture was dropped as lost.
+cases.push({
+  name: "no signal at Add, MAT closed at once after: the waiting picture was kept first and goes up when signal returns",
+  async run({ page }) {
+    await page.addInitScript(() => {
+      const real = Blob.prototype.arrayBuffer;
+      Blob.prototype.arrayBuffer = function () {
+        const p = real.call(this);
+        const ms = globalThis.__slowBytes || 0;
+        return ms ? p.then((b) => new Promise((resolve) => setTimeout(() => resolve(b), ms))) : p;
+      };
+    });
+    const backend = await tripWith({ old: false, lines: [LINES[3]], folder: [FOLDER()[3]] });
+    await ready(page, backend);
+    await addTickets(page);
+    await slipUp(page);
+    await expectText(page, "#bulkPunch", "Add 1 ticketUndo from History");
+    // No signal, and the phone knows it (a check met none), so Add keeps the picture without sending it.
+    backend.failWith = "network";
+    await page.evaluate(() => globalThis.__matTest.store.checkRev());
+    assert.equal(await page.evaluate(() => globalThis.__matTest.store.state.online), false);
+    await page.evaluate(() => { globalThis.__slowBytes = 800; });
+    await page.click("#bulkPunch");
+    await added(page);
+    await expectText(page, "#bulk .sl.is-done .sl-c", "D3 Sat 10:00Aonami Museum1 picture waiting for signal");
+    assert.equal(calls(backend, "addTicket").length, 0, "never sent");
+    // MAT closed at once (a reload), then signal back.
+    await page.reload();
+    await page.clock.resume();
+    await until(() => page.evaluate(() => !!globalThis.__matTest && document.querySelectorAll("#rc .rc-row").length > 0), "the app draws again", 10000);
+    await until(() => page.evaluate(() => globalThis.__matTest.store.state.online === false), "the reload's load meets no signal", 10000);
+    await page.evaluate(() => globalThis.__matTest.store.idle());
+    backend.failWith = null;
+    await page.evaluate(() => globalThis.__matTest.store.checkRev());
+    await page.evaluate(() => globalThis.__matTest.store.idle());
+    await until(() => live(backend).some((r) => r.planner_id === "T004:aaaaaaaaaa04"), "the waiting picture goes up", 15000);
+    assert.equal(await page.evaluate(() => globalThis.__matTest.store.outbox().unsent), 0);
+  },
+});
+
 cases.push({
   name: "a file gone from the list and a cancelled line open on Leave its pictures on; taking them off is said on the key",
   async run({ page }) {
