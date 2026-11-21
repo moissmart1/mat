@@ -238,7 +238,7 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
 
   // The part of the Days view a row can be read in, in the same terms: below
   // the status bar and no-signal strip (the view's top padding) and the demo
-  // banner, above the tab bar.
+  // banner, above the tab bar and the next ticket's slot (js/views/nextticket.js).
   function readable() {
     const pad = parseFloat(getComputedStyle(root).paddingTop) || 0;
     const banner = demo.hidden ? 0 : demo.offsetHeight;
@@ -246,7 +246,10 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
     const box = root.getBoundingClientRect();
     // Held sideways the bar is a rail beside the view, not over its foot.
     const bar = nav && nav.offsetHeight ? nav.getBoundingClientRect() : null;
-    const under = bar && bar.left < box.right && bar.right > box.left ? Math.max(0, box.bottom - bar.top) : 0;
+    const slot = document.getElementById("nextTicket");
+    const st = slot && !slot.hidden && slot.offsetHeight ? slot.getBoundingClientRect() : null;
+    const over = (r) => (r && r.left < box.right && r.right > box.left ? Math.max(0, box.bottom - r.top) : 0);
+    const under = Math.max(over(bar), over(st));
     const top = root.scrollTop + pad + banner + 8;
     return { top, bottom: Math.max(top, root.scrollTop + root.clientHeight - under - 8) };
   }

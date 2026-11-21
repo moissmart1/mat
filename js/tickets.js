@@ -38,6 +38,8 @@
 //   codes, "one" code for everyone, "pages", "ref" facts only) and whether
 //   every picture is on this phone. stayMark: the same for a stay's booking
 //   ("pics" or "ref"; a picture on a stay has `stay` instead of `stop`).
+// - whoseOf(stop, pics, me, people): whose the stop's ticket is ("mine",
+//   "all", "none", "ref"), the seat to print and who holds a code of their own.
 
 import { tripNow } from "./plan.js";
 
@@ -654,6 +656,36 @@ export function ticketKinds(list) {
 }
 
 export const hasFacts = (stop) => !!stop && ["tkRef", "tkName", "tkPeople", "tkSeat"].some((k) => typeof stop[k] === "string" && stop[k].trim() !== "");
+
+// Whose a stop's ticket is, for the person on this phone (me): null when the
+// stop has no ticket at all, else { kind, seat, holders, count }.
+// - kind: "mine" (a per-person code of mine), "all" (one code, pages, or a
+//   per-person stop's picture for everyone when none is mine), "none" (per-
+//   person codes, none mine, none for everyone), "ref" (the facts alone).
+// - seat: mine, my first picture's seat by page, else the stop's; all and
+//   ref, the stop's; none, "".
+// - holders: the names that have their own code, in trip order (people, the
+//   state's names in order; a name not among them after, by name); count:
+//   how many. me "" (nobody chosen) is nobody's.
+// pics: the stop's pictures (only live ones count).
+export function whoseOf(stop, pics, me, people = []) {
+  if (!stop) return null;
+  const tkSeat = typeof stop.tkSeat === "string" ? stop.tkSeat.trim() : "";
+  const k = ticketKinds((Array.isArray(pics) ? pics : []).filter((t) => t && t.stop === stop.id));
+  if (!k.kind) return hasFacts(stop) ? { kind: "ref", seat: tkSeat, holders: [], count: 0 } : null;
+  const names = Array.isArray(people) ? people : [];
+  const rank = (n) => (names.indexOf(n) === -1 ? 1e6 : names.indexOf(n));
+  const holders = [...new Set(k.list.filter((t) => t.who).map((t) => t.who))].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+  const out = (kind, seat) => ({ kind, seat, holders, count: holders.length });
+  if (k.kind !== "pp") return out("all", tkSeat);
+  const mine = me ? k.list.filter((t) => t.who === me).sort((a, b) => (Number(a.page) || 0) - (Number(b.page) || 0)) : [];
+  if (mine.length) {
+    const own = typeof mine[0].seat === "string" ? mine[0].seat.trim() : "";
+    return out("mine", own || tkSeat);
+  }
+  if (k.list.some((t) => !t.who)) return out("all", tkSeat);
+  return out("none", "");
+}
 
 // The 券 mark for a stop: null (no ticket at all), or { kind, label, saved }.
 export function ticketMark(stop, tickets, have) {

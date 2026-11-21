@@ -22,13 +22,14 @@ import { mountNet } from "./views/net.js";
 import { mountTodos } from "./views/todos.js";
 import { mountStampBook } from "./views/stampbook.js";
 import { mountPassCase } from "./views/passcase.js";
+import { mountNextTicket } from "./views/nextticket.js";
 import { tabName } from "./todos.js";
 import { rollingCount } from "./fx.js";
 import { createUpdater, otherVersionIn } from "./update.js";
 import { APP_VERSION } from "./config.js";
 import { isWide, onWide } from "./shape.js";
 import { createWhere } from "./where.js";
-import { createKeep, fetchMissing, ticketMark, stayMark, fetchesAll, pruneKeep, readKept } from "./tickets.js";
+import { createKeep, fetchMissing, ticketMark, stayMark, whoseOf, fetchesAll, pruneKeep, readKept } from "./tickets.js";
 import { mountStub } from "./views/stub.js";
 import { mountStaySheet } from "./views/staysheet.js";
 import { tripNow, zoneOf, daySpan } from "./plan.js";
@@ -643,6 +644,23 @@ function start() {
   tabs.onShown((t) => {
     if (t === "before") todos.shown();
   });
+  // A stop's 券 mark on Days, with whose it is (js/tickets.js whoseOf): for
+  // your own code, your name and picture too, so a changed picture redraws the day.
+  const tixMark = (stop, s) => {
+    if (!s.ticketsReady) return null;
+    const m = ticketMark(stop, s.tickets, keep.have);
+    if (!m) return null;
+    const people = (s.people || []).filter((p) => p && typeof p.name === "string");
+    const me = typeof s.me === "string" ? s.me : "";
+    const w = whoseOf(stop, (s.tickets || []).filter((t) => t && t.stop === stop.id), me, people.map((p) => p.name));
+    if (!w) return m;
+    const out = { ...m, whose: { kind: w.kind, seat: w.seat, count: w.count } };
+    if (w.kind === "mine") {
+      const p = people.find((x) => x.name === me);
+      out.seal = { name: me, photo: p && typeof p.photo === "string" ? p.photo : "" };
+    }
+    return out;
+  };
   const days = mountDays(document.getElementById("vDays"), store, {
     clock,
     where,
@@ -670,7 +688,7 @@ function start() {
     // A stop being added or changed is being looked at: the rail stays put.
     held: () => stopSheet.isOpen() || staySheet.isOpen() || stub.isOpen(),
     tickets: {
-      mark: (stop, s) => (s.ticketsReady ? ticketMark(stop, s.tickets, keep.have) : null),
+      mark: (stop, s) => tixMark(stop, s),
       stayMark: (stay, s) => (s.ticketsReady ? stayMark(stay, s.tickets, keep.have) : null),
       subscribe: (fn) => keep.subscribe(fn),
     },
@@ -694,6 +712,17 @@ function start() {
       you.close(false);
       closeDaySheets();
       history.open();
+    },
+  });
+  // Your next ticket in the slot above the bar, on Days (js/views/nextticket.js):
+  // the same stub the pass case and the stop open.
+  mountNextTicket(phone, store, {
+    clock,
+    keep,
+    where,
+    onTicket: (id, button) => {
+      closeForDays();
+      stub.open(id, button);
     },
   });
   mountUndoBar(phone, store);

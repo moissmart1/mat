@@ -59,12 +59,16 @@
 //   the stops that have a ticket: the 券 box under the name (solid when every
 //   picture is on this phone, dashed when one still needs signal) and, when
 //   open, 切符 Show ticket (.r-tk) above the links. Absent, a stop reads
-//   exactly as it did.
+//   exactly as it did. With whose ({ kind, seat, count }, js/tickets.js
+//   whoseOf) the 券 line says whose it is (a seal and words: Yours, all of
+//   us, none for you yet) and so does Show ticket's right side; seal
+//   ({ name, photo }) is your picture for your own code.
 
 import { minutesOf, issueLine, isPast, nextLine, mapsUrl, safeHref, gateDate } from "../plan.js";
 import { dayHead, yen, weekdayOf } from "../format.js";
 import { rng, gateStampSVG } from "../stamp.js";
 import { nightsShort, nightsLong } from "../staywords.js";
+import { sealFor } from "./nextticket.js";
 
 const SVG = "http://www.w3.org/2000/svg";
 
@@ -174,7 +178,7 @@ function more(stop, tix) {
     show.type = "button";
     const w = el("span");
     w.append(el("b", "", "切符"), "Show ticket");
-    show.append(w, el("i", "", tix.label));
+    show.append(w, el("i", "", showWords(tix)));
     inner.append(show);
   }
   const btns = el("div", "r-btns");
@@ -201,6 +205,51 @@ function more(stop, tix) {
   }
   wrap.append(inner);
   return wrap;
+}
+
+// The 券 line under a stop's name: the box (dashed when a picture still
+// needs signal), then whose it is: your seal and seat, 全 and all of us, a
+// dashed seal and none for you yet, or reference only.
+function markLine(tix) {
+  const fx = el("div", "r-fx tk-mark");
+  fx.append(el("b", tix.saved ? "" : "is-dash", "券"), " ");
+  const w = tix.whose;
+  const k = w ? w.kind : "";
+  if (tix.kind === "ref" || k === "ref") {
+    fx.append(el("span", "", "Reference only, no file"));
+    return fx;
+  }
+  if (!w) {
+    fx.append(el("span", "", tix.label + " · " + (tix.saved ? "on this phone" : "needs signal once")));
+    return fx;
+  }
+  fx.classList.add("is-whose");
+  const words = el("span", "wh-w");
+  if (k === "mine") {
+    words.append(el("u", "", "Yours"), " · " + (!tix.saved ? "needs signal once" : w.seat || "on this phone"));
+  } else if (k === "none") {
+    words.append("None for you yet");
+  } else if (!tix.saved) {
+    words.append(el("u", "", "All of us"), " · needs signal once");
+  } else if (tix.kind === "pages") {
+    words.append(tix.label + " for all of us");
+  } else {
+    words.append("One code for all of us");
+  }
+  const seal = k === "mine" ? sealFor("me", tix.seal ? { name: tix.seal.name, photo: tix.seal.photo } : null, tix.seal ? tix.seal.name : "", "s20") : sealFor(k === "none" ? "none" : "all", null, "", "s20");
+  const sp = el("span", "wh-l");
+  sp.append(seal, words);
+  fx.append(sp);
+  return fx;
+}
+
+// Show ticket's right side: Yours · 1 of 3, Not yours · 2 codes, else the label.
+function showWords(tix) {
+  const w = tix.whose;
+  if (!w || tix.kind === "ref") return tix.label;
+  if (w.kind === "mine") return w.count > 1 ? "Yours · 1 of " + w.count : "Yours";
+  if (w.kind === "none") return "Not yours · " + tix.label;
+  return tix.label;
 }
 
 function row(stop, model) {
@@ -233,9 +282,7 @@ function row(stop, model) {
   }
   const tix = model.tix && model.tix[stop.id] ? model.tix[stop.id] : null;
   if (tix) {
-    const fx = el("div", "r-fx tk-mark");
-    fx.append(el("b", tix.saved ? "" : "is-dash", "券"), " ", el("span", "", tix.kind === "ref" ? "Reference only, no file" : tix.label + " · " + (tix.saved ? "on this phone" : "needs signal once")));
-    body.append(fx);
+    body.append(markLine(tix));
   }
   const here = next && model.hereNext ? model.hereNext : null;
   if (here) body.append(hereRow(here.dist));

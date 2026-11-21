@@ -14,7 +14,11 @@
 //
 // What it shows, by the stop's pictures (js/tickets.js ticketKinds):
 // - per-person codes: one page each, swiped or picked with the seals; it
-//   opens on this phone's person first, then the others in trip order;
+//   opens on this phone's person first, then the others in trip order. Each
+//   person's page says whose it is at its head (issue #83, Mo's pick A-2):
+//   their seal with their picture, the name, and あなたの券 Your code, or
+//   "Mo’s code, not yours" in vermilion. The seals under the code are all in
+//   colour, the one in view ringed in vermilion;
 // - one code for everyone; a PDF's pages one under another (tap to enlarge);
 // - no picture: the booking ref, large, with a sentence for staff.
 // A picture not on this phone yet is fetched now when there is signal
@@ -37,6 +41,7 @@ import { fillSeal } from "../picture.js";
 import { dayHead } from "../format.js";
 import { ticketKinds, hasFacts, hasStayFacts, stayPictures, sniff, fromBase64 } from "../tickets.js";
 import { nightsShort, nightsLong, stayDots, stayDayNums, peopleWord } from "../staywords.js";
+import { sealFor } from "./nextticket.js";
 
 const NUMBER_WORD = { 2: "TWO", 3: "THREE", 4: "FOUR", 5: "FIVE", 6: "SIX" };
 
@@ -295,7 +300,24 @@ export function mountStub(root, store, keep, { clock = null } = {}) {
         const pg = el("div", "pp-pg");
         pg.dataset.who = who;
         const head = el("div", "stub-who");
-        head.append(el("b", "", who ? who.toUpperCase() : "ALL"), el("span", "", str(pics[0].seat) || (who ? "" : str(stop.tkSeat))));
+        const seat = el("span", "", str(pics[0].seat) || (who ? "" : str(stop.tkSeat)));
+        if (who) {
+          // Whose code this is: the seal, the name, and yours or not yours.
+          head.classList.add("is-whose");
+          const mine = !!me && who === me;
+          const person = (store.state.people || []).find((x) => x && x.name === who);
+          const hd = el("span", "wh-head");
+          const words = el("span");
+          const small = el("small", mine ? "" : "is-not");
+          if (mine) {
+            const jp = el("span", "", "あなたの券 ");
+            jp.setAttribute("aria-hidden", "true");
+            small.append(jp, "Your code");
+          } else small.append(who + "’s code, not yours");
+          words.append(el("b", "", who.toUpperCase()), small);
+          hd.append(sealFor(mine ? "me" : "other", person || null, who, "s46"), words);
+          head.append(hd, seat);
+        } else head.append(el("b", "", "ALL"), seat);
         pg.append(head, ...pics.map((t) => slot(t, { zoom: pics.length > 1, page: pics.length > 1 })));
         pp.append(pg);
       });

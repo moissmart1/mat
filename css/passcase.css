@@ -115,7 +115,25 @@
 .pc-pk.is-used{opacity:.55}
 .pc-pk.is-used .pc-t,.pc-pk.is-used .pc-nt{text-decoration:line-through;text-decoration-thickness:1.5px}
 
+/* ---------- whose each ticket is (issue #83, Mo's pick B-2) ---------- */
+/* The holder's line along the foot of the window's ticket, as a commuter pass prints its holder. */
+.wh-name{display:flex;align-items:center;gap:8px;margin:0 12px;padding:7px 0 9px;border-top:1.5px solid var(--print);min-width:0}
+.wh-name b{min-width:0;font-size:18px;font-weight:900;letter-spacing:.06em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wh-name b i{margin-left:3px;font-size:12px;font-weight:700;letter-spacing:0}
+.wh-name b.wh-none{font-size:14px;letter-spacing:.04em}
+.wh-name-s{font-size:13px;font-weight:900;white-space:nowrap}
+.wh-oth{display:flex;gap:3px;margin-left:auto}
+/* A slot's whose column: a seal and one word. */
+.wh-col{display:grid;justify-items:center;gap:2px;min-width:46px}
+.wh-col i{font-size:10px;font-weight:900;line-height:1.1;white-space:nowrap}
+.pc-pk .pc-t small{white-space:nowrap}
+
 @media (max-width:350px){
+  .wh-col{min-width:40px}
+  .wh-name{gap:6px;margin:0 10px}
+  .wh-name b{font-size:16px}
+  .wh-name b.wh-none{font-size:12.5px}
+  .wh-name-s{font-size:12px}
   .pc-case{margin:0 8px;padding:12px 8px 14px}
   .pc-slip{margin-left:22px;margin-right:22px;width:calc(100% - 44px)}
   .pc-title{font-size:21px}
