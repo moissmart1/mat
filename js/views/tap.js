@@ -16,6 +16,11 @@
 // - clear(): forget the finger (the screen went away).
 
 const MOVED = 10;
+// MAT differs from the Chicago copy here: a rescued tap must come up within HELD ms
+// of going down (a long press is not a tap), and the finger's record is dropped
+// STALE ms after a rescue so it cannot swallow a later click (losttap review M1, M2).
+const HELD = 1000;
+const STALE = 500;
 
 export function tapOnRelease(host, { pick, act }) {
   let down = null; // { el, what, id, x, y, done }
@@ -24,13 +29,16 @@ export function tapOnRelease(host, { pick, act }) {
     if (!ev.isPrimary || ev.button !== 0) return;
     const what = pick(ev.target);
     if (what === null || what === undefined) return;
-    down = { el: ev.target, what, id: ev.pointerId, x: ev.clientX, y: ev.clientY, done: false };
+    down = { el: ev.target, what, id: ev.pointerId, x: ev.clientX, y: ev.clientY, at: ev.timeStamp, done: false };
   });
   host.addEventListener("pointerup", (ev) => {
     const d = down;
     if (!d || d.done || d.el.isConnected) return;
     d.done = true; // a click that does come is not a second tap, tap or not
-    if (ev.pointerId === d.id && Math.hypot(ev.clientX - d.x, ev.clientY - d.y) < MOVED) act(d.what);
+    setTimeout(() => {
+      if (down === d) down = null;
+    }, STALE);
+    if (ev.pointerId === d.id && ev.timeStamp - d.at <= HELD && Math.hypot(ev.clientX - d.x, ev.clientY - d.y) < MOVED) act(d.what);
   });
   host.addEventListener("pointercancel", () => {
     down = null;

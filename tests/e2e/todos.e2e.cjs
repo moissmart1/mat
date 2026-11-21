@@ -1143,3 +1143,51 @@ module.exports.push({
     assert.equal(sent(backend, "tickTodo").length, 1, "ticked once");
   },
 });
+
+// Review of the #77 fix (I1): the rescue ticks the item pressed, not the # pressed.
+module.exports.push({
+  name: "a pull that puts another item under the pressed # between press and release: no tick, no stamp",
+  async run({ page }) {
+    const backend = await ready(page);
+    await openRow(page, "3");
+    const spot = await page.evaluate((s) => {
+      const b = document.querySelector(s);
+      b.scrollIntoView({ block: "center" });
+      const r = b.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    }, row(3) + " .bw-tick");
+    await page.mouse.move(spot.x, spot.y);
+    await page.mouse.down();
+    // Mo renumbers his planner: #3 is another item now. A pull lands under the finger.
+    bookRow(backend, 3)[1] = "Buy a different thing entirely";
+    await page.dispatchEvent("#bwFetch", "click");
+    await until(() => page.evaluate(() => !document.querySelector('#bwOpen .bw-r[data-id="3"] .bw-n') || document.querySelector('#bwOpen .bw-r[data-id="3"] .bw-n').textContent.includes("different thing")), "row 3 shows the new item");
+    await page.mouse.up();
+    await page.waitForTimeout(600);
+    assert.equal(sent(backend, "tickTodo").length, 0, "no tick sent");
+    assert.equal(stored(backend, "3").ticked_by || "", "", "not ticked");
+    assert.equal(await page.evaluate((s) => !!document.querySelector(s + ".is-landed"), row(3)), false, "not stamped");
+  },
+});
+
+// Review M1: a press held past a second is not a tap, so a redraw during it does not tick on release.
+module.exports.push({
+  name: "a press held over a second with a redraw under it does not tick on release",
+  async run({ page }) {
+    const backend = await ready(page);
+    await openRow(page, "3");
+    const spot = await page.evaluate((s) => {
+      const b = document.querySelector(s);
+      b.scrollIntoView({ block: "center" });
+      const r = b.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    }, row(3) + " .bw-tick");
+    await page.mouse.move(spot.x, spot.y);
+    await page.mouse.down();
+    await page.evaluate((s) => { const b = document.querySelector(s); b.replaceWith(b.cloneNode(true)); }, row(3) + " .bw-tick");
+    await page.clock.fastForward(1200); // the page clock is faked: event times follow it
+    await page.mouse.up();
+    await page.waitForTimeout(400);
+    assert.equal(sent(backend, "tickTodo").length, 0, "no tick sent");
+  },
+});

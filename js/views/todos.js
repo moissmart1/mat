@@ -77,6 +77,7 @@ function button(cls, text) {
   return b;
 }
 
+const sameItem = (a, b) => String(a == null ? "" : a).replace(/[\s\u00a0]+/g, " ").trim() === String(b == null ? "" : b).replace(/[\s\u00a0]+/g, " ").trim();
 const list = (v) => (Array.isArray(v) ? v : []);
 const calm = () => !!(globalThis.matchMedia && globalThis.matchMedia("(prefers-reduced-motion: reduce)").matches);
 
@@ -505,9 +506,16 @@ export function mountTodos(root, store, { clock, now = () => Date.now(), onState
     pick: (t) => {
       const b = t.closest('[data-act="tick"]');
       const r = b && b.closest(".bw-r[data-id]");
-      return r && rows.contains(r) ? { id: r.dataset.id } : null;
+      if (!r || !rows.contains(r)) return null;
+      const it = list(store.state.todos).find((x) => x && x.id === r.dataset.id);
+      return it ? { id: it.id, item: it.item } : null;
     },
-    act: (what) => tick(what.id),
+    // The # now holds another item (a pull renumbered the planner): no tick.
+    // Same comparison as the backend's sameItem_: whitespace-normalised.
+    act: (what) => {
+      const it = list(store.state.todos).find((x) => x && x.id === what.id);
+      if (it && sameItem(it.item, what.item)) tick(what.id);
+    },
   });
 
   section.addEventListener("click", (ev) => {
