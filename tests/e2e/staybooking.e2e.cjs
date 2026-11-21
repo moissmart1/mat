@@ -77,33 +77,54 @@ async function goTickets(page) {
 const pagesLoaded = (page, n) => until(() => page.evaluate((k) => [...document.querySelectorAll("#tix .pages .stub-code img")].filter((i) => i.naturalWidth > 0).length === k, n), "the pages show");
 const photoLoaded = (page) => until(() => page.evaluate(() => { const i = document.querySelector("#stay .sy-ph"); return !!i && i.complete && i.naturalWidth > 0; }), "the photo loads");
 
+// Measuring waits for a settled page: every face the screen asked for is loaded
+// (a face is only requested when something first draws in it), no sheet or tab
+// is still sliding, and the layout has stayed put for two frames in a row.
+const settle = (page) => page.evaluate(async () => {
+  const frame = () => new Promise((r) => requestAnimationFrame(() => r()));
+  const sig = () => document.fonts.status + "|" + [...document.querySelectorAll("#stay, #vTickets, #tix, .sy, .bk-form, .pc-stay, .tstub")].map((e) => { const b = e.getBoundingClientRect(); return [b.top, b.height, b.width].join(","); }).join(";");
+  // Only what is being measured: the sheet, the tab and the booking (the Days rail's own fan-out is not).
+  const mine = (a) => { const t = a.effect && a.effect.target; return !!t && !!t.closest && !!t.closest("#stay, #vTickets, #tix, #staySheet"); };
+  const moving = () => document.getAnimations({ subtree: true }).some((a) => a.playState === "running" && mine(a) && a.effect.getTiming().iterations !== Infinity);
+  let last = "";
+  let same = 0;
+  for (let i = 0; i < 300 && same < 3; i++) {
+    await document.fonts.ready;
+    await frame();
+    const now = sig();
+    same = now === last && !moving() && document.fonts.status === "loaded" ? same + 1 : 0;
+    last = now;
+  }
+  return same >= 3 ? true : JSON.stringify({ fonts: document.fonts.status, moving: moving(), anims: document.getAnimations().map((a) => (a.animationName || a.transitionProperty) + ":" + a.playState + ":" + (a.effect && a.effect.target && a.effect.target.className)) });
+}).then((ok) => assert.equal(ok, true, "the page settles: " + ok));
+
 // No sideways scroll anywhere, nor inside the given element.
-const noSideways = (page, sel) => page.evaluate((s) => {
+const noSideways = async (page, sel) => (await settle(page), page.evaluate((s) => {
   const box = s ? document.querySelector(s) : null;
   const over = box ? [...box.querySelectorAll("*")].filter((e) => e.getClientRects().length && e.getBoundingClientRect().right > innerWidth + 0.5).map((e) => e.className || e.tagName) : [];
   return { doc: document.scrollingElement.scrollWidth <= innerWidth, box: !box || box.scrollWidth <= box.clientWidth + 0.5, over };
-}, sel);
+}, sel));
 
 // How many lines a Range over the element's text takes (one client rect per line box).
-const lineRects = (page, sel) => page.evaluate((s) => {
+const lineRects = async (page, sel) => (await settle(page), page.evaluate((s) => {
   const r = document.createRange();
   r.selectNodeContents(document.querySelector(s));
   return r.getClientRects().length;
-}, sel);
+}, sel));
 // The text's own right and left edges (a Range), and the element's box.
-const edges = (page, sel) => page.evaluate((s) => {
+const edges = async (page, sel) => (await settle(page), page.evaluate((s) => {
   const el = document.querySelector(s);
   const r = document.createRange();
   r.selectNodeContents(el);
   const b = r.getBoundingClientRect();
   return { left: b.left, right: b.right };
-}, sel);
-const rectOf = (page, sel) => page.evaluate((s) => {
+}, sel));
+const rectOf = async (page, sel) => (await settle(page), page.evaluate((s) => {
   const b = document.querySelector(s).getBoundingClientRect();
   return { left: b.left, right: b.right, top: b.top, bottom: b.bottom, height: b.height };
-}, sel);
+}, sel));
 // Every word of the element's text is on one line (no word split), and how many lines it takes.
-const wordsWhole = (page, sel) => page.evaluate((s) => {
+const wordsWhole = async (page, sel) => (await settle(page), page.evaluate((s) => {
   const el = document.querySelector(s);
   const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
   const split = [];
@@ -121,7 +142,7 @@ const wordsWhole = (page, sel) => page.evaluate((s) => {
   all.selectNodeContents(el);
   const tops = new Set([...all.getClientRects()].map((q) => Math.round(q.top)));
   return { words, split, lines: tops.size };
-}, sel);
+}, sel));
 
 const cases = [];
 
@@ -232,9 +253,11 @@ cases.push({
     const card = await wordsWhole(page, "#stay .sy-name");
     assert.deepEqual(card.split, []);
     assert.ok(card.lines >= 2, "the name takes " + card.lines + " lines");
-    const name = await rectOf(page, "#stay .sy-name");
-    const form = await rectOf(page, "#stay .bk-form");
-    const photo = await rectOf(page, "#stay .sy-ph");
+    await settle(page);
+    const { name, form, photo } = await page.evaluate(() => {
+      const r = (s) => { const b = document.querySelector(s).getBoundingClientRect(); return { top: b.top, bottom: b.bottom }; };
+      return { name: r("#stay .sy-name"), form: r("#stay .bk-form"), photo: r("#stay .sy-ph") };
+    });
     assert.ok(name.bottom <= form.top + 0.5, "the form starts under the name");
     assert.ok(photo.bottom <= name.top + 0.5, "the photo is above the name");
     assert.deepEqual(await noSideways(page, "#stay"), { doc: true, box: true, over: [] });
