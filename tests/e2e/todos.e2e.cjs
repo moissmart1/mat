@@ -126,6 +126,30 @@ async function tapTick(page, id) {
   assert.equal(tapped.landed, true, "the app took the tap on row " + id + " (the row is stamped)");
 }
 
+// A finger on Tick it off, as pointer events sent from the page itself. Playwright's mouse
+// sends down and up as separate messages and aims at where the button was measured; on a
+// slow runner (the row is still opening, a font settles) the press can land beside the
+// button and the case then proves nothing. Here the press goes to the button itself.
+// The page clock is faked, so event time stamps only move when the case moves the clock.
+async function pressTick(page, id) {
+  await until(() => page.evaluate((s) => { const b = document.querySelector(s); return !!b && b.getBoundingClientRect().width > 0; }, row(id) + " .bw-tick"), "Tick it off is drawn on row " + id);
+  await page.evaluate((s) => {
+    const b = document.querySelector(s);
+    const r = b.getBoundingClientRect();
+    window.__finger = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    const o = { bubbles: true, cancelable: true, composed: true, pointerId: 1, pointerType: "touch", isPrimary: true, button: 0, buttons: 1, clientX: window.__finger.x, clientY: window.__finger.y };
+    b.dispatchEvent(new PointerEvent("pointerdown", o));
+  }, row(id) + " .bw-tick");
+}
+// The finger comes up on whatever is now drawn where the button was.
+async function releaseTick(page, id) {
+  await page.evaluate((s) => {
+    const b = document.querySelector(s);
+    const f = window.__finger;
+    (b || document.body).dispatchEvent(new PointerEvent("pointerup", { bubbles: true, cancelable: true, composed: true, pointerId: 1, pointerType: "touch", isPrimary: true, button: 0, buttons: 0, clientX: f.x, clientY: f.y }));
+  }, row(id) + " .bw-tick");
+}
+
 module.exports = [
   {
     name: "before the trip the list is on the Before tab: open items by book-by date, the due lines, the seals, done folded, the fetch line; Days shows none of it",
@@ -1121,14 +1145,7 @@ module.exports.push({
   async run({ page }) {
     const backend = await ready(page);
     await openRow(page, "3");
-    const spot = await page.evaluate((s) => {
-      const b = document.querySelector(s);
-      b.scrollIntoView({ block: "center" });
-      const r = b.getBoundingClientRect();
-      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-    }, row(3) + " .bw-tick");
-    await page.mouse.move(spot.x, spot.y);
-    await page.mouse.down();
+    await pressTick(page, "3");
     // The row is drawn again under the finger: a new button, the old one gone.
     const swapped = await page.evaluate((s) => {
       const b = document.querySelector(s);
@@ -1137,7 +1154,7 @@ module.exports.push({
       return !b.isConnected && fresh.isConnected;
     }, row(3) + " .bw-tick");
     assert.equal(swapped, true, "the button was replaced between press and release");
-    await page.mouse.up();
+    await releaseTick(page, "3");
     await until(() => page.evaluate((s) => document.querySelector(s).classList.contains("is-landed"), row(3)), "row 3 is stamped");
     await until(() => stored(backend, "3").ticked_by === "Mo", "ticked");
     assert.equal(sent(backend, "tickTodo").length, 1, "ticked once");
@@ -1150,20 +1167,13 @@ module.exports.push({
   async run({ page }) {
     const backend = await ready(page);
     await openRow(page, "3");
-    const spot = await page.evaluate((s) => {
-      const b = document.querySelector(s);
-      b.scrollIntoView({ block: "center" });
-      const r = b.getBoundingClientRect();
-      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-    }, row(3) + " .bw-tick");
-    await page.mouse.move(spot.x, spot.y);
-    await page.mouse.down();
+    await pressTick(page, "3");
     // Mo renumbers his planner: #3 is another item now. A pull lands under the finger.
     bookRow(backend, 3)[1] = "Buy a different thing entirely";
     // Through the store, not a click: a click would go through the list's own handler, which clears the press.
     await page.evaluate(() => { globalThis.__lt = globalThis.__matTest.store.syncTodos({ force: true }); });
     await until(() => page.evaluate(() => !document.querySelector('#bwOpen .bw-r[data-id="3"] .bw-n') || document.querySelector('#bwOpen .bw-r[data-id="3"] .bw-n').textContent.includes("different thing")), "row 3 shows the new item");
-    await page.mouse.up();
+    await releaseTick(page, "3");
     await page.waitForTimeout(600);
     assert.equal(sent(backend, "tickTodo").length, 0, "no tick sent");
     assert.equal(stored(backend, "3").ticked_by || "", "", "not ticked");
@@ -1177,17 +1187,10 @@ module.exports.push({
   async run({ page }) {
     const backend = await ready(page);
     await openRow(page, "3");
-    const spot = await page.evaluate((s) => {
-      const b = document.querySelector(s);
-      b.scrollIntoView({ block: "center" });
-      const r = b.getBoundingClientRect();
-      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
-    }, row(3) + " .bw-tick");
-    await page.mouse.move(spot.x, spot.y);
-    await page.mouse.down();
+    await pressTick(page, "3");
     await page.evaluate((s) => { const b = document.querySelector(s); b.replaceWith(b.cloneNode(true)); }, row(3) + " .bw-tick");
     await page.clock.fastForward(1200); // the page clock is faked: event times follow it
-    await page.mouse.up();
+    await releaseTick(page, "3");
     await page.waitForTimeout(400);
     assert.equal(sent(backend, "tickTodo").length, 0, "no tick sent");
   },
