@@ -330,7 +330,7 @@ function start() {
     onBooking: (id, button) => stub.openStay(id, button),
   });
   const allDays = mountAllDays(phone, store, { clock, onPick: (i) => days.goDay(i) });
-  const stopSheet = mountStopSheet(phone, store, { keep });
+  const stopSheet = mountStopSheet(phone, store, { keep, storage: raw });
   const staySheet = mountStaySheet(phone, store, keep, { onClose: (id) => stayCard.open(id) });
   // The stamp book, a panel like History, opened from the Days bar or today's ticket.
   const book = mountStampBook(phone, store, { where });

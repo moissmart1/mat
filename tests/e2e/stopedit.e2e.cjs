@@ -4,7 +4,7 @@
 // clock is 13:20 on Dec 12 in Japan, Day 3 (Shibuya Sky at 14:00 is next).
 
 const assert = require("node:assert/strict");
-const { WITH_PLAN, open, advance, until, text, expectText } = require("./helpers.cjs");
+const { WITH_PLAN, open, advance, until, text, expectText, visible } = require("./helpers.cjs");
 
 const D12 = "2026-12-12";
 const SKY = "planstop1203";
@@ -169,6 +169,48 @@ function reach(page, selector, scroll = false) {
 }
 
 module.exports = [
+  {
+    name: "a failed stop edit survives closing and reloading until Discard draft",
+    async run({ page }) {
+      const backend = await ready(page);
+      await openEdit(page, SKY);
+      const original = await value(page, "#stDetail");
+      await page.fill("#stDetail", "Draft meeting point");
+      backend.failWith = "network";
+      await page.click("#stSave");
+      await until(async () => !(await disabled(page, "#stDone")), "Done is available after the failed save");
+      await page.click("#stDone");
+      await waitSheetClosed(page);
+      backend.failWith = null;
+      await page.reload();
+      await until(() => visible(page, row(SKY)), "the stop is back");
+      await openEdit(page, SKY);
+      assert.equal(await value(page, "#stDetail"), "Draft meeting point");
+      await page.click("#stDiscard");
+      assert.equal(await value(page, "#stDetail"), original);
+      await page.click("#stDone");
+      await openEdit(page, SKY);
+      assert.equal(await visible(page, "#stDiscard"), false);
+    },
+  },
+  {
+    name: "unsent new stops on the same day have separate drafts after a reload",
+    async run({ page }) {
+      await ready(page);
+      for (const title of ["Walk", "Lunch"]) {
+        await openAdd(page);
+        await page.fill("#stWhat", title);
+        await page.click("#stDone");
+        await waitSheetClosed(page);
+      }
+      await page.reload();
+      const drafts = await page.evaluate(() => Object.keys(localStorage)
+        .filter((key) => key.startsWith("mat.stopDraft."))
+        .map((key) => JSON.parse(localStorage.getItem(key))));
+      assert.deepEqual(drafts.map((draft) => draft.fields.stWhat).sort(), ["Lunch", "Walk"]);
+      assert.equal(new Set(drafts.map((draft) => draft.addId)).size, 2);
+    },
+  },
   {
     name: "add a stop",
     async run({ page }) {
