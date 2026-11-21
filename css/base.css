@@ -60,6 +60,9 @@ i{font-style:normal}
 .view{position:absolute;inset:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;padding-bottom:96px;
   padding-top:calc(env(safe-area-inset-top, 0px) + var(--net-h, 0px));
   opacity:0;pointer-events:none;transition:opacity .16s ease-out;scrollbar-width:none}
+/* The status bar's strip: a Home Screen app (viewport-fit=cover, translucent bar) lets the screens scroll under the clock, so the top inset is
+   filled with the ground, over the screens and under the no-signal strip (7), the nav (6 is its own, at the foot) and every sheet and scrim (23 up). */
+.phone::before{content:"";position:absolute;left:0;right:0;top:0;height:var(--inset-t, 0px);z-index:6;background:var(--ground);pointer-events:none}
 .view::-webkit-scrollbar{display:none}
 .view.is-active{opacity:1;pointer-events:auto}
 .note{padding:0 var(--gr) 0 var(--gl);color:var(--dim);font-size:12px}
