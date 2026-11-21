@@ -33,6 +33,14 @@
 // four facts are stop fields, saved with the rest; picked pictures are sent
 // after the stop is saved, one by one, each with its progress. One refused
 // keeps the sheet open with the reason; the others are saved.
+//
+// Drafts (issue 22): what is typed is kept on the phone (mat.stopDraft.*,
+// per person and stop, or per day and new stop's id) until it is saved,
+// removed or discarded. Reopening the stop, or ＋ Add a stop on that day
+// (the newest new-stop draft, with its id, so a retry is still one stop;
+// older ones are taken off), brings it back, field by field, unless another
+// phone has changed that field since. Only then does the sheet say "Your
+// unsaved changes are back." at the top and offer Discard draft.
 
 import { dayHead } from "../format.js";
 import { newId } from "../time.js";
@@ -49,10 +57,14 @@ const notSaved = (word) => "That wasn’t saved. Tap " + word + " to try again."
 // the check then showed the stop did not land.
 const LEFT_UNSAVED = "That stop wasn’t saved.";
 const TIME = /^([01]\d|2[0-3]):[0-5]\d/;
+// Said at the top of the sheet when it opens with typing kept from before.
+const BROUGHT_BACK = "Your unsaved changes are back.";
+const DRAFT = "mat.stopDraft.";
 
 const MARKUP = `
 <div class="sheet-top"><span id="stHead">Add a stop</span><button type="button" id="stDone">Done</button></div>
 <div class="st">
+  <p class="st-msg" id="stBack" role="status" hidden></p>
   <div class="st-day" id="stDay"></div>
   <label class="st-f"><span>What</span><input id="stWhat" maxlength="80" autocomplete="off" enterkeyhint="next"></label>
   <label class="st-f st-time"><span>Time</span><input id="stTime" type="time"></label>
@@ -66,6 +78,7 @@ const MARKUP = `
   <label class="st-f"><span>Japanese name on signs</span><input id="stSign" maxlength="20" lang="ja" autocomplete="off" enterkeyhint="done"></label>
   <div id="stTix" hidden></div>
   <p class="st-msg" id="stMsg" role="status"></p>
+  <button type="button" id="stDiscard" hidden>Discard draft</button>
   <div class="st-btns"><button type="button" id="stDel" hidden>Remove</button><button type="button" id="stSave" disabled>Add stop</button></div>
 </div>`;
 
@@ -101,7 +114,138 @@ function problem(v) {
   return null;
 }
 
-export function mountStopSheet(root, store, { keep = null } = {}) {
+// Retain fields from an earlier opening until the user edits them. Keep the
+// original value alongside each edit so a restore can detect intervening changes.
+export function updateStopDraft(previous, original, values, addId) {
+  const fields = { ...previous?.fields };
+  const base = { ...previous?.base };
+  delete fields.stTkRef;
+  delete base.stTkRef;
+  for (const [key, value] of Object.entries(values)) {
+    if (key === "stTkRef" || original[key] === value) continue;
+    fields[key] = value;
+    if (!(key in base)) base[key] = original[key];
+  }
+  return Object.keys(fields).length ? { fields, base, addId } : null;
+}
+
+// One record per person and stop (or trip day for a new stop). Compare before
+// removal so a late save cannot clear a newer draft from another opening.
+export function stopDrafts(storage, scope) {
+  const key = DRAFT + JSON.stringify(scope);
+  return {
+    read() {
+      try {
+        const draft = JSON.parse(storage.getItem(key));
+        return draft && draft.fields && typeof draft.fields === "object" ? draft : null;
+      } catch {
+        return null;
+      }
+    },
+    write(draft) {
+      try {
+        storage.setItem(key, JSON.stringify(draft));
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    clear(expected) {
+      try {
+        if (expected && storage.getItem(key) === JSON.stringify(expected)) storage.removeItem(key);
+      } catch {
+        // A storage failure must leave the editor usable.
+      }
+    },
+  };
+}
+
+// What a kept draft brings back into a sheet that opened with `original`
+// (each field's value as filled): only the fields whose saved baseline still
+// matches, so a newer value from another phone wins over that draft field.
+export function draftToRestore(draft, original) {
+  const out = {};
+  if (!draft || !draft.fields) return out;
+  for (const [id, initial] of Object.entries(original)) {
+    if (!(id in draft.fields) || !draft.base || draft.base[id] !== initial) continue;
+    const v = draft.fields[id];
+    if (typeof initial === "boolean" ? typeof v === "boolean" : typeof v === "string") out[id] = v;
+  }
+  return out;
+}
+
+// The new-stop drafts on one day: scope is [trip name, trip start, person,
+// "add", day]; each key adds that try's stop id. Returns the newest one's id
+// (so a retry still lands as one stop on the backend) and takes the older
+// ones off the phone; null when there is none.
+function draftKeys(storage) {
+  const keys = [];
+  try {
+    for (let i = 0; i < storage.length; i++) {
+      const k = storage.key(i);
+      if (typeof k === "string" && k.startsWith(DRAFT)) keys.push(k);
+    }
+  } catch {
+    // A storage failure must leave the editor usable.
+  }
+  return keys.map((k) => {
+    try {
+      const scope = JSON.parse(k.slice(DRAFT.length));
+      return Array.isArray(scope) ? { k, scope } : null;
+    } catch {
+      return null;
+    }
+  }).filter(Boolean);
+}
+const sameScope = (a, b) => b.every((v, i) => a[i] === v);
+const when = (storage, k) => {
+  try {
+    const d = JSON.parse(storage.getItem(k));
+    return d && Number.isFinite(d.savedAt) ? d.savedAt : 0;
+  } catch {
+    return 0;
+  }
+};
+export function newestAddDraft(storage, scope) {
+  const found = draftKeys(storage)
+    .filter(({ scope: s }) => s.length === scope.length + 1 && sameScope(s, scope) && typeof s[scope.length] === "string" && s[scope.length])
+    .map(({ k, scope: s }) => ({ k, addId: s[scope.length], at: when(storage, k) }))
+    .sort((a, b) => b.at - a.at);
+  if (!found.length) return null;
+  for (const old of found.slice(1)) {
+    try {
+      storage.removeItem(old.k);
+    } catch {
+      // left for the next opening
+    }
+  }
+  return found[0].addId;
+}
+
+// Takes one new-stop draft (scope plus its stop id) off the phone.
+export function dropAddDraft(storage, scope, addId) {
+  try {
+    storage.removeItem(DRAFT + JSON.stringify([...scope, addId]));
+  } catch {
+    // left for the next opening
+  }
+}
+
+// New-stop drafts for this person and trip ([trip name, trip start, person])
+// on a day that is no longer one of the trip's days: nothing can open them.
+export function pruneAddDrafts(storage, who, days) {
+  const keep = new Set(days);
+  for (const { k, scope } of draftKeys(storage)) {
+    if (scope.length !== who.length + 3 || !sameScope(scope, who) || scope[who.length] !== "add" || keep.has(scope[who.length + 1])) continue;
+    try {
+      storage.removeItem(k);
+    } catch {
+      // left for the next load
+    }
+  }
+}
+
+export function mountStopSheet(root, store, { keep = null, storage = null } = {}) {
   const scrim = el("div", "scrim");
   scrim.id = "stopScrim";
   scrim.hidden = true;
@@ -121,6 +265,8 @@ export function mountStopSheet(root, store, { keep = null } = {}) {
   const msg = $("stMsg");
   const save = $("stSave");
   const del = $("stDel");
+  const discard = $("stDiscard");
+  const back = $("stBack");
   const f = {
     title: $("stWhat"), time: $("stTime"), detail: $("stDetail"), gettingThere: $("stGo"), travelMin: $("stMin"),
     fixed: $("stFixed"), place: $("stPlace"), link: $("stLink"), signJp: $("stSign"),
@@ -144,6 +290,42 @@ export function mountStopSheet(root, store, { keep = null } = {}) {
   let tries = 0; // Saves sent for this add
   let saveWord = "Add stop";
   let session = 0; // one per opening, so a late answer knows whether its sheet is still the one open
+
+  let drafts = null;
+  let originalInputs = {};
+  let draft = null;
+
+  // Only editable text, checkbox values and the retry id belong here. Ticket
+  // files use the separate ticket store. Preserve the raw text as typed.
+  function formValues() {
+    const controls = [...Object.values(f), pin, ...(withTix ? part.inputs() : [])];
+    return Object.fromEntries(controls.filter((field) => field.id !== "stTkRef").map((field) => [
+      field.id, field.type === "checkbox" ? field.checked : field.value,
+    ]));
+  }
+
+  // Keeps what is typed on the phone. "Discard draft" and the line at the top
+  // show only when the sheet opened with typing brought back (show()), not
+  // as soon as anyone types; with everything put back as it was, there is
+  // nothing left to discard and both go.
+  function captureDraft() {
+    if (!drafts || !mode) return;
+    const next = updateStopDraft(null, originalInputs, formValues(), addId);
+    if (!next) {
+      drafts.clear(draft);
+      draft = null;
+      broughtBack(false);
+      return;
+    }
+    draft = { ...next, savedAt: Date.now() };
+    drafts.write(draft);
+  }
+
+  function broughtBack(on) {
+    discard.hidden = !on;
+    back.hidden = !on;
+    back.textContent = on ? BROUGHT_BACK : "";
+  }
 
   const isOpen = () => sheet.classList.contains("is-open");
   const current = () => (store.state.stops || []).find((s) => s && s.id === stopId && !s.deleted) || null;
@@ -250,6 +432,7 @@ export function mountStopSheet(root, store, { keep = null } = {}) {
   function update() {
     if (!isOpen()) return;
     const busy = phase !== null;
+    discard.disabled = busy;
     for (const field of Object.values(f)) field.disabled = busy;
     pin.disabled = busy;
     if (withTix) part.setBusy(busy);
@@ -281,6 +464,25 @@ export function mountStopSheet(root, store, { keep = null } = {}) {
     unsaved = false;
     refused = "";
     tries = 0;
+    originalInputs = formValues();
+    const trip = store.state.trip;
+    drafts = storage && trip && store.state.me
+      ? stopDrafts(storage, [trip.name, trip.start, store.state.me, mode, ...(stopId ? [stopId] : [day, addId])])
+      : null;
+    draft = drafts ? drafts.read() : null;
+    const restore = draftToRestore(draft, originalInputs);
+    for (const [id, v] of Object.entries(restore)) {
+      const input = $(id);
+      if (input.type === "checkbox") input.checked = v;
+      else input.value = v;
+    }
+    if (draft) {
+      showAt();
+      // The kept draft is now exactly what was brought back (fields another
+      // phone changed since are dropped), or gone when nothing was.
+      captureDraft();
+    }
+    broughtBack(!!draft);
     head.textContent = title;
     const dh = dayHead(day);
     // A stop on the evening before the first day (前夜) keeps that day: it reads so.
@@ -304,7 +506,16 @@ export function mountStopSheet(root, store, { keep = null } = {}) {
     mode = "add";
     date = day;
     stopId = null;
-    addId = null;
+    const trip = store.state.trip;
+    const scope = storage && trip && store.state.me ? [trip.name, trip.start, store.state.me, "add", day] : null;
+    let kept = scope ? newestAddDraft(storage, scope) : null;
+    // That save did land (its answer was lost): the id is already a stop, so a
+    // retry under it would write nothing. Start blank under a new id.
+    if (kept && (store.state.stops || []).some((s) => s.id === kept)) {
+      dropAddDraft(storage, scope, kept);
+      kept = null;
+    }
+    addId = kept || newId();
     fill({});
     show("Add a stop", day, "Add stop");
     return true;
@@ -333,6 +544,9 @@ export function mountStopSheet(root, store, { keep = null } = {}) {
     const id = stopId;
     const day = date;
     mode = null;
+    drafts = null;
+    draft = null;
+    broughtBack(false);
     stopId = null;
     addId = null;
     refused = "";
@@ -387,6 +601,7 @@ export function mountStopSheet(root, store, { keep = null } = {}) {
     if (mode === "add") {
       if (!addId) addId = newId();
       tries += 1;
+      captureDraft();
       token = store.addStop({ date, ...now }, { id: addId, quiet: true, onUnsure });
     } else if (mode === "edit") {
       const patch = diff(was, now);
@@ -409,7 +624,11 @@ export function mountStopSheet(root, store, { keep = null } = {}) {
     }
     update();
     const sentAdd = mode === "add" ? now : null;
+    const savingDrafts = drafts;
+    const submitted = formValues();
+    const savingDraft = draft && Object.entries(draft.fields).every(([field, value]) => submitted[field] === value) ? draft : null;
     store.outcome(token).then((out) => {
+      if (out && out.saved && savingDrafts) savingDrafts.clear(savingDraft);
       if (mine !== session) {
         // Closed while it was checking: the undo bar has the last word.
         if (out && !out.saved) store.notify(LEFT_UNSAVED);
@@ -463,6 +682,7 @@ export function mountStopSheet(root, store, { keep = null } = {}) {
   function onRemove() {
     if (mode !== "edit" || del.disabled) return;
     const id = stopId;
+    if (drafts) drafts.clear(draft);
     store.deleteStop(id);
     stopId = null; // its row is gone: focus goes to the day's ＋ Add a stop
     close();
@@ -498,6 +718,7 @@ export function mountStopSheet(root, store, { keep = null } = {}) {
   f.place.addEventListener("input", showAt);
   // Correcting any field takes the reason away.
   const edited = () => {
+    captureDraft();
     if (!refused) return;
     refused = "";
     update();
@@ -510,6 +731,18 @@ export function mountStopSheet(root, store, { keep = null } = {}) {
     if (digits !== f.travelMin.value) f.travelMin.value = digits;
   });
   save.addEventListener("click", onSave);
+  discard.addEventListener("click", () => {
+    if (!drafts || phase) return;
+    drafts.clear(draft);
+    draft = null;
+    fill(current() || {});
+    originalInputs = formValues();
+    broughtBack(false);
+    refused = "";
+    unsaved = false;
+    update();
+    done.focus({ preventScroll: true });
+  });
   del.addEventListener("click", onRemove);
   done.addEventListener("click", () => close());
   // A tap outside closes the sheet only when nothing was changed (R33).
@@ -544,9 +777,24 @@ export function mountStopSheet(root, store, { keep = null } = {}) {
     date = null;
   }
 
+  // Once a load has the trip's days: new-stop drafts on a day the trip no
+  // longer has are taken off the phone.
+  let pruned = false;
+  function prune(s) {
+    if (pruned || !storage || !s || s.status !== "ready" || !s.trip || !s.me || !(s.days || []).length) return;
+    pruned = true;
+    const days = [...s.days, ...(s.eves || [])].map((d) => d && String(d.date).slice(0, 10)).filter(Boolean);
+    pruneAddDrafts(storage, [s.trip.name, s.trip.start, s.me], days);
+  }
+
   store.subscribe((s) => {
-    if (s && s.status === "nokey") wipe();
-    else render();
+    if (s && s.status === "nokey") {
+      pruned = false;
+      wipe();
+    } else {
+      prune(s);
+      render();
+    }
   });
 
   return { add, edit, close: (restoreFocus) => close(restoreFocus), isOpen };

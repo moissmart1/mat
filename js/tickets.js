@@ -227,7 +227,29 @@ export async function pdfPages(file, { max = LIMITS.perStop, skipFirst = false, 
 
 export const OPEN_WAIT_MS = 3000;
 
-export function createKeep({ indexedDB = globalThis.indexedDB, name = "mat-tickets", openWaitMs = OPEN_WAIT_MS } = {}) {
+// A picture that waits for signal is only on the phone once its keep.put has
+// finished: until then its data is in memory, and closing MAT (or a reload)
+// loses it. So an add waits for the puts of its waiting pictures (`puts`,
+// the promises keep.put returned), at most `ms`: a keep that never answers
+// must not hold the add up for long. True only when every put kept its
+// picture, in time, in a keep that lasts (IndexedDB, not the memory keep);
+// false and the add says to keep MAT open instead of "on this phone".
+export function keptOrLate(keep, puts, ms = OPEN_WAIT_MS) {
+  if (!puts.length) return Promise.resolve(true);
+  let timer;
+  const late = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(false), ms);
+  });
+  const kept = Promise.all(puts.map((p) => Promise.resolve(p).catch(() => false))).then((all) => all.every((ok) => ok === true) && keep.lasting === true);
+  return Promise.race([kept, late]).finally(() => clearTimeout(timer));
+}
+
+// After a reopen that did not open either, none is tried for this long: a
+// hung IndexedDB must not cost every waiting picture its own wait, nor pile up
+// open requests.
+export const REOPEN_PAUSE_MS = 60 * 1000;
+
+export function createKeep({ indexedDB = globalThis.indexedDB, name = "mat-tickets", openWaitMs = OPEN_WAIT_MS, now = () => Date.now() } = {}) {
   const STORE = "pics";
   const known = new Set();
   const mem = new Map();
@@ -240,6 +262,10 @@ export function createKeep({ indexedDB = globalThis.indexedDB, name = "mat-ticke
   let wiped = false;
   // One per wipe: a put begun before a wipe never lands after it.
   let gen = 0;
+  // This browser has no IndexedDB at all: nothing is ever kept past this visit.
+  const none = !indexedDB || typeof indexedDB.open !== "function";
+  let reopening = null;
+  let reopenFailedAt = -Infinity;
   const tell = () => {
     for (const fn of [...subs]) {
       try {
@@ -345,6 +371,26 @@ export function createKeep({ indexedDB = globalThis.indexedDB, name = "mat-ticke
     get gen() {
       return gen;
     },
+    // No IndexedDB in this browser at all (not one that is only slow or failing).
+    get none() {
+      return none;
+    },
+    // The database did not open (it answered too late, or failed): try once
+    // more, for a picture waiting to be sent from it (readKept). Not after a
+    // wipe; one try at a time; none for REOPEN_PAUSE_MS after one that failed.
+    reopen() {
+      if (wiped || db || none) return ready;
+      if (reopening) return reopening;
+      if (now() - reopenFailedAt < REOPEN_PAUSE_MS) return ready;
+      const mine = (ready = open().then(() => {
+        if (!db) reopenFailedAt = now();
+      }));
+      reopening = mine;
+      mine.finally(() => {
+        if (reopening === mine) reopening = null;
+      });
+      return mine;
+    },
     have: (id) => known.has(id) || mem.has(id),
     async get(id) {
       await ready;
@@ -439,6 +485,24 @@ export function createKeep({ indexedDB = globalThis.indexedDB, name = "mat-ticke
       subs.add(fn);
       return () => subs.delete(fn);
     },
+  };
+}
+
+// A waiting picture's data from the keep, for the store's ticketData: base64,
+// or null when the keep works and does not have it (lost). The keep did not
+// open (IndexedDB answered too late, as on a slow start): it is tried once
+// more; still not open, it rejects, as the picture may well be in it. With no
+// IndexedDB at all, null.
+export function readKept(keep) {
+  return async (id) => {
+    let blob = await keep.get(id);
+    if (!blob && !keep.lasting && !keep.none) {
+      await keep.reopen();
+      blob = await keep.get(id);
+    }
+    if (blob) return toBase64(blob);
+    if (!keep.lasting && !keep.none) throw new Error("The ticket keep is not open.");
+    return null;
   };
 }
 

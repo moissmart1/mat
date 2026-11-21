@@ -3,7 +3,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const { ORIGIN, SEED, NOON12, makeBackend, open, until, text, expectText, visible } = require("./helpers.cjs");
+const { ORIGIN, SEED, NOON12, makeBackend, open, advance, until, text, expectText, visible } = require("./helpers.cjs");
 
 const homelinkShot = async (page, name) => {
   const dir = process.env.MAT_TAB_SHOTS;
@@ -31,6 +31,178 @@ const BOARD = {
 };
 
 module.exports = [
+  ...[[393, 852], [320, 568], [844, 390], [1440, 900]].map(([width, height]) => ({
+    name: "the find line sits on the receipt paper at " + width + "x" + height,
+    viewport: { width, height },
+    mobile: width < 1000,
+    async run({ page }) {
+      await open(page, { seed: SEED, nowMs: NOON12 });
+      await waitRows(page, 8);
+      const rc = await page.locator("#rc").boundingBox();
+      const box = await page.locator("#rcQuery").boundingBox();
+      assert.ok(box.height >= 44);
+      assert.ok(box.x >= rc.x + 14 - 1 && box.x + box.width <= rc.x + rc.width - 14 + 1, "inside the paper's padding");
+      const order = await page.evaluate(() => {
+        const rcEl = document.getElementById("rc");
+        const find = document.getElementById("rcFind");
+        const head = rcEl.querySelector(":scope > .rc-h");
+        const group = rcEl.querySelector(":scope > .rc-group");
+        return { child: find.parentNode === rcEl, afterHead: !!(head.compareDocumentPosition(find) & Node.DOCUMENT_POSITION_FOLLOWING), beforeGroup: !!(find.compareDocumentPosition(group) & Node.DOCUMENT_POSITION_FOLLOWING) };
+      });
+      assert.deepEqual(order, { child: true, afterHead: true, beforeGroup: true });
+      assert.ok(await page.evaluate(() => document.scrollingElement.scrollWidth <= window.innerWidth), "no sideways scroll");
+      assert.ok(await page.evaluate(() => { const q = document.getElementById("rcQuery"); return q.scrollWidth <= q.clientWidth; }), "the placeholder shows whole");
+    },
+  })),
+  {
+    name: "receipt search finds a description without changing the trip totals",
+    async run({ page }) {
+      await open(page, { seed: SEED, nowMs: NOON12 });
+      await waitRows(page, 8);
+      const balance = await text(page, "#say");
+      const total = await text(page, "#rc .rc-tot b");
+
+      await page.fill("#rcQuery", "  RAMEN  ");
+      await waitRows(page, 1);
+      await expectText(page, "#rcFindN", "Showing 1 of 8 items");
+      await expectText(page, "#rc .rc-tot span", "合計 Trip total");
+      assert.match(await text(page, "#rc .rc-row"), /Ramen/);
+      assert.equal(await page.locator("#rc .rc-group").count(), 1);
+      assert.equal(await text(page, "#say"), balance);
+      assert.equal(await text(page, "#rc .rc-tot b"), total);
+
+      await page.fill("#rcQuery", "no such expense");
+      await expectText(page, "#rc .rc-none span", "No item says “no such expense”.");
+      await page.fill("#rcQuery", "");
+      await waitRows(page, 8);
+      await expectText(page, "#rc .rc-tot span", "合計 Total");
+      assert.equal(await visible(page, "#rcFindN"), false);
+      assert.equal(await visible(page, "#rcClear"), false);
+    },
+  },
+  {
+    name: "settlement summary: shut under the receipt, opens in the receipt's look, plain words, Japan time, nothing provisional when in sync",
+    async run({ page }) {
+      await open(page);
+      await waitRows(page, 8);
+      assert.equal(await page.locator("details, summary").count(), 0, "no browser disclosure");
+      assert.equal(await text(page, "#rcSumBtn"), "Settlement summary", "heading");
+      assert.equal(await visible(page, "#rcSumText"), false, "shut until tapped");
+      // A minute and more after the last load, with nothing waiting: still not provisional (review item 1).
+      await page.clock.fastForward(90000);
+      await page.click("#rcSumBtn");
+      assert.equal(await page.getAttribute("#rcSumBtn", "aria-expanded"), "true", "opened");
+      const body = await page.locator("#rcSumText").textContent();
+      const lines = body.split("\n");
+      assert.match(lines[0], / — Settlement summary$/);
+      assert.equal(lines[2], "Prepared Sat Dec 12, 13:21 Japan time", "prepared line: " + lines[2]);
+      assert.match(lines[3], /^Last loaded Sat Dec 12, 13:2\d Japan time$/);
+      assert.ok(lines.some((l) => l.startsWith("Before the trip · ")), "Before the trip, not pre");
+      assert.ok(lines.some((l) => /paid ¥[\d,]+ \(\$[\d,]+\.\d\d at [\d.]+ JPY\/CAD\)$/.test(l)), "a yen line with its rate");
+      for (const l of lines.filter((x) => / paid \$/.test(x))) assert.doesNotMatch(l, /JPY\/CAD/, "no rate on a dollar line: " + l);
+      assert.doesNotMatch(body, /Provisional|\bpre\b|\d{4}-\d\d-\d\dT|undefined|NaN| JPY \(| CAD,/);
+      // Drawn in the receipt's own style: the heading as a receipt day heading, Copy summary as Ring up.
+      const look = await page.evaluate(() => {
+        const st = (el) => getComputedStyle(el);
+        const h = st(document.getElementById("rcSumBtn"));
+        const c = st(document.getElementById("rcSumCopy"));
+        const paper = st(document.getElementById("rcSum")).backgroundColor === st(document.getElementById("rc")).backgroundColor;
+        return { hBorder: h.borderTopStyle, hBg: h.backgroundColor, hWeight: h.fontWeight, hColor: h.color, cBorder: c.borderTopStyle + " " + (parseFloat(c.borderTopWidth) >= 1), cBg: c.backgroundColor, cRadius: c.borderRadius, cWeight: c.fontWeight, cColor: c.color, ink: st(document.getElementById("rc")).color, paper };
+      });
+      assert.equal(look.hBorder, "none", "heading border " + JSON.stringify(look));
+      assert.equal(look.hBg, "rgba(0, 0, 0, 0)", "heading background " + JSON.stringify(look));
+      assert.equal(look.hWeight, "900", "heading weight " + JSON.stringify(look));
+      assert.equal(look.hColor, look.ink, "heading ink " + JSON.stringify(look));
+      assert.equal(look.cBorder, "solid true", "copy border (1.5px is drawn as 1px on a 1x screen) " + JSON.stringify(look));
+      assert.equal(look.cBg, "rgba(0, 0, 0, 0)", "copy background " + JSON.stringify(look));
+      assert.equal(look.cRadius, "3px", "copy radius " + JSON.stringify(look));
+      assert.equal(look.cWeight, "900", "copy weight " + JSON.stringify(look));
+      assert.equal(look.cColor, look.ink, "copy ink " + JSON.stringify(look));
+      assert.ok(look.paper, "the summary is on the receipt's paper");
+      for (const [w, h] of [[390, 844], [320, 568]]) {
+        await page.setViewportSize({ width: w, height: h });
+        await page.evaluate(() => document.getElementById("rcSum").scrollIntoView({ block: "start" }));
+        const dir = process.env.MAT_TAB_SHOTS;
+        if (dir) {
+          fs.mkdirSync(dir, { recursive: true });
+          await page.locator("#rcSum").screenshot({ path: path.join(dir, "receipt-summary-" + w + ".png") });
+          await homelinkShot(page, "receipt-summary-" + w + "-screen.png");
+          // The foot of the summary, with Copy summary above the bottom bar.
+          await page.evaluate(() => document.getElementById("rcSumCopy").scrollIntoView({ block: "center" }));
+          await homelinkShot(page, "receipt-summary-" + w + "-copy.png");
+        }
+        const wide = await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth);
+        assert.ok(wide, "no sideways scroll at " + w);
+      }
+      await page.setViewportSize({ width: 390, height: 844 });
+      await page.click("#rcSumBtn");
+      assert.equal(await visible(page, "#rcSumText"), false, "shuts again");
+    },
+  },
+  {
+    name: "settlement summary: Copy summary copies it and says Copied. for 2 seconds",
+    async run({ page }) {
+      await open(page);
+      await waitRows(page, 8);
+      await page.click("#rcSumBtn");
+      await page.click("#rcSumCopy");
+      await expectText(page, "#rcSumCopy", "Copied.");
+      const copied = await page.evaluate(() => navigator.clipboard.readText());
+      assert.equal(copied, await page.locator("#rcSumText").textContent());
+      assert.match(copied, /Settlement summary/);
+      await page.clock.fastForward(1900);
+      assert.equal(await text(page, "#rcSumCopy"), "Copied.");
+      await page.clock.fastForward(200);
+      await expectText(page, "#rcSumCopy", "Copy summary");
+    },
+  },
+  {
+    name: "settlement summary: Copy summary falls back to the selection copy when the clipboard API is missing",
+    async run({ page }) {
+      await page.addInitScript(() => {
+        Object.defineProperty(navigator, "clipboard", { configurable: true, get: () => undefined });
+        globalThis.__copied = [];
+        const real = document.execCommand.bind(document);
+        document.execCommand = (cmd, ...rest) => {
+          if (cmd === "copy") {
+            const t = [...document.querySelectorAll("textarea")].pop();
+            globalThis.__copied.push(t ? t.value.slice(t.selectionStart, t.selectionEnd) : "");
+            return true;
+          }
+          return real(cmd, ...rest);
+        };
+      });
+      await open(page);
+      await waitRows(page, 8);
+      await page.click("#rcSumBtn");
+      await page.click("#rcSumCopy");
+      await expectText(page, "#rcSumCopy", "Copied.");
+      const copied = await page.evaluate(() => globalThis.__copied);
+      assert.equal(copied.length, 1);
+      assert.equal(copied[0], await page.locator("#rcSumText").textContent());
+    },
+  },
+  {
+    name: "settlement summary: a sync with the same figures leaves the text alone; new figures redraw it",
+    async run({ page }) {
+      const backend = await open(page);
+      await waitRows(page, 8);
+      await page.click("#rcSumBtn");
+      const before = await page.locator("#rcSumText").textContent();
+      await page.evaluate(() => {
+        document.getElementById("rcSumText").firstChild.__kept = true;
+      });
+      // Several of the app's 20-second checks, and the minute moves on.
+      for (let i = 0; i < 4; i++) await advance(page, backend, 20000);
+      await page.evaluate(() => globalThis.__matTest.store.idle());
+      const kept = await page.evaluate(() => document.getElementById("rcSumText").firstChild.__kept === true);
+      assert.ok(kept, "the text was not rewritten");
+      assert.equal(await page.locator("#rcSumText").textContent(), before);
+      await backend.handle({ key: "test-key", actor: "Ajen", via: "app", action: "addExpense", args: { expense: { id: "sumexp000001", title: "Tea", amount: 500, currency: "JPY", rate: 111, paidBy: "Ajen", split: ["Mo", "Ajen"], splitMode: "equal", splitVals: [], day: "2026-12-12", note: "", kind: "" } } });
+      await advance(page, backend, 20000);
+      await until(async () => (await page.locator("#rcSumText").textContent()).includes("· Tea · Ajen paid ¥500"), "the new line is in the summary");
+    },
+  },
   {
     name: "within a day the newest line is at the top",
     async run({ page }) {

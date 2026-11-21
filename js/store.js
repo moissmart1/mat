@@ -168,6 +168,9 @@ const ADDRESS_KEY_REFUSED = "That link didn’t work. This phone stays on the li
 
 // ticketData(id) -> Promise<base64 | null>: a ticket picture's data from the
 // phone's keep, to send one that was queued (its data is never in mat.queue).
+// null: the keep works and does not have it (lost). Rejects: the keep could
+// not be read (it did not open): a picture that reached a lasting keep waits
+// and is tried again; one that never did is as missing.
 // afterLoad(): called after every load that answered (js/tickets.js
 // fetchMissing hangs here).
 export function createStore({ api, storage, durableStorage = true, now = () => Date.now(), wait = defaultWait, clear = (queue) => clearTrip(storage, { queue }), ticketData = async () => null, afterLoad = null, isHidden = () => false }) {
@@ -356,7 +359,7 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
         : op.kind === "stamp"
         ? { stamp: op.args, who: op.after.who, sent: op.inFlight || op.lost }
         : op.kind === "ticket"
-        ? { ticket: ticketMeta(op.args.ticket), by: op.after.by, at: op.after.at, size: op.after.size, sent: op.inFlight || op.lost }
+        ? { ticket: ticketMeta(op.args.ticket), by: op.after.by, at: op.after.at, size: op.after.size, sent: op.inFlight || op.lost, kept: op.kept === true }
         : {
             expense: op.args.expense,
             addedAt: op.after.addedAt,
@@ -694,6 +697,10 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
         const op = ticketOp(q.ticket, { by: typeof q.by === "string" ? q.by : myName, at: typeof q.at === "string" ? q.at : undefined, size: q.size });
         op.status = "queued";
         op.lost = q.sent !== false;
+        // Whether its picture reached a lasting keep (kept: false = memory only, gone after a close).
+        // An entry from before this was noted (no kept at all) is read as kept: it waits for an
+        // unreadable keep rather than being called lost, since the picture may well be in it.
+        op.kept = q.kept !== false;
         writes.set(op.token, op);
         ops.push(op);
         continue;
@@ -842,7 +849,20 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
     // A queued picture's data comes back from the keep; lost there, it is dropped and said.
     // One whose request may have landed is asked about without its data
     // (fix round 1, I5): the backend answers the first add, or that it never had it.
-    if (op.kind === "ticket" && isAdd(op) && !(await fillTicket(op)) && !op.lost) {
+    op.keepWait = false;
+    const filled = op.kind === "ticket" && isAdd(op) ? await fillTicket(op) : true;
+    // The keep could not be read, and the picture had reached a lasting keep:
+    // it is in there, so it is not lost. It stays waiting (the next contact
+    // tries again), and is never sent without its data on a guess. One that
+    // never reached a lasting keep (memory only) cannot be in it: as missing.
+    if (filled === "unsure" && op.kept) {
+      op.keepWait = true;
+      op.status = "queued";
+      settleTicket(op, { saved: false, reason: "queued" });
+      changed();
+      return;
+    }
+    if ((!filled || filled === "unsure") && !op.lost) {
       removeOp(op);
       state.notice = TICKET_LOST;
       settleTicket(op, { saved: false, reason: "lost" });
@@ -1078,7 +1098,7 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
       args: { ticket: typeof t.data === "string" ? { ...meta, data: t.data } : meta }, before: null, after,
       view: (cur) => ({ ...(cur || {}), ...after }),
       status: "sending", undone: false, logId: null, inFlight: false, lost: false, actor: by || null, silent: true,
-      settled: false,
+      settled: false, kept: false,
     };
     op.outcome = new Promise((resolve) => {
       op.finish = resolve;
@@ -1099,7 +1119,7 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
     try {
       data = await ticketData(op.id);
     } catch {
-      data = null;
+      return "unsure";
     }
     if (typeof data !== "string" || !data) return false;
     op.args = { ticket: { ...op.args.ticket, data } };
@@ -1109,9 +1129,21 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
   // t: { id?, stop or stay, who, seat, page, mime, w, h, data }. Returns the token
   // (ticketOutcome(token) says how it went); the caller keeps the picture in
   // the keep first, under t.id, so a resend after a reload can find it.
-  function addTicket(t) {
+  // kept: a promise of true once the picture is in a lasting keep (the
+  // caller's keep.put); noted in mat.queue, so after a close an unreadable
+  // keep is waited for only when the picture can be in it.
+  function addTicket(t, { kept = null } = {}) {
     const pic = { ...copy(t), id: typeof t.id === "string" && t.id ? t.id : newId() };
-    return begin(ticketOp(pic, { by: myName }));
+    const op = ticketOp(pic, { by: myName });
+    const token = begin(op);
+    if (kept && typeof kept.then === "function") {
+      kept.then((ok) => {
+        if (ok !== true || op.kept || !ops.includes(op)) return;
+        op.kept = true;
+        saveQueue();
+      }, () => {});
+    }
+    return token;
   }
 
   // { saved: true, item } | { saved: false, reason: "queued" (waiting on the
@@ -1499,6 +1531,7 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
         if (!isAdd(op) || op.status !== "queued") continue;
         if (op.undone || !ops.includes(op)) continue; // undone since the pass began
         await send(op);
+        if (op.keepWait) continue; // its picture could not be read from the keep: the rest still go
         if (op.status === "queued" && !op.undone) return; // still no signal
       }
       for (const op of resolving.slice()) {

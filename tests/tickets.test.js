@@ -6,7 +6,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { LIMITS, sniff, shrink, createKeep, fetchMissing, toBase64, fromBase64, ticketKinds, ticketMark, fetchMode, setFetchMode, fetchesAll, pruneKeep, fetchOrder } from "../js/tickets.js";
+import { LIMITS, sniff, shrink, createKeep, keptOrLate, readKept, fetchMissing, toBase64, fromBase64, ticketKinds, ticketMark, fetchMode, setFetchMode, fetchesAll, pruneKeep, fetchOrder } from "../js/tickets.js";
 import { createApi } from "../js/api.js";
 import { createStore } from "../js/store.js";
 import { changeText } from "../js/format.js";
@@ -475,6 +475,160 @@ test("store: a queued picture whose data the phone lost is dropped with a senten
   assert.deepEqual(again.store.state.tickets, []);
 });
 
+// An IndexedDB whose open can be made to hang (a slow start, or one that never opens), counting opens.
+function hangable(idb = fakeIndexedDB()) {
+  const realOpen = idb.open.bind(idb);
+  const h = { idb, hang: false, opens: 0 };
+  idb.open = (...args) => {
+    h.opens++;
+    return h.hang ? { result: null, error: null, onsuccess: null, onerror: null, onblocked: null, onupgradeneeded: null } : realOpen(...args);
+  };
+  return h;
+}
+const dinner = { day: "2026-12-11", title: "Dinner", amount: 14500, currency: "JPY", paidBy: "Mo", split: ["Mo", "Ajen", "Trenton"], splitMode: "equal", splitVals: [], note: "", kind: "" };
+// The add as the views make it: into the keep first, the store told once it is in a lasting keep.
+async function addKept(p, keep) {
+  const id = "pic" + Math.random().toString(36).slice(2, 10);
+  const put = keep.put(id, new Blob([Buffer.from(pngData, "base64")], { type: "image/png" }));
+  const token = p.store.addTicket(picture({ id }), { kept: put.then((ok) => ok === true && keep.lasting) });
+  assert.equal((await p.store.ticketOutcome(token)).reason, "queued");
+  await put;
+  await new Promise((r) => setTimeout(r, 0));
+  return id;
+}
+const queued = (storage) => JSON.parse(storage.getItem("mat.queue") || "[]").filter((q) => q.ticket);
+
+test("store: a waiting picture that reached a lasting keep is not lost when the keep does not open at the next start: it waits, the rest still go, and it goes up once the keep answers", async () => {
+  const disk = hangable();
+  const first = createKeep({ indexedDB: disk.idb });
+  await first.ready;
+  const p = phone({ ticketData: readKept(first) });
+  await p.store.boot();
+  p.net.offline = true;
+  await p.store.checkRev();
+  const id = await addKept(p, first);
+  assert.deepEqual(queued(p.storage).map((q) => [q.ticket.id, q.kept]), [[id, true]], "noted as kept in mat.queue");
+  p.store.addExpense(dinner);
+  // The next start: signal, but the keep's open never answers.
+  disk.hang = true;
+  let t = 0;
+  const keep = createKeep({ indexedDB: disk.idb, openWaitMs: 20, now: () => t });
+  const again = phone({ fake: p.fake, storage: p.storage, ticketData: readKept(keep) });
+  await again.store.boot();
+  await again.store.idle();
+  assert.equal(again.fake.tables.Tickets.length, 0, "not sent without its data");
+  assert.equal(again.net.sent.some((b) => b.action === "addTicket"), false);
+  assert.equal(again.store.state.notice, null, "not said to be lost");
+  assert.ok(again.store.state.tickets.some((x) => x.id === id && x.pending), "still waiting on the screen");
+  assert.equal(queued(again.storage).length, 1, "still in mat.queue");
+  assert.ok(again.fake.tables.Expenses.some((e) => e.title === "Dinner"), "the line queued after it still went up");
+  // The keep answers again (past the reopen pause): the next contact sends it with its picture.
+  disk.hang = false;
+  t += 61000;
+  await again.store.checkRev();
+  await again.store.idle();
+  assert.equal(again.fake.tables.Tickets.length, 1);
+  assert.equal((await again.fake({ key: KEY, action: "ticket", args: { id } })).data.data, pngData);
+  assert.equal(queued(again.storage).length, 0);
+});
+
+test("store: a waiting picture that only ever was in memory (an IndexedDB that never opens) is said lost once at the next start, not left waiting", async () => {
+  const disk = hangable();
+  disk.hang = true;
+  const first = createKeep({ indexedDB: disk.idb, openWaitMs: 20 });
+  await first.ready;
+  assert.equal(first.lasting, false);
+  const p = phone({ ticketData: readKept(first) });
+  await p.store.boot();
+  p.net.offline = true;
+  await p.store.checkRev();
+  const id = await addKept(p, first);
+  assert.deepEqual(queued(p.storage).map((q) => [q.ticket.id, q.kept]), [[id, false]], "noted as not kept");
+  const keep = createKeep({ indexedDB: disk.idb, openWaitMs: 20 });
+  const again = phone({ fake: p.fake, storage: p.storage, ticketData: readKept(keep) });
+  await again.store.boot();
+  await again.store.idle();
+  assert.match(again.store.state.notice || "", /lost on this phone/);
+  assert.equal(again.store.outbox().unsent, 0);
+  assert.equal(queued(again.storage).length, 0);
+  assert.equal(again.net.sent.some((b) => b.action === "addTicket"), false);
+  // Once only.
+  again.store.clearNotice();
+  await again.store.checkRev();
+  await again.store.idle();
+  assert.equal(again.store.state.notice, null);
+});
+
+test("store: a waiting picture queued before kept was noted (no kept in mat.queue) is read as kept: it waits for a keep that does not open", async () => {
+  const disk = hangable();
+  const first = createKeep({ indexedDB: disk.idb });
+  await first.ready;
+  const p = phone({ ticketData: readKept(first) });
+  await p.store.boot();
+  p.net.offline = true;
+  await p.store.checkRev();
+  const id = await addKept(p, first);
+  const old = JSON.parse(p.storage.getItem("mat.queue")).map((q) => {
+    const c = { ...q };
+    delete c.kept;
+    return c;
+  });
+  p.storage.setItem("mat.queue", JSON.stringify(old));
+  disk.hang = true;
+  const keep = createKeep({ indexedDB: disk.idb, openWaitMs: 20 });
+  const again = phone({ fake: p.fake, storage: p.storage, ticketData: readKept(keep) });
+  await again.store.boot();
+  await again.store.idle();
+  assert.equal(again.store.state.notice, null);
+  assert.ok(again.store.state.tickets.some((x) => x.id === id && x.pending));
+  assert.equal(queued(again.storage).length, 1);
+});
+
+test("readKept (the app's ticketData): the data from a working keep; null when it does not have it; an open that answered late is tried again; still not open, it rejects; no IndexedDB at all, null", async () => {
+  const disk = hangable();
+  const first = createKeep({ indexedDB: disk.idb });
+  await first.ready;
+  assert.equal(await first.put("a", new Blob([Buffer.from(pngData, "base64")], { type: "image/png" })), true);
+  assert.equal(await readKept(first)("a"), pngData);
+  assert.equal(await readKept(first)("zz"), null, "a working keep without it: lost");
+  // A slow start: the first open does not answer in time, the reopen does.
+  disk.hang = true;
+  const late = createKeep({ indexedDB: disk.idb, openWaitMs: 20 });
+  await late.ready;
+  assert.equal(late.lasting, false);
+  disk.hang = false;
+  assert.equal(await readKept(late)("a"), pngData);
+  assert.equal(late.lasting, true);
+  // An open that never answers: rejects (the picture may be in it).
+  disk.hang = true;
+  const hung = createKeep({ indexedDB: disk.idb, openWaitMs: 20 });
+  await assert.rejects(readKept(hung)("a"), /not open/);
+  // No IndexedDB at all: nothing can be kept, so it is missing.
+  const none = createKeep({ indexedDB: undefined });
+  assert.equal(none.none, true);
+  assert.equal(await readKept(none)("a"), null);
+});
+
+test("keep.reopen: after one that did not open, none for a minute, so waiting pictures do not each wait 3 s nor pile up open requests; then it tries again", async () => {
+  const disk = hangable();
+  disk.hang = true;
+  let t = 1000;
+  const keep = createKeep({ indexedDB: disk.idb, openWaitMs: 20, now: () => t });
+  await keep.ready;
+  assert.equal(disk.opens, 1);
+  const read = readKept(keep);
+  for (const id of ["a", "b", "c"]) await assert.rejects(read(id));
+  assert.equal(disk.opens, 2, "one reopen for three pictures");
+  t += 59000;
+  await assert.rejects(read("a"));
+  assert.equal(disk.opens, 2, "still within the pause");
+  t += 2000;
+  disk.hang = false;
+  assert.equal(await read("a"), null, "tried again after the pause; open, and it does not have it");
+  assert.equal(disk.opens, 3);
+  assert.equal(keep.lasting, true);
+});
+
 test("store: a refused picture says the backend's reason through its outcome and is gone from the screen", async () => {
   const p = phone();
   await p.store.boot();
@@ -799,6 +953,10 @@ test("N4: a picture that meets a busy trip sheet says so, and does not blame the
   assert.equal(waitingSentence({ waiting: 1, busy: 1 }), "The trip sheet is busy. It will go up in a moment.");
   assert.equal(waitingSentence({ waiting: 2, busy: 1 }), "Saved on this phone. It goes up in a moment, or when there is signal.");
   assert.equal(waitingSentence({ waiting: 1, busy: 0 }), "Saved on this phone. It goes up when there is signal.");
+  // Not kept on this phone (keptOrLate false): never "Saved on this phone".
+  assert.equal(waitingSentence({ waiting: 1, busy: 0, unkept: true }), "Keep MAT open until it goes up.");
+  assert.equal(waitingSentence({ waiting: 2, busy: 1, unkept: true }), "Keep MAT open until it goes up.");
+  assert.equal(waitingSentence({ waiting: 1, busy: 1, unkept: true }), "The trip sheet is busy. It will go up in a moment. Keep MAT open until it goes up.");
 });
 
 // ---------- a stay's booking (S2 鍵札) ----------
@@ -852,4 +1010,33 @@ test("fetchOrder: today is the Days clock's day (Dec 9 in its own zone after Jap
     tickets: [{ id: "inn", stay: "dec9stay0801" }, { id: "later", stay: "laterstay01" }, { id: "fl", stop: "dec9stop0903" }],
   });
   assert.deepEqual(fetchOrder(s, et("2026-12-09T11:45")).map((t) => t.id), ["inn", "fl", "later"]);
+});
+
+test("keptOrLate: true once every waiting picture's put kept it in a lasting keep; false when a write failed, the cap was hit, or the keep is memory only", async () => {
+  const lasting = { lasting: true };
+  // Waits for a put still writing.
+  let doneA;
+  const a = new Promise((r) => { doneA = r; });
+  let over = null;
+  const waiting = keptOrLate(lasting, [a, Promise.resolve(true)], 10000).then((v) => { over = v; });
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(over, null, "a put still writing is waited for");
+  doneA(true);
+  await waiting;
+  assert.equal(over, true);
+  assert.equal(await keptOrLate(lasting, []), true, "nothing waiting");
+  // A write that failed (quota, IndexedDB error, a wipe: put resolves false), or threw.
+  assert.equal(await keptOrLate(lasting, [Promise.resolve(true), Promise.resolve(false)], 10000), false);
+  assert.equal(await keptOrLate(lasting, [Promise.reject(new Error("IndexedDB"))], 10000), false);
+  // The cap: a put that never answers is given up on, as not kept.
+  const t0 = Date.now();
+  assert.equal(await keptOrLate(lasting, [new Promise(() => {})], 50), false);
+  assert.ok(Date.now() - t0 < 1000);
+  // Only the memory keep (IndexedDB missing or its open never answered): put says true, but closing MAT loses it.
+  assert.equal(await keptOrLate({ lasting: false }, [Promise.resolve(true)], 10000), false);
+  // The real keep in memory only (no IndexedDB): the same.
+  const mem = createKeep({ indexedDB: null });
+  const put = mem.put("pic1", new Blob(["x"], { type: "image/png" }));
+  assert.equal(await put, true);
+  assert.equal(await keptOrLate(mem, [put], 10000), false);
 });

@@ -91,6 +91,41 @@ async function openRow(page, id) {
   await until(() => page.evaluate((sel) => document.querySelector(sel).classList.contains("is-open"), row(id)), "row " + id + " opens");
 }
 
+// Taps Tick it off on an open row once, and checks the app took the tap: tick()
+// draws the row stamped before anything is sent, so it is stamped at once.
+// Not page.click: that sends the press and the release as two messages and the
+// page runs in between; a redraw there that replaces the button loses the tap.
+// On GitHub (PR 64, slice 3) a tap was lost that way or another: the case timed
+// out on "ticked" with row 1 open and never stamped. Here the checks and the
+// tap are one step in the page. What Playwright's click would check is checked
+// first: the button is drawn, not inert, in the window, and it is what a finger
+// at its centre touches (nothing covers it, the opening row no longer clips it).
+async function tapTick(page, id) {
+  let why = "";
+  const tapped = await until(async () => {
+    const r = await page.evaluate(([s, rowSel]) => {
+      const b = document.querySelector(s);
+      if (!b) return "no Tick it off";
+      if (b.closest("[inert]")) return "Tick it off is inert";
+      const box = b.getBoundingClientRect();
+      if (!(box.width > 0 && box.height > 0) || getComputedStyle(b).visibility === "hidden") return "Tick it off is not drawn";
+      const x = box.left + box.width / 2;
+      const y = box.top + box.height / 2;
+      if (x < 0 || y < 0 || x > innerWidth || y > innerHeight) return "Tick it off is out of the window";
+      const hit = document.elementFromPoint(x, y);
+      if (!hit || !b.contains(hit)) return "Tick it off is covered by " + (hit ? hit.tagName.toLowerCase() + [...hit.classList].map((c) => "." + c).join("") : "nothing");
+      b.click();
+      return { landed: document.querySelector(rowSel).classList.contains("is-landed") };
+    }, [row(id) + " .bw-tick", row(id)]);
+    if (typeof r === "string") why = r;
+    return typeof r === "object" && r;
+  }, "Tick it off on row " + id + " can be tapped").catch((e) => {
+    throw new Error(e.message + " (" + why + ")");
+  });
+  // Tapped once, and never again: a tap the app drops is a failure here, not a retry.
+  assert.equal(tapped.landed, true, "the app took the tap on row " + id + " (the row is stamped)");
+}
+
 module.exports = [
   {
     name: "before the trip the list is on the Before tab: open items by book-by date, the due lines, the seals, done folded, the fetch line; Days shows none of it",
@@ -158,7 +193,7 @@ module.exports = [
       assert.deepEqual({ ...b }, { pill: "4", name: "Before we go, 4 open", current: "page", active: true, order: "days,before,money", rows: 4, band: "4open", small: "出発前" });
       assert.equal(await page.evaluate(() => document.getElementById("vDays").inert), true, "Days is inert while Before shows");
       await openRow(page, "3");
-      await page.click(row(3) + " .bw-tick");
+      await tapTick(page, "3");
       await until(() => stored(backend, "3").ticked_by === "Mo", "ticked");
       b = await bar();
       assert.equal(b.pill, "3");
@@ -172,8 +207,10 @@ module.exports = [
       assert.equal(await page.$("#vDays #todos, #vDays .bw"), null);
     },
   },
+  // Three cases, not one: as one case with four phones it took 13 s at the
+  // median on GitHub (19 s at worst) and ran past the 30 s budget under load.
   {
-    name: "before the trip the tab is there with 0 open; no planner or no items: no tab; during the trip no Before key (Tickets has its place) and the open items are a slip on Tickets that goes with the last tick",
+    name: "before the trip the tab is there with 0 open; no planner or no items: no tab",
     async run({ page, newPhone }) {
       // Before the trip, everything done: still there, count 0 and no pill.
       await ready(page, { items: [ITEMS[4]] });
@@ -186,8 +223,12 @@ module.exports = [
       await until(() => other.evaluate(() => document.querySelectorAll("#rail .tk").length > 0), "the tickets draw");
       assert.equal(await visible(other, "#beforeBtn"), false, "no list, no tab");
       assert.equal(await other.evaluate(() => document.getElementById("beforeBtn").hidden), true);
+    },
+  },
+  {
+    name: "during the trip with nothing open: no Before key, Tickets has its place, and no slip on it",
+    async run({ page: third }) {
       // During the trip with nothing open: no Before key; Tickets has its place, with no slip.
-      const third = await newPhone();
       await ready(third, { nowMs: NOON12, items: [ITEMS[4]], go: false });
       await third.evaluate(() => window.__matTest.store.idle());
       assert.equal(await tabIsIn(third), false, "trip on: no Before key");
@@ -196,8 +237,12 @@ module.exports = [
       await third.click("#ticketsBtn");
       await until(() => third.evaluate(() => !!document.querySelector("#vTickets .pc-case")), "the case shows");
       assert.equal(await third.$("#pcSlip"), null, "nothing open: no slip");
+    },
+  },
+  {
+    name: "during the trip no Before key (Tickets has its place) and the open items are a slip on Tickets that goes with the last tick",
+    async run({ page: fourth }) {
       // During the trip with one open: still no Before key; the slip on Tickets holds it.
-      const fourth = await newPhone();
       const backend = await ready(fourth, { nowMs: NOON12, items: [ITEMS[1], ITEMS[4]], go: false });
       await until(() => visible(fourth, "#ticketsBtn"), "Tickets in the bar");
       assert.equal(await tabIsIn(fourth), false, "no Before key on a trip day");
@@ -211,7 +256,7 @@ module.exports = [
       await until(() => asSheet(fourth), "the pad as a sheet over Tickets");
       await expectText(fourth, row(2) + " .bw-due", /was due Wed Nov 18 · \d+ days late/);
       await openRow(fourth, "2");
-      await fourth.click(row(2) + " .bw-tick");
+      await tapTick(fourth, "2");
       await until(() => stored(backend, "2").ticked_by === "Mo", "ticked");
       assert.equal(await asSheet(fourth), true, "the stamp is seen first");
       await advance(fourth, backend, 1700);
@@ -311,7 +356,7 @@ module.exports = [
       const backend = await ready(page);
       await stubSound(page);
       await openRow(page, "3");
-      await page.click(row(3) + " .bw-tick");
+      await tapTick(page, "3");
       // Stamped in place, with the settle stamp's hit.
       await until(() => page.$(row(3) + ".is-landed .bw-spot .stamp.hit"), "the stamp lands on the row");
       assert.deepEqual(await rowIds(page), ["1", "2", "3", "4"], "still where it was");
@@ -359,7 +404,7 @@ module.exports = [
       const backend = await ready(page);
       backend.fake.planner.cellFails = true;
       await openRow(page, "1");
-      await page.click(row(1) + " .bw-tick");
+      await tapTick(page, "1");
       await until(() => stored(backend, "1").ticked_by === "Mo", "ticked");
       await until(() => page.evaluate((s) => { const p = document.querySelector(s); return p && !p.hidden; }, row(1) + " .bw-pl"), "the pending line on the stamped row");
       await advance(page, backend, 1700);
@@ -380,7 +425,7 @@ module.exports = [
       await stubSound(page);
       assert.equal((await backend.call("tickTodo", { id: "4" }, "Ajen")).ok, true);
       await openRow(page, "4");
-      await page.click(row(4) + " .bw-tick");
+      await tapTick(page, "4");
       await expectText(page, "#ubarT", "That one is already done.");
       await until(() => page.evaluate((s) => { const r = document.querySelector(s); return !r || !r.classList.contains("is-landed"); }, row(4)), "no longer stamped");
       await advance(page, backend, 1700);
@@ -388,7 +433,7 @@ module.exports = [
 
       await page.context().setOffline(true);
       await openRow(page, "1");
-      await page.click(row(1) + " .bw-tick");
+      await tapTick(page, "1");
       await expectText(page, "#ubarT", "No signal. That wasn’t saved.");
       await until(async () => (await rowIds(page)).includes("1") && !(await page.$(row(1) + ".is-landed")), "back to open");
       assert.equal(stored(backend, "1").ticked_by, "");
@@ -625,7 +670,7 @@ module.exports = [
       };
       // Ticked and written, then someone changes the planner's Status by hand.
       await openRow(page, "3");
-      await page.click(row(3) + " .bw-tick");
+      await tapTick(page, "3");
       await until(() => stored(backend, "3").planner_written === "yes", "written");
       bookRow(backend, 3)[4] = "Booked (paid at the desk)";
       await page.click("#ubarU");
@@ -642,7 +687,7 @@ module.exports = [
       // A tick the planner has not taken; then the planner gives that number to another item.
       backend.fake.planner.cellFails = true;
       await openRow(page, "1");
-      await page.click(row(1) + " .bw-tick");
+      await tapTick(page, "1");
       await until(() => stored(backend, "1").ticked_by === "Mo", "ticked");
       await advance(page, backend, 1700);
       await until(() => page.$('#bwDone .bw-d[data-id="1"]'), "done in the app");

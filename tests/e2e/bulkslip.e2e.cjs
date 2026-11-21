@@ -396,6 +396,89 @@ cases.push({
   },
 });
 
+// 2026-11-21 (the bulkslip flake): a picture that waits for signal is in the
+// keep before the slip says it waits, so MAT closed (here, reloaded) at once
+// after Add still has it. The keep's writes are slowed here; before the fix
+// the slip said "waits on this phone" while the bytes were only in memory,
+// and after the reload the picture was dropped as lost.
+cases.push({
+  name: "no signal at Add, MAT closed at once after: the waiting picture was kept first and goes up when signal returns",
+  async run({ page }) {
+    await page.addInitScript(() => {
+      const real = Blob.prototype.arrayBuffer;
+      Blob.prototype.arrayBuffer = function () {
+        const p = real.call(this);
+        const ms = globalThis.__slowBytes || 0;
+        return ms ? p.then((b) => new Promise((resolve) => setTimeout(() => resolve(b), ms))) : p;
+      };
+    });
+    const backend = await tripWith({ old: false, lines: [LINES[3]], folder: [FOLDER()[3]] });
+    await ready(page, backend);
+    await addTickets(page);
+    await slipUp(page);
+    await expectText(page, "#bulkPunch", "Add 1 ticketUndo from History");
+    // No signal, and the phone knows it (a check met none), so Add keeps the picture without sending it.
+    backend.failWith = "network";
+    await page.evaluate(() => globalThis.__matTest.store.checkRev());
+    assert.equal(await page.evaluate(() => globalThis.__matTest.store.state.online), false);
+    await page.evaluate(() => { globalThis.__slowBytes = 800; });
+    await page.click("#bulkPunch");
+    await added(page);
+    await expectText(page, "#bulk .sl.is-done .sl-c", "D3 Sat 10:00Aonami Museum1 picture waiting for signal");
+    // Said to wait on this phone only once it is in the keep (not "Keep MAT open").
+    const said = await texts(page, "#bulk .ba-done-s");
+    assert.ok(said.some((t) => /They wait on this phone and go up when there is signal\.$/.test(t)), JSON.stringify(said));
+    assert.equal(calls(backend, "addTicket").length, 0, "never sent");
+    // MAT closed at once (a reload), then signal back. On a slow start the
+    // keep's database can answer after its 3 seconds (2026-11-21, CI): the
+    // picture is then not lost, it is read once the keep opens.
+    await page.reload();
+    await page.clock.resume();
+    await until(() => page.evaluate(() => !!globalThis.__matTest && document.querySelectorAll("#rc .rc-row").length > 0), "the app draws again", 10000);
+    await until(() => page.evaluate(() => globalThis.__matTest.store.state.online === false), "the reload's load meets no signal", 10000);
+    await page.evaluate(() => globalThis.__matTest.store.idle());
+    backend.failWith = null;
+    await page.evaluate(() => globalThis.__matTest.store.checkRev());
+    await page.evaluate(() => globalThis.__matTest.store.idle());
+    await until(() => live(backend).some((r) => r.planner_id === "T004:aaaaaaaaaa04"), "the waiting picture goes up", 15000);
+    assert.equal(await page.evaluate(() => globalThis.__matTest.store.outbox().unsent), 0);
+  },
+});
+
+// Fix round 1 (review I1): a phone whose keep is in memory only (IndexedDB
+// that never opens, a known WebKit fault) never says a waiting picture is on
+// this phone: it says to keep MAT open, and the picture goes up while it is.
+cases.push({
+  name: "no signal at Add, a keep in memory only: the slip says to keep MAT open, not that it waits on this phone",
+  async run({ page }) {
+    await page.addInitScript(() => {
+      const hung = () => ({ result: null, error: null, onsuccess: null, onerror: null, onblocked: null, onupgradeneeded: null });
+      try {
+        Object.defineProperty(indexedDB, "open", { value: hung, configurable: true });
+      } catch {
+        // nothing to do
+      }
+    });
+    const backend = await tripWith({ old: false, lines: [LINES[3]], folder: [FOLDER()[3]] });
+    await ready(page, backend);
+    await addTickets(page);
+    await slipUp(page);
+    await expectText(page, "#bulkPunch", "Add 1 ticketUndo from History");
+    backend.failWith = "network";
+    await page.evaluate(() => globalThis.__matTest.store.checkRev());
+    assert.equal(await page.evaluate(() => globalThis.__matTest.store.state.online), false);
+    await page.click("#bulkPunch");
+    await added(page);
+    const said = await texts(page, "#bulk .ba-done-s");
+    assert.ok(said.some((t) => t.endsWith("Keep MAT open until it goes up.")), JSON.stringify(said));
+    assert.ok(!said.some((t) => /on this phone/.test(t)), JSON.stringify(said));
+    await expectText(page, "#bulk .ba-wait", "T004 · Aonami Museumnot on this phone yet, keep MAT open");
+    backend.failWith = null;
+    await page.evaluate(() => globalThis.__matTest.store.checkRev());
+    await until(() => live(backend).some((r) => r.planner_id === "T004:aaaaaaaaaa04"), "it goes up while MAT is open", 15000);
+  },
+});
+
 cases.push({
   name: "a file gone from the list and a cancelled line open on Leave its pictures on; taking them off is said on the key",
   async run({ page }) {

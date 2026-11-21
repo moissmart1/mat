@@ -27,7 +27,7 @@
 // textContent; a thumbnail is an <img> from a blob: URL of bytes the phone
 // made itself (or checked, from the keep).
 
-import { LIMITS, NOT_A_TICKET, sniff, shrink, shrinkCanvas, pdfPages } from "../tickets.js";
+import { LIMITS, NOT_A_TICKET, sniff, shrink, shrinkCanvas, pdfPages, keptOrLate } from "../tickets.js";
 import { newId } from "../time.js";
 import { fillSeal } from "../picture.js";
 
@@ -57,9 +57,12 @@ const mb = (chars) => {
 };
 
 // What is true of pictures that are waiting: every one met a busy trip sheet
-// (not a lack of signal), or they wait for signal.
+// (not a lack of signal), or they wait for signal. Not kept on this phone
+// (out.unkept: the keep's write failed or never ended, or only the memory
+// keep): never "Saved on this phone"; closing MAT would lose it.
 export function waitingSentence(out) {
-  if (out.waiting > 0 && out.busy === out.waiting) return "The trip sheet is busy. It will go up in a moment.";
+  if (out.waiting > 0 && out.busy === out.waiting) return "The trip sheet is busy. It will go up in a moment." + (out.unkept ? " Keep MAT open until it goes up." : "");
+  if (out.unkept) return "Keep MAT open until it goes up.";
   if (out.busy > 0) return "Saved on this phone. It goes up in a moment, or when there is signal.";
   return "Saved on this phone. It goes up when there is signal.";
 }
@@ -392,6 +395,7 @@ export function mountTicketPart(box, store, keep, { on = "stop" } = {}) {
     stop = (store.state[onStay ? "stays" : "stops"] || []).find((s) => s && s.id === stopId) || { id: stopId };
     const todo = picks.filter((p) => p.state !== "saved");
     const at = keep.gen; // a wipe meanwhile: nothing more is kept or sent
+    const waitingKept = []; // the keep.put of each picture that waits on the phone
     for (const p of todo) {
       if (at !== keep.gen || store.state.status === "nokey") break;
       p.state = "saving";
@@ -402,10 +406,11 @@ export function mountTicketPart(box, store, keep, { on = "stop" } = {}) {
       // Into the keep too, so a picture that has to wait for signal is sent from
       // there after a reload. Not waited for (fix round 1, I3): a keep that
       // never answers must not hold up Save; the data travels with the add.
-      keep.put(id, p.blob, { gen: at });
+      // One that waits for signal is waited for after the loop (keptOrLate).
+      const kept = keep.put(id, p.blob, { gen: at });
       const sameWho = liveOn(stopId).filter((t) => (t.who || "") === p.who).length;
       const where = onStay ? { stay: stopId } : { stop: stopId };
-      const token = store.addTicket({ id, ...where, who: p.who, seat: p.seat.trim(), page: Math.min(LIMITS.perStop, Math.max(p.page, sameWho + 1)), mime: p.mime, w: p.w, h: p.h, data: p.data });
+      const token = store.addTicket({ id, ...where, who: p.who, seat: p.seat.trim(), page: Math.min(LIMITS.perStop, Math.max(p.page, sameWho + 1)), mime: p.mime, w: p.w, h: p.h, data: p.data }, { kept: kept.then((ok) => ok === true && keep.lasting) });
       const res = await store.ticketOutcome(token);
       if (res && res.saved) {
         p.state = "saved";
@@ -413,6 +418,7 @@ export function mountTicketPart(box, store, keep, { on = "stop" } = {}) {
       } else if (res && res.reason === "queued") {
         p.state = "saved";
         out.waiting += 1;
+        waitingKept.push(kept);
         if (res.busy) out.busy += 1;
       } else {
         p.state = "failed";
@@ -423,6 +429,10 @@ export function mountTicketPart(box, store, keep, { on = "stop" } = {}) {
       picks = picks.filter((x) => x.state !== "saved");
       drawPicked();
     }
+    // Only "waiting on this phone" once they are in the keep: closing MAT before then would lose them.
+    if (waitingKept.length) out.unkept = (await keptOrLate(keep, waitingKept)) !== true;
+    // The sheet closes when nothing failed, so this is said on the bar too.
+    if (out.unkept) store.notify(waitingSentence(out));
     say.textContent = out.failed
       ? (out.failed === 1 ? "One picture wasn’t saved. " : out.failed + " pictures weren’t saved. ") + W.rest
       : out.waiting

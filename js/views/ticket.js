@@ -41,7 +41,7 @@
 // A used day's gate stamp is made once per day, place and mark, and reused.
 // - stayTag: { kind, label, saved, n, total, state } (js/tickets.js stayMark
 //   and js/plan.js nightOf for that ticket's night) when the night's stay has
-//   a booking: the 宿泊 line carries 券 and the key-tag chip. Absent, the line
+//   a booking: the 宿泊 line carries 券 and the night in plain type. Absent, the line
 //   reads exactly as it did.
 // - zone: on a day whose zone is not the trip's (T1 現地時刻), { word,
 //   clocks } where word names the zone ("Eastern") and clocks, only while the
@@ -64,6 +64,7 @@
 import { minutesOf, issueLine, isPast, nextLine, mapsUrl, safeHref, gateDate } from "../plan.js";
 import { dayHead, yen, weekdayOf } from "../format.js";
 import { rng, gateStampSVG } from "../stamp.js";
+import { nightsShort, nightsLong } from "../staywords.js";
 
 const SVG = "http://www.w3.org/2000/svg";
 
@@ -325,8 +326,8 @@ function askLine() {
 
 // 宿泊 Tonight and the stay's name: a button that opens the hotel card.
 // tag: { kind, label, saved, n, total, state } when the stay has a booking
-// (S2 鍵札): 券 and how it stands under the name, and the key-tag chip with
-// the night on the right. Without it the row is as it always was.
+// (look A, 予約票): 券 and how it stands under the name, and the night in
+// plain type on the right ("1 / 3泊"). Without it the row is as it always was.
 function stayRow(stay, tag = null) {
   const b = el("button", "tk-stay");
   b.type = "button";
@@ -339,19 +340,17 @@ function stayRow(stay, tag = null) {
     if (name) b.append(el("span", "tk-stay-n", name));
     return b;
   }
-  b.classList.add("has-tag");
+  b.classList.add("has-bk");
   const mid = el("span");
   if (name) mid.append(el("span", "tk-stay-n", name));
   const fx = el("span", "r-fx");
   const pics = tag.kind === "pics";
   fx.append(el("b", pics && !tag.saved ? "is-dash" : "", "券"), el("span", "", !pics ? "Reference only" : "Booking · " + (tag.saved ? "on this phone" : "needs signal once")));
   mid.append(fx);
-  const chip = el("span", "kt-chip");
-  chip.setAttribute("aria-hidden", "true");
-  if (tag.state === "on") chip.append(el("b", "", String(tag.n)), "/ " + tag.total + "泊");
-  else chip.append(el("b", "", String(tag.total)), "泊");
-  b.append(mid, chip);
-  const nights = tag.state === "on" ? "night " + tag.n + " of " + tag.total : tag.total + (tag.total === 1 ? " night" : " nights");
+  const nt = el("span", "tk-stay-nt", nightsShort(tag));
+  nt.setAttribute("aria-hidden", "true");
+  b.append(mid, nt);
+  const nights = nightsLong(tag).toLowerCase();
   b.setAttribute("aria-label", "Tonight: " + name + ". Booking, " + nights + ".");
   return b;
 }

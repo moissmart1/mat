@@ -27,18 +27,19 @@
 // is added. While the card is open it looks again every 15 seconds, so a
 // distance from a position no longer usable is taken off.
 //
-// The booking (S2 鍵札, the key tag): Edit is always the last key under the
-// note (onEdit(stayId): the app closes the card and opens Edit stay). When
-// the stay has a booking (js/tickets.js stayMark: pictures, or the facts
-// alone), the small key tag hangs beside its name (js/views/keytag.js), and
-// under 運転手さんへ is 鍵札 Show booking (onBooking(stayId, button): the app
-// holds the booking up, js/views/stub.js) with the night (by clock, in the
-// trip's zone) and a line saying whether its pictures are on this phone.
-// Without a booking the card is as it was, plus Edit.
+// The booking (look A, 予約票): Edit is always the last key under the note
+// (onEdit(stayId): the app closes the card and opens Edit stay). When the stay
+// has a booking (js/tickets.js stayMark: pictures, or the facts alone), a
+// ruled form closes the name and address block: 予約 Booking, the dates, the
+// booking number (or the pages, or the name on it) and the night (by clock, in
+// the trip's zone). Under 運転手さんへ is 予約票 Show booking
+// (onBooking(stayId, button): the app holds the booking up, js/views/stub.js)
+// and a line saying whether its pictures are on this phone. Only rules and
+// type, no drawn objects. Without a booking the card is as it was, plus Edit.
 
-import { safeHref, stayMapsUrl, stayDistance, tripNow, nightOf } from "../plan.js";
+import { safeHref, stayMapsUrl, stayDistance, tripNow, nightOf, staySpan } from "../plan.js";
 import { stayMark } from "../tickets.js";
-import { tagSmall, nightsLong } from "./keytag.js";
+import { nightsShort, nightsLong, nightLabel, stayArrow, cardCell } from "../staywords.js";
 
 const MARKUP = `
 <div class="sheet-top"><span>Where you sleep<i>宿泊</i></span><button type="button" id="stayDone">Done</button></div>
@@ -66,6 +67,50 @@ const failedPhotos = new Set();
 
 const RECHECK_MS = 15000;
 
+// The booking form on the card: a ruled block, the dates and the booking's
+// number, and the night.
+function bookingForm(stay, tag) {
+  const form = el("div", "bk-form");
+  form.setAttribute("role", "group");
+  form.setAttribute("aria-label", "Booking");
+  const head = el("div", "bk-hd");
+  const title = el("span");
+  const jpTitle = el("span", "", "予約");
+  jpTitle.setAttribute("aria-hidden", "true");
+  title.append(jpTitle, " Booking");
+  head.append(title);
+  const arrow = stayArrow(stay);
+  if (arrow) {
+    const dates = el("i");
+    const seen = el("span", "", arrow);
+    seen.setAttribute("aria-hidden", "true");
+    dates.append(seen, el("span", "bk-vh", staySpan(stay)));
+    head.append(dates);
+  }
+  const short = nightsShort(tag.night);
+  const grid = el("div", "bk-g" + (short ? "" : " is-one"));
+  const cell = cardCell(stay, tag.mark);
+  const left = el("div");
+  const lsmall = el("small");
+  const ljp = el("span", "", cell.jp);
+  ljp.setAttribute("aria-hidden", "true");
+  lsmall.append(ljp, el("i", "", cell.en));
+  left.append(lsmall, el("b", "", cell.value));
+  grid.append(left);
+  if (short) {
+    const right = el("div");
+    const rsmall = el("small", "", "泊");
+    rsmall.setAttribute("aria-hidden", "true");
+    rsmall.append(el("i", "", nightLabel(tag.night)));
+    const rb = el("b", "", short);
+    rb.setAttribute("aria-hidden", "true");
+    right.append(rsmall, rb, el("span", "bk-vh", nightsLong(tag.night)));
+    grid.append(right);
+  }
+  form.append(head, grid);
+  return form;
+}
+
 // The card's contents for one stay. far: "2.4 km from here", or "".
 // tag: { mark, night } when the stay has a booking, else null.
 function card(stay, far = "", tag = null) {
@@ -87,18 +132,11 @@ function card(stay, far = "", tag = null) {
   const jp = str(stay.nameJp);
   const en = str(stay.name);
   const big = jp || en;
-  // The name and the English name, with the key tag hung beside them.
-  const nm = el("div", "sy-nm");
-  if (big) nm.append(el("div", "sy-name", big));
-  if (jp && en) nm.append(el("div", "sy-en", en));
-  if (tag) {
-    const hang = el("div", "sy-hang");
-    hang.append(tagSmall(stay.tkRef, tag.night));
-    nm.append(hang);
-  }
-  if (nm.childElementCount) nodes.push(nm);
+  if (big) nodes.push(el("div", "sy-name", big));
+  if (jp && en) nodes.push(el("div", "sy-en", en));
   const address = str(stay.addressJp);
   if (address) nodes.push(el("div", "sy-ad", address));
+  if (tag) nodes.push(bookingForm(stay, tag));
   const ask = el("div", "sy-ask");
   ask.append(el("b", "", "ここまでお願いします"), el("span", "", "Please take me here."));
   nodes.push(ask);
@@ -127,12 +165,17 @@ function card(stay, far = "", tag = null) {
     nodes.push(drv);
   }
   if (tag) {
-    const key = el("button", "kt-line");
+    const key = el("button", "bk-key");
     key.type = "button";
     const words = el("span");
-    words.append(el("b", "", "鍵札"), "Show booking");
-    key.append(words, el("i", "", nightsLong(tag.night) + " ›"));
-    key.setAttribute("aria-label", "Show booking, " + nightsLong(tag.night).toLowerCase());
+    const jpKey = el("b", "", "予約票");
+    jpKey.setAttribute("aria-hidden", "true");
+    words.append(jpKey, "Show booking");
+    const nl = nightsLong(tag.night);
+    const goes = el("i", "", nl ? nl + " ›" : "›");
+    goes.setAttribute("aria-hidden", "true");
+    key.append(words, goes);
+    key.setAttribute("aria-label", "Show booking" + (nl ? ", " + nl.toLowerCase() : ""));
     nodes.push(key);
     const line = el("div", "sy-tkline");
     const m = tag.mark;
@@ -339,7 +382,7 @@ export function mountStayCard(root, store, { where = null, keep = null, clock = 
   body.addEventListener("click", (ev) => {
     if (ev.target.closest(".drv")) openDriver();
     else if (ev.target.closest(".r-edit") && stayId) onEdit(stayId);
-    else if (ev.target.closest(".kt-line") && stayId) onBooking(stayId, ev.target.closest(".kt-line"));
+    else if (ev.target.closest(".bk-key") && stayId) onBooking(stayId, ev.target.closest(".bk-key"));
   });
   // Escape closes the driver's screen first (the card stays).
   document.addEventListener("keydown", (ev) => {
@@ -350,7 +393,7 @@ export function mountStayCard(root, store, { where = null, keep = null, clock = 
 
   const current = () => (store.state.stays || []).find((s) => s && s.id === stayId && !s.deleted) || null;
   const isOpen = () => sheet.classList.contains("is-open");
-  // The key tag: { mark, night } when the stay has a booking (pictures or
+  // The booking: { mark, night } when the stay has a booking (pictures or
   // facts), else null. The night by the trip's clock, in its zone.
   function tagOf(stay) {
     const s = store.state;
@@ -391,8 +434,7 @@ export function mountStayCard(root, store, { where = null, keep = null, clock = 
     shown = sig;
     // A key keeps focus across a redraw.
     const a = document.activeElement;
-    const had = a && sheet.contains(a) ? [".drv", ".kt-line", ".r-edit"].find((c) => a.matches(c)) : null;
-    body.classList.toggle("has-tag", !!tag);
+    const had = a && sheet.contains(a) ? [".drv", ".bk-key", ".r-edit"].find((c) => a.matches(c)) : null;
     body.replaceChildren(...card(stay, far, tag));
     if (had) {
       const key = body.querySelector(had);

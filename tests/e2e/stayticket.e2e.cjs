@@ -1,7 +1,7 @@
-// A ticket on a stay (S2 鍵札, the key tag on the hook): the hotel card's
-// Edit opens Edit stay (js/views/staysheet.js), where a PDF and the four
-// booking fields are added; the tag then hangs on the card, on the 宿泊 line
-// and on the hook at the top of the Tickets tab; Show booking holds it up
+// A ticket on a stay (look A, 予約票): the hotel card's Edit opens Edit stay
+// (js/views/staysheet.js), where a PDF and the four booking fields are added;
+// the booking form then shows on the card, the night on the 宿泊 line and the
+// stay at the top of the Tickets tab; Show booking holds it up
 // (js/views/stub.js). Bulk add puts a lodging line on its stay, or offers to
 // add the stay. Everything is made up: the guest house, the airport inn, the
 // reference, the name on the booking and the files (tests/e2e/pictures.cjs).
@@ -35,7 +35,7 @@ const isOpen = (page, id) => page.evaluate((i) => {
   const el = document.getElementById(i);
   return !!el && el.classList.contains("is-open");
 }, id);
-const tixUp = (page) => page.evaluate(() => !document.getElementById("tix").hidden && !!document.querySelector("#tix .kt-label"));
+const tixUp = (page) => page.evaluate(() => !document.getElementById("tix").hidden && !!document.querySelector("#tix .tstub.is-stay"));
 const calls = (backend, action) => backend.requests.filter((b) => b.action === action);
 
 async function shot(page, name) {
@@ -78,14 +78,14 @@ async function stopPicture(backend, id) {
 // No sideways scroll anywhere, nor inside the given element.
 const noSideways = (page, sel) => page.evaluate((s) => {
   const box = s ? document.querySelector(s) : null;
-  const over = box ? [...box.querySelectorAll("*")].filter((e) => e.getClientRects().length && !e.closest(".kt-wrap") && e.getBoundingClientRect().right > innerWidth + 0.5).map((e) => e.className || e.tagName) : [];
+  const over = box ? [...box.querySelectorAll("*")].filter((e) => e.getClientRects().length && e.getBoundingClientRect().right > innerWidth + 0.5).map((e) => e.className || e.tagName) : [];
   return { doc: document.scrollingElement.scrollWidth <= innerWidth, box: !box || box.scrollWidth <= box.clientWidth + 0.5, over };
 }, sel);
 
 const cases = [];
 
 cases.push({
-  name: "390: no booking, the card has Edit and no tag; Edit stay adds a PDF and the four fields; the tag on the card, the 宿泊 line and the hook; Show booking; Hang it back",
+  name: "390: no booking, the card has Edit and no booking form; Edit stay adds a PDF and the four fields; the form on the card, the night on the 宿泊 line and the stay on the tab; Show booking; Put it back",
   viewport: { width: 390, height: 844 },
   async run({ page }) {
     const backend = makeBackend(trip(), { now: EVE10 });
@@ -95,10 +95,10 @@ cases.push({
     assert.equal(await page.evaluate((sel) => document.querySelector(sel + " .tk-stay").className, tk(D10)), "tk-stay");
     assert.equal(await page.evaluate((sel) => document.querySelector(sel + " .tk-stay").childElementCount, tk(D10)), 2);
     await openCard(page);
-    // The card with no booking: Edit is the last key, no tag, no Show booking.
+    // The card with no booking: Edit is the last key, no booking form, no Show booking.
     assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll("#stay .r-btns > *")].map((b) => b.textContent)), ["地図 Map ↗", "Booking ↗", "Edit"]);
-    assert.equal(await page.evaluate(() => !!document.querySelector("#stay .sy-hang, #stay .kt-line, #stay .sy-tkline, #stay .sy.has-tag")), false);
-    assert.equal(await page.evaluate(() => !!document.querySelector("#stay .sy-nm .sy-name")), true);
+    assert.equal(await page.evaluate(() => !!document.querySelector("#stay .bk-form, #stay .bk-key, #stay .sy-tkline")), false);
+    assert.equal(await page.evaluate(() => !!document.querySelector("#stay .sy > .sy-name")), true);
     await shot(page, "card-plain.png");
 
     // Edit stay, in the card's place.
@@ -142,91 +142,94 @@ cases.push({
     const stayRow = backend.fake.tables.Stays.find((r) => r.id === INN);
     assert.deepEqual([stayRow.tk_ref, stayRow.tk_name, stayRow.tk_people, stayRow.tk_room, stayRow.name], [BOOKED.tkRef, BOOKED.tkName, BOOKED.tkPeople, BOOKED.tkRoom, "Tsubame-so Guest House"]);
 
-    // The tag hangs on the card.
-    await until(() => page.evaluate(() => !!document.querySelector("#stay .sy.has-tag .sy-nm .sy-hang .kt.sm")), "the tag hangs on the card");
-    assert.equal(await page.getAttribute("#stay .sy-hang .kt-wrap", "aria-hidden"), "true");
-    await expectText(page, "#stay .sy-hang .kt-ref", "予約番号TSB-4827-KQ");
-    await expectText(page, "#stay .sy-hang .kt-nights", "1 / 3泊");
-    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll("#stay .sy-hang .kt-notch i")].map((i) => i.className)), ["is-on", "", ""]);
-    await expectText(page, "#stay .kt-line", "鍵札Show bookingNight 1 of 3 ›");
+    // The booking form is on the card, after the address and before
+    // ここまでお願いします.
+    await until(() => page.evaluate(() => !!document.querySelector("#stay .sy > .bk-form")), "the booking form is on the card");
+    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll("#stay .sy > *")].map((n) => n.className).filter((c) => ["sy-ad", "bk-form", "sy-ask"].includes(c))), ["sy-ad", "bk-form", "sy-ask"]);
+    assert.equal(await page.getAttribute("#stay .bk-form", "aria-label"), "Booking");
+    await expectText(page, "#stay .bk-hd", "予約 BookingDec 10 → Dec 13Dec 10 to 13");
+    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll("#stay .bk-g > div")].map((d) => d.textContent)), ["予約番号Booking no.TSB-4827-KQ", "泊Night1 / 3泊Night 1 of 3"]);
+    await expectText(page, "#stay .bk-key", "予約票Show bookingNight 1 of 3 ›");
+    assert.equal(await page.getAttribute("#stay .bk-key", "aria-label"), "Show booking, night 1 of 3");
     await until(async () => (await text(page, "#stay .sy-tkline")) === "券2 pages · on this phone", "the pages are on this phone");
-    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll("#stay .sy > *")].map((n) => n.className)).then((l) => l.slice(l.indexOf("drv"))), ["drv", "kt-line", "sy-tkline"]);
-    assert.ok((await page.evaluate(() => document.querySelector("#stay .kt-line").getBoundingClientRect().height)) >= 56);
+    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll("#stay .sy > *")].map((n) => n.className)).then((l) => l.slice(l.indexOf("drv"))), ["drv", "bk-key", "sy-tkline"]);
+    assert.ok((await page.evaluate(() => document.querySelector("#stay .bk-key").getBoundingClientRect().height)) >= 56);
     await page.evaluate(() => { document.getElementById("stay").scrollTop = 0; });
     await shot(page, "card.png");
 
-    // Show booking: the key tag off the hook, the reference, the sentence, the pages.
-    await page.click("#stay .kt-line");
+    // Show booking: the booking held up, the number, the sentence, the pages.
+    await page.click("#stay .bk-key");
     await until(() => tixUp(page), "the booking is held up");
     assert.equal(await page.getAttribute("#tix .ov", "aria-label"), "Booking: Tsubame-so Guest House");
-    await expectText(page, "#tix .oa-top", "鍵札 Off the hook · Thu Dec 10Hang it back");
-    await expectText(page, "#tix .kt.big .kt-nm", "つばめ荘");
-    await expectText(page, "#tix .kt.big .kt-nights", "第1夜 · Night 1 of 3");
-    assert.equal(await page.getAttribute("#tix .kt-wrap", "aria-hidden"), "true");
-    await expectText(page, "#tix .kt-label .stub-k", "予約Booking · Tsubame-so Guest HouseDec 10 to 13");
-    await expectText(page, "#tix .ref-big small", "予約番号 Confirmation");
+    await expectText(page, "#tix .oa-top", "予約票 Booking · Thu Dec 10Put it back");
+    await expectText(page, "#tix .stub-band", "宿泊StayD 01–03");
+    await expectText(page, "#tix .stub-k", "予約票BookingNight 1 of 3 · 1 / 3泊");
+    await expectText(page, "#tix .stub-t", "Tsubame-so Guest House");
+    await expectText(page, "#tix .stub-w", "つばめ荘");
+    await expectText(page, "#tix .ref-big small", "予約番号 Booking number");
     await expectText(page, "#tix .ref-big b", "TSB-4827-KQ");
     await expectText(page, "#tix .ref-big p", "M. EXAMPLE の名前で、本日から3泊予約しています。");
     await expectText(page, "#tix .ref-big span", "We have a booking for 3 nights from today under M. EXAMPLE.");
-    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll("#tix .facts > div")].map((d) => d.textContent)), ["お名前Name on bookingM. EXAMPLE", "人数In the room3", "部屋RoomTatami room for 3", "泊数Nights3泊 · Dec 10 to 13"]);
+    assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll("#tix .facts > div")].map((d) => d.textContent)), ["お名前Name on bookingM. EXAMPLE", "人数In the room3名", "部屋RoomTatami room for 3", "泊数Nights1 / 3泊Dec 10 to 13"]);
     await expectText(page, "#tix .pg-cap", "予約確認書 Confirmation, 2 pagesTap to enlarge");
     await until(() => page.evaluate(() => [...document.querySelectorAll("#tix .pages .stub-code img")].filter((i) => i.naturalWidth > 0).length === 2), "both pages show");
-    await expectText(page, "#tix .stub-foot", "保存済On this phone. Works with no signal.3泊");
+    await expectText(page, "#tix .stub-foot", "保存済On this phone. Works with no signal.12.10 → 12.13");
     assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector("#tix .pages")).gridTemplateColumns.split(" ").length), 2);
     await shot(page, "open.png");
     // Tap to enlarge, then back.
     await page.click("#tix .pages .stub-code");
     await until(() => page.evaluate(() => !!document.querySelector("#tix .zoom")), "a page is enlarged");
     await page.click("#tix .zoom-x");
-    // Hang it back: focus goes back to Show booking.
+    // Put it back: focus goes back to Show booking.
     await page.click("#tix [data-close]");
     await until(() => page.evaluate(() => document.getElementById("tix").hidden), "the booking goes back");
-    assert.equal(await page.evaluate(() => document.activeElement.classList.contains("kt-line")), true);
+    assert.equal(await page.evaluate(() => document.activeElement.classList.contains("bk-key")), true);
     assert.equal(await isOpen(page, "stay"), true, "the card is still open under it");
 
-    // The 宿泊 line: 券, the booking, and the key-tag chip with that ticket's night.
+    // The 宿泊 line: 券, the booking, and that ticket's night in plain type.
     await page.click("#stayDone");
     await until(async () => !(await isOpen(page, "stay")), "the card closes");
     const line = tk(D10) + " .tk-stay";
-    await until(() => page.evaluate((sel) => !!document.querySelector(sel + ".has-tag .kt-chip"), line), "the chip on the 宿泊 line");
+    await until(() => page.evaluate((sel) => !!document.querySelector(sel + ".has-bk .tk-stay-nt"), line), "the night on the 宿泊 line");
     assert.equal(await page.getAttribute(line, "aria-label"), "Tonight: Tsubame-so Guest House. Booking, night 1 of 3.");
     await expectText(page, line + " .tk-stay-n", "Tsubame-so Guest House");
     await expectText(page, line + " .r-fx", "券Booking · on this phone");
-    await expectText(page, line + " .kt-chip", "1/ 3泊");
-    await expectText(page, tk("2026-12-11") + " .tk-stay .kt-chip", "2/ 3泊");
+    await expectText(page, line + " .tk-stay-nt", "1 / 3泊");
+    await expectText(page, tk("2026-12-11") + " .tk-stay .tk-stay-nt", "2 / 3泊");
     await expectText(page, tk("2026-12-13") + " .tk-stay", "宿泊TonightRyokan by the river");
     await page.evaluate((sel) => document.querySelector(sel).scrollIntoView({ block: "end" }), line);
     await shot(page, "day.png");
 
-    // The Tickets tab: the hook, before the first foil, even with no stop ticket.
+    // The Tickets tab: tonight's stay, before the first foil, even with no stop ticket.
     await goTickets(page);
-    await until(() => page.evaluate(() => !!document.querySelector("#vTickets .pc-case > .pc-hook:first-child")), "the hook is first in the case");
-    await expectText(page, "#vTickets .pc-hk small", "今夜の宿 Tonight’s stay");
-    await expectText(page, "#vTickets .pc-hk b", "Tsubame-so Guest House");
-    await expectText(page, "#vTickets .pc-hk span", "On the hook every night you sleep there. Night 1 of 3.");
-    await expectText(page, "#vTickets .pc-hkb", "鍵札 Show booking");
+    await until(() => page.evaluate(() => !!document.querySelector("#vTickets .pc-case > .pc-stay:first-child")), "the stay is first in the case");
+    await expectText(page, "#vTickets .pc-stay-l", "今夜の宿 Tonight’s stay1 / 3泊");
+    await expectText(page, "#vTickets .pc-stay-n", "Tsubame-so Guest House");
+    await expectText(page, "#vTickets .pc-stay-r", "予約番号 Booking no.TSB-4827-KQ");
+    await expectText(page, "#vTickets .pc-stay-b", "予約票Show bookingNight 1 of 3 ›");
+    assert.equal(await page.getAttribute("#vTickets .pc-stay-b", "aria-label"), "Show booking: Tsubame-so Guest House, night 1 of 3");
     await expectText(page, "#vTickets .pc-none", /^No tickets on any stop yet\./);
-    assert.ok((await page.evaluate(() => document.querySelector("#vTickets .pc-hkb").getBoundingClientRect().height)) >= 44);
+    assert.ok((await page.evaluate(() => document.querySelector("#vTickets .pc-stay-b").getBoundingClientRect().height)) >= 48);
     await shot(page, "tab.png");
-    await page.click("#vTickets .pc-hkb");
-    await until(() => tixUp(page), "the hook's Show booking holds it up");
+    await page.click("#vTickets .pc-stay-b");
+    await until(() => tixUp(page), "the stay's Show booking holds it up");
     await page.click("#tix [data-close]");
-    await until(() => page.evaluate(() => document.getElementById("tix").hidden && document.activeElement.classList.contains("pc-hkb")), "Hang it back: focus on the hook's key");
+    await until(() => page.evaluate(() => document.getElementById("tix").hidden && document.activeElement.classList.contains("pc-stay-b")), "Put it back: focus on the stay's key");
   },
 });
 
 cases.push({
-  name: "the hook on night 2 and at 01:00 the morning after the last night, not the day after; the window, pockets and counts as with no booking",
+  name: "the stay on the tab on night 2 and at 01:00 the morning after the last night, not the day after; the window, pockets and counts as with no booking",
   async run({ page, newPhone }) {
     const backend = makeBackend(withBooking(), { now: NOON11 });
     await stayPicture(backend, "stayPicA00001");
     await stopPicture(backend, "stopPicA00001");
     await ready(page, { backend, nowMs: NOON11 });
     await goTickets(page);
-    await until(() => page.evaluate(() => !!document.querySelector("#vTickets .pc-hook")), "the hook");
-    await expectText(page, "#vTickets .pc-hk span", "On the hook every night you sleep there. Night 2 of 3.");
-    await expectText(page, "#vTickets .pc-hook .kt-nights", "2 / 3泊");
-    // The same trip with no booking: everything but the hook is the same.
+    await until(() => page.evaluate(() => !!document.querySelector("#vTickets .pc-stay")), "the stay");
+    await expectText(page, "#vTickets .pc-stay-l", /2 \/ 3泊$/);
+    await expectText(page, "#vTickets .pc-stay-b", "予約票Show bookingNight 2 of 3 ›");
+    // The same trip with no booking: everything but the stay is the same.
     const other = await newPhone();
     const plain = makeBackend(trip(), { now: NOON11 });
     await stopPicture(plain, "stopPicA00001");
@@ -234,18 +237,18 @@ cases.push({
     await goTickets(other);
     const caseText = (p) => p.evaluate(() => {
       const c = document.querySelector("#vTickets .pc-case").cloneNode(true);
-      const h = c.querySelector(".pc-hook");
+      const h = c.querySelector(".pc-stay");
       if (h) h.remove();
       return [c.textContent, document.querySelector("#vTickets .pc-bar").textContent, document.getElementById("ticketsBtn").textContent];
     });
-    assert.equal(await other.evaluate(() => !!document.querySelector("#vTickets .pc-hook")), false);
+    assert.equal(await other.evaluate(() => !!document.querySelector("#vTickets .pc-stay")), false);
     assert.deepEqual(await caseText(page), await caseText(other));
     // 01:00 on the morning after the last night (Dec 13): still last night's stay, night 3.
     await advance(page, backend, Date.parse("2026-12-13T01:00:00+09:00") - NOON11);
-    await until(async () => (await text(page, "#vTickets .pc-hk span")) === "On the hook every night you sleep there. Night 3 of 3.", "night 3 at 01:00");
-    // 09:00 that day: tonight is the river ryokan, with no booking: no hook.
+    await until(async () => (await text(page, "#vTickets .pc-stay-b")) === "予約票Show bookingNight 3 of 3 ›", "night 3 at 01:00");
+    // 09:00 that day: tonight is the river ryokan, with no booking: no stay line.
     await advance(page, backend, 8 * 3600000);
-    await until(() => page.evaluate(() => !document.querySelector("#vTickets .pc-hook")), "no hook the day after");
+    await until(() => page.evaluate(() => !document.querySelector("#vTickets .pc-stay")), "no stay the day after");
   },
 });
 
@@ -281,7 +284,7 @@ cases.push({
     await until(() => page.evaluate(() => (globalThis.__matTest.store.state.tickets || []).some((t) => t.stay === "planstay0001")), "the picture is on the phone, on the stay");
     assert.ok((await page.evaluate(() => localStorage.getItem("mat.queue"))).includes("planstay0001"), "waiting in mat.queue with its stay");
     // The card shows the booking from the waiting picture.
-    await until(() => page.evaluate(() => !!document.querySelector("#stay .kt-line")), "the tag hangs from the waiting picture");
+    await until(() => page.evaluate(() => !!document.querySelector("#stay .bk-key")), "the booking shows from the waiting picture");
     drop = false;
     await advance(page, backend, 21000);
     await until(() => backend.fake.tables.Tickets.length === 1, "it goes up later");
@@ -304,13 +307,13 @@ cases.push({
     assert.equal(calls(backend, "saveStay").length, 0);
     await backend.handle({ key: KEY, actor: "Ajen", action: "restoreStay", args: { id: INN } });
     await advance(page, backend, 21000);
-    await until(() => page.evaluate((sel) => !!document.querySelector(sel + " .tk-stay.has-tag"), tk(D10)), "the stay is back with its booking");
+    await until(() => page.evaluate((sel) => !!document.querySelector(sel + " .tk-stay.has-bk"), tk(D10)), "the stay is back with its booking");
     await openCard(page);
-    await page.click("#stay .kt-line");
+    await page.click("#stay .bk-key");
     await until(() => tixUp(page), "the booking is held up");
     // Reference only: no pages part, the text-only line.
     assert.equal(await page.evaluate(() => !!document.querySelector("#tix .stub-f")), false);
-    await expectText(page, "#tix .stub-foot", "文字Text only, always on this phone.3泊");
+    await expectText(page, "#tix .stub-foot", "文字Text only, always on this phone.12.10 → 12.13");
     await backend.handle({ key: KEY, actor: "Ajen", action: "deleteStay", args: { id: INN } });
     await advance(page, backend, 21000);
     await until(() => page.evaluate(() => document.getElementById("tix").hidden), "the booking closes itself");
@@ -398,14 +401,14 @@ cases.push({
     await ready(page, { backend });
     await page.clock.resume(); // the sheets slide
     await openCard(page);
-    await until(() => page.evaluate(() => !!document.querySelector("#stay .kt-line")), "the tag hangs");
+    await until(() => page.evaluate(() => !!document.querySelector("#stay .bk-key")), "the booking shows");
     assert.deepEqual(await noSideways(page, "#stay"), { doc: true, box: true, over: [] });
     await shot(page, "card-320.png");
-    await page.click("#stay .kt-line");
+    await page.click("#stay .bk-key");
     await until(() => tixUp(page), "the booking is held up");
     await until(() => page.evaluate(() => [...document.querySelectorAll("#tix .pages .stub-code img")].filter((i) => i.naturalWidth > 0).length === 2), "both pages show");
-    assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector("#tix .ref-big b")).fontSize), "36px");
-    assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector("#tix .ref-big p")).fontSize), "17px");
+    assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector("#tix .tstub.is-stay .ref-big b")).fontSize), "32px");
+    assert.equal(await page.evaluate(() => getComputedStyle(document.querySelector("#tix .tstub.is-stay .ref-big p")).fontSize), "16px");
     assert.deepEqual(await noSideways(page, "#tix .ov"), { doc: true, box: true, over: [] });
     await shot(page, "open-320.png");
     await page.click("#tix [data-close]");
@@ -415,7 +418,7 @@ cases.push({
 });
 
 cases.push({
-  name: "1440 x 900: the card and Edit stay in the Days pane; the hook on the Tickets tab",
+  name: "1440 x 900: the card and Edit stay in the Days pane; the stay on the Tickets tab",
   viewport: { width: 1440, height: 900 },
   mobile: false,
   async run({ page }) {
@@ -425,7 +428,7 @@ cases.push({
     await ready(page, { backend });
     await page.clock.resume(); // the sheets slide
     await openCard(page);
-    await until(() => page.evaluate(() => !!document.querySelector("#stay .kt-line")), "the tag hangs");
+    await until(() => page.evaluate(() => !!document.querySelector("#stay .bk-key")), "the booking shows");
     // The Days pane: the left half of the phone's block.
     const inPane = (id) => page.evaluate((i) => {
       const r = document.getElementById(i).getBoundingClientRect();
@@ -441,8 +444,53 @@ cases.push({
     await until(() => isOpen(page, "stay"), "Done opens the card again");
     await page.click("#stayDone");
     await goTickets(page);
-    await until(() => page.evaluate(() => !!document.querySelector("#vTickets .pc-hook")), "the hook");
+    await until(() => page.evaluate(() => !!document.querySelector("#vTickets .pc-stay")), "the stay");
     await shot(page, "desktop-tab.png");
+  },
+});
+
+// 2026-11-21 (the bulkslip flake, review M1): the single add's picture is in
+// the keep before Save says it waits, so MAT closed at once after Save (here,
+// a reload) still sends it later. The keep's writes are slowed; this page's
+// clock is paused, so the wait for the sheet moves it (the slowed write and
+// the keep's limit are page timers).
+cases.push({
+  name: "a picture that waits, MAT closed at once after Save: it was kept first and goes up later",
+  async run({ page }) {
+    await page.addInitScript(() => {
+      const real = Blob.prototype.arrayBuffer;
+      Blob.prototype.arrayBuffer = function () {
+        const p = real.call(this);
+        const ms = globalThis.__slowBytes || 0;
+        return ms ? p.then((b) => new Promise((resolve) => setTimeout(() => resolve(b), ms))) : p;
+      };
+    });
+    const backend = makeBackend(trip(), { now: EVE10 });
+    await ready(page, { backend });
+    await openCard(page);
+    await openEdit(page);
+    await page.setInputFiles("#syTkFile", [file("booking.png", "image/png", pngBytes(320, 320, 33))]);
+    await until(() => page.evaluate(() => document.querySelectorAll("#syTix .tkp-picked .file").length === 1), "the picture is picked", 15000);
+    // The picture's add gets no answer: it waits on the phone.
+    const real = backend.handle;
+    let drop = true;
+    backend.handle = async (body) => {
+      if (drop && body.action === "addTicket") throw new Error("network");
+      return real(body);
+    };
+    await page.evaluate(() => { globalThis.__slowBytes = 800; });
+    await page.click("#sySave");
+    await until(async () => { await advance(page, backend, 500); return !(await isOpen(page, "staySheet")); }, "Edit stay closes", 15000);
+    assert.ok((await page.evaluate(() => localStorage.getItem("mat.queue"))).includes("planstay0001"), "waiting in mat.queue");
+    assert.equal(backend.fake.tables.Tickets.length, 0);
+    // MAT closed at once (a reload), then signal back.
+    await page.reload();
+    await page.clock.resume();
+    await until(() => page.evaluate(() => !!globalThis.__matTest), "the app draws again", 10000);
+    drop = false;
+    await page.evaluate(() => globalThis.__matTest.store.checkRev());
+    await page.evaluate(() => globalThis.__matTest.store.idle());
+    await until(() => backend.fake.tables.Tickets.length === 1, "it goes up later with its picture (the backend refuses an add without data)", 15000);
   },
 });
 

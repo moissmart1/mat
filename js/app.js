@@ -28,7 +28,7 @@ import { createUpdater, otherVersionIn } from "./update.js";
 import { APP_VERSION } from "./config.js";
 import { isWide, onWide } from "./shape.js";
 import { createWhere } from "./where.js";
-import { createKeep, fetchMissing, toBase64, ticketMark, stayMark, fetchesAll, pruneKeep } from "./tickets.js";
+import { createKeep, fetchMissing, ticketMark, stayMark, fetchesAll, pruneKeep, readKept } from "./tickets.js";
 import { mountStub } from "./views/stub.js";
 import { mountStaySheet } from "./views/staysheet.js";
 import { tripNow, zoneOf, daySpan } from "./plan.js";
@@ -271,10 +271,8 @@ function start() {
       clearTrip(raw, { queue });
       keep.wipe();
     },
-    ticketData: async (id) => {
-      const blob = await keep.get(id);
-      return blob ? toBase64(blob) : null;
-    },
+    // A waiting picture's data; rejects while the keep has not opened (js/tickets.js readKept).
+    ticketData: readKept(keep),
     afterLoad: () => {
       pruneKeep(store, keep);
       if (fetchesAll(raw)) fetchMissing(store, keep, { allowed: () => fetchesAll(raw) });
@@ -330,7 +328,7 @@ function start() {
     onBooking: (id, button) => stub.openStay(id, button),
   });
   const allDays = mountAllDays(phone, store, { clock, onPick: (i) => days.goDay(i) });
-  const stopSheet = mountStopSheet(phone, store, { keep });
+  const stopSheet = mountStopSheet(phone, store, { keep, storage: raw });
   const staySheet = mountStaySheet(phone, store, keep, { onClose: (id) => stayCard.open(id) });
   // The stamp book, a panel like History, opened from the Days bar or today's ticket.
   const book = mountStampBook(phone, store, { where });
