@@ -1112,3 +1112,83 @@ module.exports.push({
     assert.equal(r.ok, false, "the backend refuses it too");
   },
 });
+
+// Issue #77: a finger down on Tick it off, the row drawn again before the finger
+// comes up (a sync, another phone's claim): the button the finger went down on is
+// gone and the browser sends no click. The tap is done on finger up (js/views/tap.js).
+module.exports.push({
+  name: "a redraw between the press and the release of Tick it off still ticks the item",
+  async run({ page }) {
+    const backend = await ready(page);
+    await openRow(page, "3");
+    const spot = await page.evaluate((s) => {
+      const b = document.querySelector(s);
+      b.scrollIntoView({ block: "center" });
+      const r = b.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    }, row(3) + " .bw-tick");
+    await page.mouse.move(spot.x, spot.y);
+    await page.mouse.down();
+    // The row is drawn again under the finger: a new button, the old one gone.
+    const swapped = await page.evaluate((s) => {
+      const b = document.querySelector(s);
+      const fresh = b.cloneNode(true);
+      b.replaceWith(fresh);
+      return !b.isConnected && fresh.isConnected;
+    }, row(3) + " .bw-tick");
+    assert.equal(swapped, true, "the button was replaced between press and release");
+    await page.mouse.up();
+    await until(() => page.evaluate((s) => document.querySelector(s).classList.contains("is-landed"), row(3)), "row 3 is stamped");
+    await until(() => stored(backend, "3").ticked_by === "Mo", "ticked");
+    assert.equal(sent(backend, "tickTodo").length, 1, "ticked once");
+  },
+});
+
+// Review of the #77 fix (I1): the rescue ticks the item pressed, not the # pressed.
+module.exports.push({
+  name: "a pull that puts another item under the pressed # between press and release: no tick, no stamp",
+  async run({ page }) {
+    const backend = await ready(page);
+    await openRow(page, "3");
+    const spot = await page.evaluate((s) => {
+      const b = document.querySelector(s);
+      b.scrollIntoView({ block: "center" });
+      const r = b.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    }, row(3) + " .bw-tick");
+    await page.mouse.move(spot.x, spot.y);
+    await page.mouse.down();
+    // Mo renumbers his planner: #3 is another item now. A pull lands under the finger.
+    bookRow(backend, 3)[1] = "Buy a different thing entirely";
+    // Through the store, not a click: a click would go through the list's own handler, which clears the press.
+    await page.evaluate(() => { globalThis.__lt = globalThis.__matTest.store.syncTodos({ force: true }); });
+    await until(() => page.evaluate(() => !document.querySelector('#bwOpen .bw-r[data-id="3"] .bw-n') || document.querySelector('#bwOpen .bw-r[data-id="3"] .bw-n').textContent.includes("different thing")), "row 3 shows the new item");
+    await page.mouse.up();
+    await page.waitForTimeout(600);
+    assert.equal(sent(backend, "tickTodo").length, 0, "no tick sent");
+    assert.equal(stored(backend, "3").ticked_by || "", "", "not ticked");
+    assert.equal(await page.evaluate((s) => !!document.querySelector(s + ".is-landed"), row(3)), false, "not stamped");
+  },
+});
+
+// Review M1: a press held past a second is not a tap, so a redraw during it does not tick on release.
+module.exports.push({
+  name: "a press held over a second with a redraw under it does not tick on release",
+  async run({ page }) {
+    const backend = await ready(page);
+    await openRow(page, "3");
+    const spot = await page.evaluate((s) => {
+      const b = document.querySelector(s);
+      b.scrollIntoView({ block: "center" });
+      const r = b.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    }, row(3) + " .bw-tick");
+    await page.mouse.move(spot.x, spot.y);
+    await page.mouse.down();
+    await page.evaluate((s) => { const b = document.querySelector(s); b.replaceWith(b.cloneNode(true)); }, row(3) + " .bw-tick");
+    await page.clock.fastForward(1200); // the page clock is faked: event times follow it
+    await page.mouse.up();
+    await page.waitForTimeout(400);
+    assert.equal(sent(backend, "tickTodo").length, 0, "no tick sent");
+  },
+});
