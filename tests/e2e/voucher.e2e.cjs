@@ -9,7 +9,7 @@ const assert = require("node:assert/strict");
 const fs = require("fs");
 const { SEED, NOON12, open, until, text, expectText, visible } = require("./helpers.cjs");
 
-const SHOTS = "/private/tmp/claude-501/mat-shots/money-trio";
+const SHOTS = require("./shots.cjs")("money-trio");
 const shot = async (page, name) => {
   fs.mkdirSync(SHOTS, { recursive: true });
   await page.evaluate(() => document.getElementById("slip").scrollIntoView({ block: "start" }));
@@ -98,7 +98,7 @@ module.exports = [
       assert.deepEqual(ink, { title: "rgb(40, 64, 143)", who: "rgb(21, 18, 15)" });
       // Order: head, column heads, the rows, 但, the foot, Simplify.
       const order = await page.$$eval("#slip > *", (els) => els.map((e) => e.className.split(" ")[0]));
-      assert.deepEqual(order, ["cf-h", "cf-cols", "s-row", "s-row", "cf-but", "slip-f", "simp"]);
+      assert.deepEqual(order, ["cf-h", "slip-provisional", "cf-cols", "s-row", "s-row", "cf-but", "slip-f", "simp"]);
     },
   },
   {

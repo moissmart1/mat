@@ -52,17 +52,31 @@ async function expectReach(page, selector) {
   }
 }
 
+// The counter changes before smooth scrolling finishes. Check the actual
+// snap position before the next key or pointer action.
+function waitDay(page, day) {
+  return until(() => page.evaluate(day => {
+    const rail = document.getElementById("rail");
+    const pages = rail.querySelectorAll(".pg");
+    if (!pages[day - 1] || pages.length < 2) return false;
+    const step = pages[1].offsetLeft - pages[0].offsetLeft;
+    return step > 0 && Math.abs(rail.scrollLeft - (day - 1) * step) <= 1;
+  }, day), "the rail settles on day " + day);
+}
+
+async function finishMotion(page, selector) {
+  await page.evaluate(async selector => {
+    const moving = [...document.querySelectorAll(selector)].flatMap(el => el.getAnimations());
+    await Promise.allSettled(moving.map(animation => animation.finished));
+  }, selector);
+}
+
 async function days(page, opts = {}) {
   const backend = await open(page, { seed: WITH_PLAN, tab: "days", nowMs: NOON12, ...opts });
   await until(() => page.evaluate(() => document.querySelectorAll("#rail .pg .tk").length === 11), "the tickets draw");
   // The strip has come to rest on today (Dec 12) before anything is tapped: a tap on a strip still gliding lands on another day.
   await until(() => page.evaluate(() => /^Day 3 of 11/.test(document.querySelector("#dayCount").textContent)), "the strip rests on today, Day 3 of 11");
-  await until(async () => {
-    const at = () => page.evaluate(() => document.querySelector("#rail").scrollLeft);
-    const a = await at();
-    await page.waitForTimeout(120);
-    return a === (await at());
-  }, "the strip is still");
+  await waitDay(page, 3);
   return backend;
 }
 async function money(page, opts = {}) {
@@ -86,7 +100,7 @@ async function raiseNotice(page) {
   await page.evaluate((t) => globalThis.__matTest.store.notify(t), LONG_NOTICE);
   await until(() => page.evaluate(() => !document.getElementById("ubar").hidden), "the notice shows");
   // It arrives over a fifth of a second and the sheets rise over half of one (real time).
-  await page.waitForTimeout(800);
+  await finishMotion(page, "#ubar, .sheet, .view, #hist");
 }
 
 const cases = [];
@@ -292,7 +306,6 @@ const linesOf = (page, sel) => page.evaluate((s) => {
   }
   return lines.map((l) => l.words.join(" "));
 }, sel);
-// With the stand-in face these tests run in, 390 px breaks well and 393 to 425 px leave "you." alone.
 for (const size of [PORTRAIT, { width: 393, height: 852 }, { width: 402, height: 874 }, { width: 414, height: 896 }, { width: 320, height: 568 }]) {
   cases.push({
     name: "the Invite hint on You at " + size.width + " px has no one-word last line",
@@ -481,31 +494,43 @@ async function both(page) {
   await until(() => page.evaluate(() => document.querySelectorAll("#rc .rc-row").length > 0 && document.querySelectorAll("#rail .pg .tk").length === 11), "both panes draw");
   return backend;
 }
+// Drive the phone until two rendering frames after keyup. This lets a
+// deferred key handler run before we inspect the counter and snap position.
+async function expectArrowIgnored(page, why) {
+  await page.keyboard.press("ArrowRight");
+  const painted = page.evaluate(() => new Promise(resolve => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)));
+  }));
+  await page.clock.runFor(64);
+  await painted;
+  assert.equal(await dayText(page), "Day 3 of 11", why);
+}
+
 cases.push({
   name: "on a computer the arrow keys move the day with nothing focused, and not while a field or a sheet has focus",
   viewport: WIDE,
   mobile: false,
   async run({ page }) {
     await both(page);
+    await waitDay(page, 3);
     assert.equal(await dayText(page), "Day 3 of 11");
     await page.evaluate(() => document.activeElement && document.activeElement.blur());
     assert.equal(await page.evaluate(() => document.activeElement === document.body), true, "nothing is focused");
     await page.keyboard.press("ArrowRight");
     await until(async () => (await dayText(page)) === "Day 4 of 11", "the right arrow shows the next day");
+    await waitDay(page, 4);
     await page.keyboard.press("ArrowLeft");
     await until(async () => (await dayText(page)) === "Day 3 of 11", "the left arrow goes back");
+    await waitDay(page, 3);
     // A field has focus: the arrow is the field's.
     await page.click("#ring");
     await waitOpen(page, "reg");
     await page.click("#xWhat");
-    await page.keyboard.press("ArrowRight");
-    await page.waitForTimeout(250);
-    assert.equal(await dayText(page), "Day 3 of 11", "not while a field has focus");
+    assert.equal(await page.locator("#xWhat").evaluate(el => el === document.activeElement), true);
+    await expectArrowIgnored(page, "not while a field has focus");
     // The register is open and nothing has focus: still not.
     await page.evaluate(() => document.activeElement.blur());
-    await page.keyboard.press("ArrowRight");
-    await page.waitForTimeout(250);
-    assert.equal(await dayText(page), "Day 3 of 11", "not while the register is open");
+    await expectArrowIgnored(page, "not while the register is open");
     await page.keyboard.press("Escape");
     await until(async () => !(await isOpen(page, "reg")), "the register closes");
     // A Days sheet is open: not.
@@ -513,9 +538,7 @@ cases.push({
     await page.evaluate((d) => document.querySelector('#rail .pg[data-date="' + d + '"] .tk-stay').click(), D12);
     await waitOpen(page, "stay");
     await page.evaluate(() => document.activeElement && document.activeElement.blur());
-    await page.keyboard.press("ArrowRight");
-    await page.waitForTimeout(250);
-    assert.equal(await dayText(page), "Day 3 of 11", "not while a sheet is open");
+    await expectArrowIgnored(page, "not while a sheet is open");
   },
 });
 cases.push({
@@ -541,9 +564,7 @@ cases.push({
     });
     await until(() => page.evaluate(() => !document.getElementById("vDays").classList.contains("is-active")), "Before covers Days");
     await page.evaluate(() => document.activeElement && document.activeElement.blur());
-    await page.keyboard.press("ArrowRight");
-    await page.waitForTimeout(250);
-    assert.equal(await dayText(page), "Day 3 of 11");
+    await expectArrowIgnored(page, "Before covers Days");
   },
 });
 cases.push({
@@ -598,8 +619,9 @@ cases.push({
 // is covered by something on top (a sheet over Days, the bar over a scrolled
 // view) is not looked at, and the day strip scrolls sideways by design.
 const SMALLEST = 10.5;
-function trouble(page) {
-  return page.evaluate((smallest) => {
+async function trouble(page) {
+  const ink = await page.evaluateHandle(require("./text-ink.cjs"));
+  return page.evaluate(({ smallest, ink }) => {
     const out = [];
     const desc = (e) => e.tagName.toLowerCase() + (e.id ? "#" + e.id : "") + (typeof e.className === "string" && e.className ? "." + e.className.trim().split(/\s+/).join(".") : "");
     const doc = document.documentElement;
@@ -625,12 +647,14 @@ function trouble(page) {
       if (!r0) continue;
       const hit = document.elementFromPoint(Math.min(innerWidth - 1, Math.max(1, r0.left + Math.min(r0.width / 2, 8))), Math.min(innerHeight - 1, Math.max(1, r0.top + r0.height / 2)));
       if (!hit || !(el.contains(hit) || hit.contains(el))) continue;
-      leaves.push({ el, rs, text: t.textContent.trim().slice(0, 24) });
+      leaves.push({ node: t, el, rs, text: t.textContent.trim().slice(0, 24) });
     }
     for (const l of leaves) {
       const fs = parseFloat(getComputedStyle(l.el).fontSize);
       if (fs < smallest) out.push("set at " + fs + " px: " + desc(l.el) + " " + JSON.stringify(l.text));
-      if (l.rs.some((r) => r.right > innerWidth + 0.5 || r.left < -0.5)) out.push("off the screen's side: " + desc(l.el) + " " + JSON.stringify(l.text));
+      const chips = l.el.closest(".chips");
+      const scrollableChips = chips && ["auto", "scroll"].includes(getComputedStyle(chips).overflowX) && chips.scrollWidth > chips.clientWidth;
+      if (!scrollableChips && l.rs.some((r) => r.right > innerWidth + 0.5 || r.left < -0.5)) out.push("off the screen's side: " + desc(l.el) + " " + JSON.stringify(l.text));
       for (let p = l.el; p && p.id !== "phone"; p = p.parentElement) {
         const cs = getComputedStyle(p);
         // The views, the day strip and the quick chips scroll sideways by design.
@@ -651,20 +675,21 @@ function trouble(page) {
         const a = leaves[i], b = leaves[j];
         if (a.el === b.el) continue;
         if ((a.el.closest("#nav") && b.el.closest(".view")) || (b.el.closest("#nav") && a.el.closest(".view"))) continue;
-        let hit = 0;
-        for (const ra of a.rs) for (const rb of b.rs) hit = Math.max(hit, inter(ra, rb));
-        if (hit > 6) out.push("overlap: " + JSON.stringify(a.text) + " (" + desc(a.el) + ") and " + JSON.stringify(b.text) + " (" + desc(b.el) + ")");
+        if (!a.rs.some(ra => b.rs.some(rb => inter(ra, rb) > 6))) continue;
+        a.ink ??= ink(a.node);
+        b.ink ??= ink(b.node);
+        if (a.ink.some(ra => b.ink.some(rb => inter(ra, rb) > 6))) out.push("overlap: " + JSON.stringify(a.text) + " (" + desc(a.el) + ") and " + JSON.stringify(b.text) + " (" + desc(b.el) + ")");
       }
     }
     return out;
-  }, SMALLEST);
+  }, { smallest: SMALLEST, ink });
 }
-const SHOTS = "/private/tmp/claude-501/mat-shots/polish";
+const SHOTS = require("./shots.cjs")("polish");
 async function clean(page, name) {
   const fs = require("fs");
   fs.mkdirSync(SHOTS, { recursive: true });
   // The sheets rise and the views fade in real time.
-  await page.waitForTimeout(800);
+  await finishMotion(page, ".sheet, .view, #reg, #hist");
   await page.screenshot({ path: SHOTS + "/320-" + name + ".png" });
   const found = await trouble(page);
   assert.deepEqual(found, [], "at 320x568, " + name + ": " + found.join("; "));

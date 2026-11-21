@@ -33,6 +33,7 @@ import { mountStub } from "./views/stub.js";
 import { mountStaySheet } from "./views/staysheet.js";
 import { tripNow, zoneOf, daySpan } from "./plan.js";
 import { mountBulkAdd } from "./views/bulkadd.js";
+import { createTakeBack } from "./takeback.js";
 import { clearTrip, forgetPhone } from "./forget.js";
 
 // How often a visible phone asks the backend whether anything changed.
@@ -48,10 +49,10 @@ function phoneStorage() {
   try {
     const s = globalThis.localStorage;
     s.getItem("mat.key");
-    return s;
+    return { storage: s, durableStorage: true };
   } catch {
     const mem = new Map();
-    return {
+    const storage = {
       getItem: (k) => (mem.has(k) ? mem.get(k) : null),
       setItem: (k, v) => mem.set(k, String(v)),
       removeItem: (k) => mem.delete(k),
@@ -60,6 +61,7 @@ function phoneStorage() {
         return mem.size;
       },
     };
+    return { storage, durableStorage: false };
   }
 }
 
@@ -240,7 +242,7 @@ function mountTabs(store, storage) {
 }
 
 function start() {
-  const raw = phoneStorage();
+  const { storage: raw, durableStorage } = phoneStorage();
   const taken = takeKey(raw);
   let keyHere = taken.key;
   const storage = withKey(raw, () => keyHere);
@@ -262,6 +264,8 @@ function start() {
   store = createStore({
     api,
     storage,
+    durableStorage,
+    isHidden: () => document.visibilityState === "hidden",
     clear: (queue) => {
       keyHere = null;
       clearTrip(raw, { queue });
@@ -307,8 +311,11 @@ function start() {
       tabs.showTab("days", false);
     },
   });
+  // Take all back (bulk C): this phone's record of each Add from the list,
+  // shown on the added screen and in History.
+  const takeBack = createTakeBack(store, { storage: raw });
   // One sheet at a time: opening one closes the others.
-  const history = mountHistory(phone, store);
+  const history = mountHistory(phone, store, { takeBack });
   // The Days sheets: the hotel card, the list of every day and the stop sheet.
   // The hotel card's Edit opens Edit stay (js/views/staysheet.js); its Done or a
   // finished Save opens the card again. Show booking holds the booking up.
@@ -401,9 +408,10 @@ function start() {
       history.open();
     },
     // 一括 Add tickets: its own sheet, where You stands (the Money pane on a computer).
+    // On the owner's phone it opens straight on the list's slip (bulk C).
     onBulk: () => {
       you.close(false);
-      bulk.open();
+      bulk.openStart();
     },
     // The notice "4 new tickets from the list": the same sheet, opened on the list's review.
     onListCheck: () => {
@@ -459,6 +467,7 @@ function start() {
     // What the list's look found: the notice in You (the owner's phone only).
     onList: (info) => you.setListNotice(info),
     storage: raw,
+    takeBack,
   });
   const closeYou = you.close;
   you.close = (restoreFocus) => {
@@ -735,10 +744,11 @@ function start() {
     if (inFlight) return inFlight;
     const st = store.state.status;
     if (st !== "ready" && st !== "error") return Promise.resolve();
-    inFlight = store.checkRev().finally(() => {
-      inFlight = null;
+    const mine = store.checkRev().finally(() => {
+      if (inFlight === mine) inFlight = null;
     });
-    return inFlight;
+    inFlight = mine;
+    return mine;
   };
   // Each look also asks for the planner's payments, at most every 10 minutes (store.autoPayments).
   // And, on the owner's phone, at the planner's ticket list (auto-add), at most every 10 minutes.
@@ -757,8 +767,12 @@ function start() {
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") {
       store.markSeen();
+      store.pageHidden();
+      // (Each return while a check hangs starts a new one, on purpose: rev only reads.)
+      inFlight = null; // a check running as the page left may be cut off: the return asks again, not joins it
       stopChecking();
     } else {
+      store.pageShown();
       look();
       startChecking();
     }
@@ -778,8 +792,10 @@ function start() {
   });
   // A new release reloads the page only when nothing would be lost (js/update.js).
   // Nothing unsent or still sending, no notice waiting to be read (it would be
-  // wiped), and Add tickets not reading or adding, open or closed (fix round 1, I4).
-  nothingUnsent = () => store.outbox().unsent === 0 && !store.busy() && !store.state.notice && !bulk.isBusy();
+  // wiped), Add tickets not reading or adding, open or closed (fix round 1, I4),
+  // and no unsent changes held only in memory because the phone could not save them (#20).
+  nothingUnsent = () =>
+    store.outbox().unsent === 0 && !store.busy() && !store.state.notice && !bulk.isBusy() && !store.state.queueStorageFailed;
   if (document.visibilityState !== "hidden") startChecking();
 }
 

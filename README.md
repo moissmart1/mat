@@ -205,7 +205,7 @@ The plan can be built in the app, through Claude, or by typing into the Sheet. T
 - **Stays:** `id`, `name` (required), `name_jp`, `address_jp`, `first_night`, `last_night` (dates), `note`, `place`, `link`.
 - **Days:** one row per trip day, keyed by `date`; `city`, `title`, `line_jp`, `line_en`, `line_colour` (`#RRGGBB`), `from_jp`, `from_en`, `to_jp`, `to_en`. Do not add or delete day rows.
 - **Do not change the Trip tab's `tz`** (`Asia/Tokyo`): every "today", "next" and "leave by" depends on it.
-- **A hand edit does not reach phones that are already open** until someone taps You → Last updated, or makes any change in the app. A phone opened afterwards sees it at once.
+- Typing, pasting, or clearing cell values in a data row in Stops, Stays or Days advances the revision. An open phone picks it up on its next successful check. Inserting, deleting, or sorting rows does not fire the On edit trigger. Covering row deletions later would require an On change handler and a matching trigger installed by hand in the Apps Script editor. You → Last updated also refreshes the itinerary.
 - **Never delete rows:** put a date in `deleted_at` instead (see above).
 
 ## Personal links

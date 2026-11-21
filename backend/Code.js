@@ -37,3 +37,13 @@ function doPost(e) {
     return json_({ ok: false, error: "server", message: "Something went wrong on our side. Try again." });
   }
 }
+
+// Bound Sheet simple trigger. Pasting multiple itinerary cells is one edit.
+// App writes take the same lock and already publish their own revisions.
+function onEdit(e) {
+  if (!e || !e.range || e.range.getLastRow() < 2) return;
+  var name = e.range.getSheet().getName();
+  if (name !== "Stops" && name !== "Stays" && name !== "Days") return;
+  var result = withLock_(bumpRev_);
+  if (result && result.error === "busy") withLock_(bumpRev_);
+}

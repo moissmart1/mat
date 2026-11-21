@@ -9,7 +9,7 @@ const assert = require("node:assert/strict");
 const fs = require("fs");
 const { SEED, makeBackend, open, advance, until, text, expectText, visible } = require("./helpers.cjs");
 
-const SHOTS = "/private/tmp/claude-501/mat-shots/picks";
+const SHOTS = require("./shots.cjs")("picks");
 const PLANNER_ID = "fakePlannerSheet_0123456789abcdefXYZ";
 const BHEAD = ["#", "Item", "Who", "Book by", "Status", "Notes", "Booking link"];
 const brow = (o) => BHEAD.map((h) => (o[h] === undefined ? "" : o[h]));
@@ -26,8 +26,8 @@ const ITEMS = [
 // 14:00 on Mon Nov 16 in Toronto: before the trip.
 const BEFORE = Date.parse("2026-11-16T19:00:00Z");
 
-async function ready(page, { claims = {}, go = true } = {}) {
-  const backend = makeBackend({ ...SEED, plannerId: PLANNER_ID, plannerTabs: { "Book Now": [["Before we go: bookings"], BHEAD, ...ITEMS.map(brow)], "Change Log": [CHEAD] } }, { now: BEFORE });
+async function ready(page, { claims = {}, go = true, items = ITEMS } = {}) {
+  const backend = makeBackend({ ...SEED, plannerId: PLANNER_ID, plannerTabs: { "Book Now": [["Before we go: bookings"], BHEAD, ...items.map(brow)], "Change Log": [CHEAD] } }, { now: BEFORE });
   const call = (action, args, actor = "Mo") => backend.fake({ key: "test-key", actor, action, args });
   backend.now = BEFORE - 5 * 60000;
   assert.equal((await call("syncTodos", {})).ok, true);
@@ -65,6 +65,14 @@ const fits = (page) =>
     if (view.scrollWidth > view.clientWidth) bad.push("the view scrolls sideways");
     const list = document.getElementById("todos");
     if (list.scrollWidth > list.clientWidth) bad.push("the list is wider than its box (the binding?)");
+    const subtitle = document.querySelector("#bwTitle i");
+    const words = document.createRange();
+    words.selectNodeContents(subtitle);
+    const count = document.querySelector(".bw-band .num").getBoundingClientRect();
+    const line = words.getBoundingClientRect();
+    if (words.getClientRects().length !== 1 || (line.right > count.left && line.top < count.bottom && line.bottom > count.top)) {
+      bad.push("subtitle wraps or overlaps the count");
+    }
     const card = document.getElementById("bwCard").getBoundingClientRect();
     for (const el of document.querySelectorAll("#bwCard .rv-h, #bwCard .bw-r, #bwCard .bw-d, #bwCard .bw-dn, #bwCard .bw-foot, #bwCard .bw-ctl > *")) {
       const r = el.getBoundingClientRect();
@@ -96,13 +104,13 @@ const clearsBar = (page) =>
     return !under;
   });
 
-function sizeCase(size, mobile, tag) {
+function sizeCase(size, mobile, tag, items = ITEMS) {
   return {
     name: tag + ": the pad fits, open, ticked and with the done slips out",
     viewport: size,
     ...(mobile ? {} : { mobile: false }),
     async run({ page }) {
-      const backend = await ready(page, { claims: { 5: "Ajen", 4: "Mo" } });
+      const backend = await ready(page, { claims: { 5: "Ajen", 4: "Mo" }, items });
       assert.deepEqual(await fits(page), []);
       assert.ok(await clearsBar(page), "the foot is under the bar");
       await shot(page, "1A-" + tag + "-pad");
@@ -235,7 +243,10 @@ module.exports = [
     },
   },
   sizeCase({ width: 393, height: 852 }, true, "393x852"),
-  sizeCase({ width: 320, height: 568 }, true, "320x568"),
+  // Include a two-digit count on the narrowest phone.
+  sizeCase({ width: 320, height: 568 }, true, "320x568", [
+    ...ITEMS, ...Array.from({ length: 8 }, (_, i) => ({ "#": 8 + i, Item: "Booking " + (8 + i), Status: "Not booked" })),
+  ]),
   sizeCase({ width: 844, height: 390 }, true, "844x390"),
   sizeCase({ width: 1440, height: 900 }, false, "1440x900"),
 ];

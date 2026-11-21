@@ -53,6 +53,40 @@ const waitNoRow = (page, title, what = "") => until(async () => !(await rowOf(pa
 const comeBack = (page) => page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
 const signalBack = (page) => page.evaluate(() => window.dispatchEvent(new Event("online")));
 
+// What the worker sends each open page when a new release takes over (as tests/e2e/update.e2e.cjs).
+const announce = (page) => page.evaluate(() => new Promise((resolve) => {
+  const ch = new MessageChannel();
+  ch.port1.onmessage = () => resolve(true);
+  navigator.serviceWorker.dispatchEvent(new MessageEvent("message", { data: { type: "mat-new-version" }, ports: [ch.port2] }));
+  setTimeout(() => resolve(false), 500);
+}));
+const markPage = (page) => page.evaluate(() => { window.__notReloaded = true; });
+const reloaded = (page) => page.evaluate(() => window.__notReloaded !== true).catch(() => true);
+const failQueueWrites = (page) => page.evaluate(() => {
+  const save = Storage.prototype.setItem;
+  Storage.prototype.setItem = function (key, value) {
+    if (key === "mat.queue") throw new DOMException("Storage full", "QuotaExceededError");
+    return save.call(this, key, value);
+  };
+});
+const MEMORY_ONLY = "Unsent changes are only in this app’s memory: don’t close it while you copy your link.";
+
+// With no signal a line is rung up; then the key is refused, the trip comes
+// off the phone and the no-key screen shows, the line kept for the new link.
+async function refusedWithOneUnsent(page, backend) {
+  backend.failWith = "network";
+  await advance(page, backend, POLL_MS);
+  await expectText(page, "#net", /^No signal\./);
+  await ringUp(page, "Onigiri", "4 5 0");
+  await page.click("#regDone");
+  await waitClosed(page);
+  backend.failWith = "bad_key";
+  await page.evaluate(() => globalThis.__matTest.store.checkRev());
+  await until(() => visible(page, "#gate"), "the no-key screen shows", 10000);
+  assert.equal(await page.evaluate(() => globalThis.__matTest.store.outbox().unsent), 0, "nothing left in the outbox: only the memory copy holds the line");
+  await page.evaluate(() => document.activeElement && document.activeElement.blur());
+}
+
 async function ready(page, opts = {}) {
   const backend = await open(page, { seed: SEED, nowMs: NOON12, ...opts });
   await waitRows(page, 8);
@@ -70,6 +104,29 @@ async function twoPhones(ctx) {
 }
 
 module.exports = [
+  {
+    name: "a delayed clock setup starts at the requested instant and each phone owns its timers",
+    async run({ page, newPhone }) {
+      // Simulate a slow round trip between install and pause without sleeping.
+      const install = page.clock.install.bind(page.clock);
+      page.clock.install = async (options) => {
+        await install(options);
+        await page.clock.fastForward(1500);
+      };
+      const other = await newPhone();
+      await open(page);
+      await open(other, { nowMs: NOON12 + 3600000 });
+      for (const phone of [page, other]) {
+        await phone.evaluate(() => { window.fired = false; setTimeout(() => { window.fired = true; }, 100); });
+      }
+      const state = (phone) => phone.evaluate(() => [Date.now(), window.fired]);
+      await page.clock.fastForward(100);
+      assert.deepEqual(await state(page), [NOON12 + 100, true]);
+      assert.deepEqual(await state(other), [NOON12 + 3600000, false]);
+      await other.clock.fastForward(100);
+      assert.deepEqual(await state(other), [NOON12 + 3600100, true]);
+    },
+  },
   {
     name: "a line rung up on one phone shows on the other at its next check, marked new",
     async run(ctx) {
@@ -155,6 +212,132 @@ module.exports = [
     },
   },
   {
+    name: "the signal strip warns when the phone cannot save the queue",
+    async run({ page }) {
+      const backend = await ready(page);
+      await page.evaluate(() => {
+        const save = Storage.prototype.setItem;
+        Storage.prototype.setItem = function (key, value) {
+          if (key === "mat.queue") throw new DOMException("Storage full", "QuotaExceededError");
+          return save.call(this, key, value);
+        };
+      });
+
+      backend.failWith = "network";
+      await advance(page, backend, POLL_MS);
+      await expectText(page, "#net", NO_SIGNAL);
+      await ringUp(page, "Onigiri", "4 5 0");
+      await page.click("#regDone");
+      await waitClosed(page);
+      await expectText(page, "#net", "No signal. Couldn’t save unsent changes on this device. Keep the app open to avoid losing them. 1 to send.");
+
+      backend.failWith = null;
+      await signalBack(page);
+      await waitRow(page, "Onigiri", (r) => !r.cls.includes("is-pending"), "sent");
+      await until(async () => !(await visible(page, "#net")), "the queue warning goes away");
+    },
+  },
+  {
+    name: "the settlement stays provisional until the queued expense syncs",
+    async run({ page }) {
+      const backend = await ready(page);
+      assert.equal(await visible(page, "#moneyProvisional"), false);
+
+      backend.failWith = "network";
+      await advance(page, backend, POLL_MS);
+      await expectText(page, "#net", NO_SIGNAL);
+      await ringUp(page, "Onigiri", "4 5 0");
+      await page.click("#regDone");
+      await waitClosed(page);
+      assert.equal(await visible(page, "#moneyProvisional"), true);
+      assert.equal(await visible(page, "#slipProvisional"), true);
+
+      backend.failWith = null;
+      await signalBack(page);
+      await waitRow(page, "Onigiri", (row) => !row.cls.includes("is-pending"), "sent");
+      await until(async () => !(await visible(page, "#moneyProvisional")), "the balance is confirmed");
+      assert.equal(await visible(page, "#slipProvisional"), false);
+    },
+  },
+  {
+    name: "a phone that has not picked a name shows the provisional line on Money as well as on the slip",
+    async run({ page }) {
+      const backend = await open(page, { seed: SEED, nowMs: NOON12, me: null });
+      await until(() => page.evaluate(() => globalThis.__matTest.store.state.status === "ready"), "the trip loads");
+      assert.equal(await page.evaluate(() => globalThis.__matTest.store.state.me), null, "no name picked");
+      await until(() => visible(page, "#slip"), "the slip draws");
+      assert.equal(await visible(page, "#moneyProvisional"), false);
+      assert.equal(await visible(page, "#slipProvisional"), false);
+
+      backend.failWith = "network";
+      await advance(page, backend, POLL_MS);
+      await until(() => page.evaluate(() => globalThis.__matTest.store.state.online === false), "no signal");
+      await page.evaluate(() => globalThis.__matTest.store.addExpense({ day: "pre", title: "Onigiri", amount: 450, currency: "JPY", paidBy: "Mo", split: ["Mo", "Ajen", "Trenton"], splitMode: "equal", splitVals: [], note: "", kind: "" }));
+      await until(() => visible(page, "#moneyProvisional"), "Money says the balance is provisional");
+      assert.equal(await visible(page, "#slipProvisional"), true);
+      // Clearing once synced is covered by the case above (a phone with a name).
+    },
+  },
+  {
+    name: "a check cut off while the page is hidden is not no signal; back on screen it asks again and the strip stays away",
+    async run({ page }) {
+      const backend = await ready(page);
+      const hide = (hidden) =>
+        page.evaluate((h) => {
+          Object.defineProperty(document, "visibilityState", { configurable: true, get: () => (h ? "hidden" : "visible") });
+          document.dispatchEvent(new Event("visibilitychange"));
+        }, hidden);
+      await hide(true);
+      backend.failWith = "network";
+      await page.evaluate(() => globalThis.__matTest.store.checkRev());
+      assert.equal(await visible(page, "#net"), false, "a failure while hidden is not no signal");
+      backend.failWith = null;
+      const revs = backend.requests.filter((r) => r.action === "rev").length;
+      await hide(false);
+      await until(() => backend.requests.filter((r) => r.action === "rev").length > revs, "it asks again at once");
+      await idle(page);
+      assert.equal(await visible(page, "#net"), false, "still no strip once the backend answers");
+    },
+  },
+  {
+    name: "a check that fails while the page is on screen still shows No signal, and the next answer clears it",
+    async run({ page }) {
+      const backend = await ready(page);
+      backend.failWith = "network";
+      await page.evaluate(() => globalThis.__matTest.store.checkRev());
+      await expectText(page, "#net", NO_SIGNAL);
+      backend.failWith = null;
+      await comeBack(page);
+      await until(async () => !(await visible(page, "#net")), "#net goes away when the backend answers");
+    },
+  },
+  {
+    name: "a check the app's own timer started that hangs while the page goes hidden: coming back asks again at once",
+    async run({ page }) {
+      const backend = await ready(page);
+      let revs = 0;
+      const handle = backend.handle;
+      backend.handle = (body) => {
+        if (body.action !== "rev") return handle(body);
+        revs++;
+        if (revs === 1) return new Promise(() => {}); // the first never answers
+        return handle(body);
+      };
+      const hide = (hidden) =>
+        page.evaluate((h) => {
+          Object.defineProperty(document, "visibilityState", { configurable: true, get: () => (h ? "hidden" : "visible") });
+          document.dispatchEvent(new Event("visibilitychange"));
+        }, hidden);
+      await advance(page, backend, POLL_MS);
+      await until(() => revs >= 1, "the timer's check goes out and hangs");
+      await hide(true);
+      await hide(false);
+      await until(() => revs >= 2, "asks again at once, not joins the cut-off check");
+      await idle(page);
+      assert.equal(await visible(page, "#net"), false);
+    },
+  },
+  {
     name: "one check at a time: a check that never answers is not joined by more",
     async run({ page }) {
       const backend = await ready(page);
@@ -207,14 +390,19 @@ module.exports = [
       await waitRows(page, 8);
       assert.equal(await page.evaluate(() => !!navigator.serviceWorker.controller), true, "controlled after one reload");
 
-      // The Google Fonts stylesheet is asked for with CORS, so the worker kept it.
+      // Ask for a real face while controlled so the worker caches both its
+      // stylesheet and its bytes before we disconnect.
+      const receiptFont = () => page.evaluate(async () => {
+        const faces = await document.fonts.load('700 16px "Zen Kaku Gothic New"', "Tokyo東京");
+        return faces.length > 0 && faces.every((face) => face.status === "loaded");
+      });
+      assert.ok(await receiptFont(), "the receipt font loaded online");
       const kept = await page.evaluate(async () => {
         const cache = await caches.open("mat-fonts");
         return (await cache.keys()).map((r) => new URL(r.url).hostname);
       });
       assert.ok(kept.includes("fonts.googleapis.com"), "the font stylesheet is kept: " + JSON.stringify(kept));
-      const marker = () => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--fonts-stand-in").trim());
-      assert.equal(await marker(), "1");
+      assert.ok(kept.includes("fonts.gstatic.com"), "the worker kept font bytes");
 
       // Nothing but the fake api (bridged, not on the network) gets through.
       await context.route("**/*", (route) => route.abort());
@@ -222,7 +410,7 @@ module.exports = [
       await waitRows(page, 8);
       assert.ok(await text(page, "#say"), "the sentence draws");
       assert.equal(await visible(page, "#ring"), true);
-      assert.equal(await marker(), "1", "the font stylesheet still applies with no network");
+      assert.ok(await receiptFont(), "the receipt font loads with no network");
     },
   },
   {
@@ -240,6 +428,36 @@ module.exports = [
       await context.route("**/*", (route) => route.abort());
       await page.reload();
       await expectText(page, "body", "No signal. Open again when you have some.");
+    },
+  },
+  {
+    name: "a refused key while the queue cannot be saved: the no-key screen says not to close the app, and a new release waits",
+    async run({ page }) {
+      const backend = await ready(page);
+      await failQueueWrites(page);
+      await refusedWithOneUnsent(page, backend);
+      assert.equal(await page.evaluate(() => globalThis.__matTest.store.state.queueStorageFailed), true);
+      const said = await text(page, "#gate p");
+      assert.ok(said.endsWith(" " + MEMORY_ONLY), "the screen ends with the memory-only sentence: " + said);
+      assert.equal(said.includes("Keep the app open"), false, "no 'Keep the app open' on the no-key screen");
+      await markPage(page);
+      assert.equal(await announce(page), true, "the page answers");
+      await advance(page, backend, 7000);
+      assert.equal(await reloaded(page), false, "not while the unsent line is only in memory");
+    },
+  },
+  {
+    name: "a refused key with the queue saved: no memory-only sentence, and a new release reloads",
+    async run({ page }) {
+      const backend = await ready(page);
+      await refusedWithOneUnsent(page, backend);
+      assert.equal(await page.evaluate(() => globalThis.__matTest.store.state.queueStorageFailed), false);
+      assert.equal((await text(page, "#gate p")).includes(MEMORY_ONLY), false);
+      await markPage(page);
+      // Safe at once, so it reloads straight away (as update.e2e's first case).
+      const answered = announce(page).catch(() => true);
+      await until(() => reloaded(page), "it reloads", 10000);
+      await answered;
     },
   },
 ];
