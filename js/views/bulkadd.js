@@ -1552,7 +1552,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
       // From the list: its tie, and its page within its own file, so another phone adding the same one is told it is already there.
       const tie = listing && typeof it.file.tie === "string" ? it.file.tie : "";
       const page = tie ? Math.min(LIMITS.perStop, k + 1) : Math.min(LIMITS.perStop, Math.max(k + 1, sameWho + 1));
-      const token = store.addTicket({ id, ...(it.stay ? { stay: it.stay } : { stop: it.stop }), who: it.who, seat: seatFor(it, rows), page, mime: pic.mime, w: pic.w, h: pic.h, data: pic.data, ...(tie ? { from: tie } : {}) });
+      const token = store.addTicket({ id, ...(it.stay ? { stay: it.stay } : { stop: it.stop }), who: it.who, seat: seatFor(it, rows), page, mime: pic.mime, w: pic.w, h: pic.h, data: pic.data, ...(tie ? { from: tie } : {}) }, { kept: kept.then((ok) => ok === true && keep.lasting) });
       const res = await orAbort(store.ticketOutcome(token));
       if (mine !== gen) return;
       if (res && res.saved) it.saved += 1;

@@ -410,7 +410,7 @@ export function mountTicketPart(box, store, keep, { on = "stop" } = {}) {
       const kept = keep.put(id, p.blob, { gen: at });
       const sameWho = liveOn(stopId).filter((t) => (t.who || "") === p.who).length;
       const where = onStay ? { stay: stopId } : { stop: stopId };
-      const token = store.addTicket({ id, ...where, who: p.who, seat: p.seat.trim(), page: Math.min(LIMITS.perStop, Math.max(p.page, sameWho + 1)), mime: p.mime, w: p.w, h: p.h, data: p.data });
+      const token = store.addTicket({ id, ...where, who: p.who, seat: p.seat.trim(), page: Math.min(LIMITS.perStop, Math.max(p.page, sameWho + 1)), mime: p.mime, w: p.w, h: p.h, data: p.data }, { kept: kept.then((ok) => ok === true && keep.lasting) });
       const res = await store.ticketOutcome(token);
       if (res && res.saved) {
         p.state = "saved";

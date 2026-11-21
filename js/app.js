@@ -28,7 +28,7 @@ import { createUpdater, otherVersionIn } from "./update.js";
 import { APP_VERSION } from "./config.js";
 import { isWide, onWide } from "./shape.js";
 import { createWhere } from "./where.js";
-import { createKeep, fetchMissing, toBase64, ticketMark, stayMark, fetchesAll, pruneKeep } from "./tickets.js";
+import { createKeep, fetchMissing, ticketMark, stayMark, fetchesAll, pruneKeep, readKept } from "./tickets.js";
 import { mountStub } from "./views/stub.js";
 import { mountStaySheet } from "./views/staysheet.js";
 import { tripNow, zoneOf, daySpan } from "./plan.js";
@@ -271,18 +271,8 @@ function start() {
       clearTrip(raw, { queue });
       keep.wipe();
     },
-    ticketData: async (id) => {
-      let blob = await keep.get(id);
-      // The keep did not open (IndexedDB answered too late, as on a slow start): once more.
-      if (!blob && !keep.lasting && !keep.none) {
-        await keep.reopen();
-        blob = await keep.get(id);
-      }
-      if (blob) return toBase64(blob);
-      // Still not open: the picture may well be in it. Not lost: it waits (the store tries again later).
-      if (!keep.lasting && !keep.none) throw new Error("The ticket keep is not open.");
-      return null;
-    },
+    // A waiting picture's data; rejects while the keep has not opened (js/tickets.js readKept).
+    ticketData: readKept(keep),
     afterLoad: () => {
       pruneKeep(store, keep);
       if (fetchesAll(raw)) fetchMissing(store, keep, { allowed: () => fetchesAll(raw) });
