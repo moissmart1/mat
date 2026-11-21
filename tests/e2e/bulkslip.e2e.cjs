@@ -440,6 +440,40 @@ cases.push({
   },
 });
 
+// Fix round 1 (review I1): a phone whose keep is in memory only (IndexedDB
+// that never opens, a known WebKit fault) never says a waiting picture is on
+// this phone: it says to keep MAT open, and the picture goes up while it is.
+cases.push({
+  name: "no signal at Add, a keep in memory only: the slip says to keep MAT open, not that it waits on this phone",
+  async run({ page }) {
+    await page.addInitScript(() => {
+      const hung = () => ({ result: null, error: null, onsuccess: null, onerror: null, onblocked: null, onupgradeneeded: null });
+      try {
+        Object.defineProperty(indexedDB, "open", { value: hung, configurable: true });
+      } catch {
+        // nothing to do
+      }
+    });
+    const backend = await tripWith({ old: false, lines: [LINES[3]], folder: [FOLDER()[3]] });
+    await ready(page, backend);
+    await addTickets(page);
+    await slipUp(page);
+    await expectText(page, "#bulkPunch", "Add 1 ticketUndo from History");
+    backend.failWith = "network";
+    await page.evaluate(() => globalThis.__matTest.store.checkRev());
+    assert.equal(await page.evaluate(() => globalThis.__matTest.store.state.online), false);
+    await page.click("#bulkPunch");
+    await added(page);
+    const said = await texts(page, "#bulk .ba-done-s");
+    assert.ok(said.some((t) => t.endsWith("Keep MAT open until it goes up.")), JSON.stringify(said));
+    assert.ok(!said.some((t) => /on this phone/.test(t)), JSON.stringify(said));
+    await expectText(page, "#bulk .ba-wait", "T004 · Aonami Museumnot on this phone yet, keep MAT open");
+    backend.failWith = null;
+    await page.evaluate(() => globalThis.__matTest.store.checkRev());
+    await until(() => live(backend).some((r) => r.planner_id === "T004:aaaaaaaaaa04"), "it goes up while MAT is open", 15000);
+  },
+});
+
 cases.push({
   name: "a file gone from the list and a cancelled line open on Leave its pictures on; taking them off is said on the key",
   async run({ page }) {

@@ -1001,7 +1001,8 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
       if (ok.length) {
         const s = el("p", "ba-done-s");
         s.append(el("b", "", plural(pics, "picture", "pictures")), ", kept in the trip. Every phone shows them on its stubs the next time it opens MAT with signal.");
-        if (waiting) s.append(" " + (waiting === pics ? "They wait" : waiting + " wait") + " on this phone" + (a.busy && a.busy === waiting ? " and go up in a moment." : " and go up when there is signal."));
+        if (waiting && a.unkept) s.append(" Keep MAT open until " + (waiting === 1 ? "it goes" : "they go") + " up.");
+        else if (waiting) s.append(" " + (waiting === pics ? "They wait" : waiting + " wait") + " on this phone" + (a.busy && a.busy === waiting ? " and go up in a moment." : " and go up when there is signal."));
         nodes.push(s);
         const sure = ok.filter((i) => i.from === "sure").length;
         // The list's slip again, read only (bulk C), in place of the punched bundle.
@@ -1029,7 +1030,7 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
         for (const it of waitingNow) {
           const d = el("div");
           const lab = placeLabel(it);
-          d.append(el("span", "", [it.rowIds.join(" ") || it.file.name, lab.there ? lab.title : ""].filter(Boolean).join(" · ")), el("i", "", (it.waiting === it.saved + it.waiting ? "" : it.waiting + " of " + (it.saved + it.waiting) + " ") + "on this phone, goes up " + (it.busy === it.waiting ? "in a moment" : "when there is signal")));
+          d.append(el("span", "", [it.rowIds.join(" ") || it.file.name, lab.there ? lab.title : ""].filter(Boolean).join(" · ")), el("i", "", (it.waiting === it.saved + it.waiting ? "" : it.waiting + " of " + (it.saved + it.waiting) + " ") + (a.unkept ? "not on this phone yet, keep MAT open" : "on this phone, goes up " + (it.busy === it.waiting ? "in a moment" : "when there is signal"))));
           box.append(d);
         }
         nodes.push(box);
@@ -1571,7 +1572,8 @@ export function mountBulkAdd(root, store, keep, { onOpenDay = () => {}, onClose 
       draw();
     }
     // Only "waiting on this phone" once they are in the keep: closing MAT before then would lose them.
-    if (waitingKept.length) await orAbort(keptOrLate(waitingKept));
+    // Not kept (a write failed or never ended, or only the memory keep): the done screen says to keep MAT open.
+    if (waitingKept.length) adding.unkept = (await orAbort(keptOrLate(keep, waitingKept))) !== true;
     if (mine !== gen) return;
     keepOnly(offAfter, (mineNew) => mineNew.length > 0 && mineNew.every((i) => !i.failed && !i.short && i.saved + i.waiting > 0));
     if (offAfter.length) {

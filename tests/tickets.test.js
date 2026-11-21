@@ -799,6 +799,10 @@ test("N4: a picture that meets a busy trip sheet says so, and does not blame the
   assert.equal(waitingSentence({ waiting: 1, busy: 1 }), "The trip sheet is busy. It will go up in a moment.");
   assert.equal(waitingSentence({ waiting: 2, busy: 1 }), "Saved on this phone. It goes up in a moment, or when there is signal.");
   assert.equal(waitingSentence({ waiting: 1, busy: 0 }), "Saved on this phone. It goes up when there is signal.");
+  // Not kept on this phone (keptOrLate false): never "Saved on this phone".
+  assert.equal(waitingSentence({ waiting: 1, busy: 0, unkept: true }), "Keep MAT open until it goes up.");
+  assert.equal(waitingSentence({ waiting: 2, busy: 1, unkept: true }), "Keep MAT open until it goes up.");
+  assert.equal(waitingSentence({ waiting: 1, busy: 1, unkept: true }), "The trip sheet is busy. It will go up in a moment. Keep MAT open until it goes up.");
 });
 
 // ---------- a stay's booking (S2 鍵札) ----------
@@ -854,18 +858,31 @@ test("fetchOrder: today is the Days clock's day (Dec 9 in its own zone after Jap
   assert.deepEqual(fetchOrder(s, et("2026-12-09T11:45")).map((t) => t.id), ["inn", "fl", "later"]);
 });
 
-test("keptOrLate: waits for every waiting picture's put, and no longer than its limit for a keep that never answers", async () => {
+test("keptOrLate: true once every waiting picture's put kept it in a lasting keep; false when a write failed, the cap was hit, or the keep is memory only", async () => {
+  const lasting = { lasting: true };
+  // Waits for a put still writing.
   let doneA;
   const a = new Promise((r) => { doneA = r; });
-  let over = false;
-  const waiting = keptOrLate([a, Promise.resolve(true), Promise.reject(new Error("IndexedDB"))], 10000).then(() => { over = true; });
+  let over = null;
+  const waiting = keptOrLate(lasting, [a, Promise.resolve(true)], 10000).then((v) => { over = v; });
   await new Promise((r) => setTimeout(r, 20));
-  assert.equal(over, false, "a put still writing is waited for");
+  assert.equal(over, null, "a put still writing is waited for");
   doneA(true);
   await waiting;
   assert.equal(over, true);
+  assert.equal(await keptOrLate(lasting, []), true, "nothing waiting");
+  // A write that failed (quota, IndexedDB error, a wipe: put resolves false), or threw.
+  assert.equal(await keptOrLate(lasting, [Promise.resolve(true), Promise.resolve(false)], 10000), false);
+  assert.equal(await keptOrLate(lasting, [Promise.reject(new Error("IndexedDB"))], 10000), false);
+  // The cap: a put that never answers is given up on, as not kept.
   const t0 = Date.now();
-  await keptOrLate([new Promise(() => {})], 50);
-  assert.ok(Date.now() - t0 < 1000, "a put that never answers is given up on");
-  await keptOrLate([]);
+  assert.equal(await keptOrLate(lasting, [new Promise(() => {})], 50), false);
+  assert.ok(Date.now() - t0 < 1000);
+  // Only the memory keep (IndexedDB missing or its open never answered): put says true, but closing MAT loses it.
+  assert.equal(await keptOrLate({ lasting: false }, [Promise.resolve(true)], 10000), false);
+  // The real keep in memory only (no IndexedDB): the same.
+  const mem = createKeep({ indexedDB: null });
+  const put = mem.put("pic1", new Blob(["x"], { type: "image/png" }));
+  assert.equal(await put, true);
+  assert.equal(await keptOrLate(mem, [put], 10000), false);
 });

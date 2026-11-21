@@ -446,4 +446,49 @@ cases.push({
   },
 });
 
+// 2026-11-21 (the bulkslip flake, review M1): the single add's picture is in
+// the keep before Save says it waits, so MAT closed at once after Save (here,
+// a reload) still sends it later. The keep's writes are slowed; this page's
+// clock is paused, so the wait for the sheet moves it (the slowed write and
+// the keep's limit are page timers).
+cases.push({
+  name: "a picture that waits, MAT closed at once after Save: it was kept first and goes up later",
+  async run({ page }) {
+    await page.addInitScript(() => {
+      const real = Blob.prototype.arrayBuffer;
+      Blob.prototype.arrayBuffer = function () {
+        const p = real.call(this);
+        const ms = globalThis.__slowBytes || 0;
+        return ms ? p.then((b) => new Promise((resolve) => setTimeout(() => resolve(b), ms))) : p;
+      };
+    });
+    const backend = makeBackend(trip(), { now: EVE10 });
+    await ready(page, { backend });
+    await openCard(page);
+    await openEdit(page);
+    await page.setInputFiles("#syTkFile", [file("booking.png", "image/png", pngBytes(320, 320, 33))]);
+    await until(() => page.evaluate(() => document.querySelectorAll("#syTix .tkp-picked .file").length === 1), "the picture is picked", 15000);
+    // The picture's add gets no answer: it waits on the phone.
+    const real = backend.handle;
+    let drop = true;
+    backend.handle = async (body) => {
+      if (drop && body.action === "addTicket") throw new Error("network");
+      return real(body);
+    };
+    await page.evaluate(() => { globalThis.__slowBytes = 800; });
+    await page.click("#sySave");
+    await until(async () => { await advance(page, backend, 500); return !(await isOpen(page, "staySheet")); }, "Edit stay closes", 15000);
+    assert.ok((await page.evaluate(() => localStorage.getItem("mat.queue"))).includes("planstay0001"), "waiting in mat.queue");
+    assert.equal(backend.fake.tables.Tickets.length, 0);
+    // MAT closed at once (a reload), then signal back.
+    await page.reload();
+    await page.clock.resume();
+    await until(() => page.evaluate(() => !!globalThis.__matTest), "the app draws again", 10000);
+    drop = false;
+    await page.evaluate(() => globalThis.__matTest.store.checkRev());
+    await page.evaluate(() => globalThis.__matTest.store.idle());
+    await until(() => backend.fake.tables.Tickets.length === 1, "it goes up later with its picture (the backend refuses an add without data)", 15000);
+  },
+});
+
 module.exports = cases;

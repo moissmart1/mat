@@ -57,9 +57,12 @@ const mb = (chars) => {
 };
 
 // What is true of pictures that are waiting: every one met a busy trip sheet
-// (not a lack of signal), or they wait for signal.
+// (not a lack of signal), or they wait for signal. Not kept on this phone
+// (out.unkept: the keep's write failed or never ended, or only the memory
+// keep): never "Saved on this phone"; closing MAT would lose it.
 export function waitingSentence(out) {
-  if (out.waiting > 0 && out.busy === out.waiting) return "The trip sheet is busy. It will go up in a moment.";
+  if (out.waiting > 0 && out.busy === out.waiting) return "The trip sheet is busy. It will go up in a moment." + (out.unkept ? " Keep MAT open until it goes up." : "");
+  if (out.unkept) return "Keep MAT open until it goes up.";
   if (out.busy > 0) return "Saved on this phone. It goes up in a moment, or when there is signal.";
   return "Saved on this phone. It goes up when there is signal.";
 }
@@ -427,7 +430,9 @@ export function mountTicketPart(box, store, keep, { on = "stop" } = {}) {
       drawPicked();
     }
     // Only "waiting on this phone" once they are in the keep: closing MAT before then would lose them.
-    if (waitingKept.length) await keptOrLate(waitingKept);
+    if (waitingKept.length) out.unkept = (await keptOrLate(keep, waitingKept)) !== true;
+    // The sheet closes when nothing failed, so this is said on the bar too.
+    if (out.unkept) store.notify(waitingSentence(out));
     say.textContent = out.failed
       ? (out.failed === 1 ? "One picture wasn’t saved. " : out.failed + " pictures weren’t saved. ") + W.rest
       : out.waiting
