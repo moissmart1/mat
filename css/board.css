@@ -17,8 +17,14 @@
 .led-big b{font-size:27px;font-weight:900;color:#FFB04A;text-shadow:0 0 6px rgba(255,140,30,.6);font-variant-numeric:tabular-nums;letter-spacing:.02em}
 .led-big b em{font-style:normal;font-size:14px;margin-left:2px}
 .led-txt{min-width:0;display:grid;gap:1px}
-.led-1{font-size:16px;font-weight:900;color:#FFB04A;text-shadow:0 0 6px rgba(255,140,30,.55);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2}
-.led-2{font-size:12.5px;font-weight:900;color:#6FE08A;text-shadow:0 0 5px rgba(80,220,120,.45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.2}
+.led-1{font-size:16px;font-weight:900;color:#FFB04A;text-shadow:0 0 6px rgba(255,140,30,.55);white-space:nowrap;overflow:hidden;text-overflow:clip;line-height:1.2}
+.led-2{font-size:12.5px;font-weight:900;color:#6FE08A;text-shadow:0 0 5px rgba(80,220,120,.45);white-space:nowrap;overflow:hidden;text-overflow:clip;line-height:1.2}
+/* A long line runs sideways, as on a platform board (issue 75, look B): its
+   words sit in a strip that js/views/board.js slides inside the line's own
+   window. A hard edge, a steady pace. */
+.led-run{display:inline-block;vertical-align:top}
+.is-long>.led-run{will-change:transform}
+.led-run.is-dark{opacity:0}
 @media (max-width:350px){
   .led-in{gap:7px;padding-left:8px}
   .led-big b{font-size:24px}
@@ -32,4 +38,8 @@
 @media (prefers-reduced-motion: reduce){
   .led-wipe{animation:none !important}
   .brd-wrap{transition:none !important}
+  /* Nothing moves: the board grows and a long line goes onto another row, so every word is there. */
+  .brd{height:auto;min-height:52px}
+  .led-in{padding-block:5px}
+  .led-1,.led-2{white-space:normal;overflow-wrap:anywhere;text-wrap:pretty}
 }
