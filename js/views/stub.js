@@ -23,13 +23,12 @@
 // blob: URL made from bytes whose type was checked (js/tickets.js sniff).
 // Reduced motion: no tear, it is simply there (css/tickets.css).
 //
-// A stay's booking (S2 鍵札, the key tag off the hook): open(stayId, opener,
-// { stay: true }), or openStay(stayId, opener), shares the slots, the
-// fetching, the zoom, the wake lock, closing and focus, and draws its own
-// page (paintStay): the big key tag with the stay's name and the night, and
-// tied to it a paper label with the booking's reference and a sentence for
-// the front desk, the facts, and the confirmation's pages (two columns, tap
-// to enlarge). No tear: it is simply there. The night comes from clock() (the
+// A stay's booking (look A, 予約票): open(stayId, opener, { stay: true }), or
+// openStay(stayId, opener), shares the slots, the fetching, the zoom, the
+// wake lock, closing and focus, and draws its own page (paintStay): the
+// app's white stub with the stay's name and the night, the booking's number
+// large with a sentence for the front desk, the facts, and the confirmation's
+// pages (two columns, tap to enlarge). No tear: it is simply there. The night comes from clock() (the
 // trip's zone: { date, minutes }). It closes itself when the stay, or its
 // booking, is gone.
 
@@ -37,7 +36,7 @@ import { header, nightOf, staySpan } from "../plan.js";
 import { fillSeal } from "../picture.js";
 import { dayHead } from "../format.js";
 import { ticketKinds, hasFacts, hasStayFacts, stayPictures, sniff, fromBase64 } from "../tickets.js";
-import { cord, notches, nightsLong } from "./keytag.js";
+import { nightsShort, nightsLong, stayDots, stayDayNums, peopleWord } from "../staywords.js";
 
 const NUMBER_WORD = { 2: "TWO", 3: "THREE", 4: "FOUR", 5: "FIVE", 6: "SIX" };
 
@@ -354,7 +353,7 @@ export function mountStub(root, store, keep, { clock = null } = {}) {
     ]);
   }
 
-  // A stay's booking: the big key tag and the paper label tied to it.
+  // A stay's booking, held up: the white stub, the number large on white.
   function paintStay() {
     const stay = stayOf();
     const pics = picsOf();
@@ -368,49 +367,47 @@ export function mountStub(root, store, keep, { clock = null } = {}) {
     const night = nightOf(stay, { today: now.date, minutes: now.minutes });
     const name = str(stay.name) || str(stay.nameJp);
     const span = staySpan(stay);
-    const nights = night.total ? night.total + "泊" : "";
+    const short = nightsShort(night);
+    const long = nightsLong(night);
 
-    const ov = el("div", "ov oa is-stay");
+    const ov = el("div", "ov oa");
     ov.setAttribute("role", "dialog");
     ov.setAttribute("aria-modal", "true");
     ov.setAttribute("aria-label", "Booking: " + name);
     const top = el("div", "oa-top");
-    const back = el("button", "", "Hang it back");
+    const back = el("button", "", "Put it back");
     back.type = "button";
     back.dataset.close = "";
-    top.append(el("span", "", "鍵札 Off the hook" + (now.date ? " · " + dayHead(now.date, []).en : "")), back);
+    top.append(el("span", "", "予約票 Booking" + (now.date ? " · " + dayHead(now.date, []).en : "")), back);
 
-    // The big tag: 宿, the stay's name (Japanese first), the night, the notches.
-    const hang = el("div", "kt-hang");
-    const wrap = el("div", "kt-wrap is-big");
-    wrap.setAttribute("aria-hidden", "true");
-    const tag = el("div", "kt big");
-    const tagName = str(stay.nameJp) || name;
-    const nm = el("div", "kt-nm kt-burn" + ([...tagName].length > 8 ? " is-long" : ""), tagName);
-    const words = night.state === "on"
-      ? "第" + night.n + "夜 · " + nightsLong(night)
-      : night.state === "before"
-      ? nights + " · from " + dayHead(stay.firstNight, []).en
-      : nights + " · " + nightsLong(night);
-    tag.append(el("span", "kt-hole"), el("div", "kt-yado kt-burn", "宿"), nm, el("div", "kt-nights kt-burn", night.total ? words : ""));
-    const n = notches(night);
-    if (n) tag.append(n);
-    wrap.append(cord(60, 44, { left: "50%", marginLeft: "-30px", top: "-28px" }), tag);
+    const stub = el("div", "tstub is-up is-stay");
+    const band = el("div", "stub-band");
+    const bname = el("span", "", "宿泊");
+    bname.append(el("i", "", "Stay"));
+    band.append(bname);
+    const dn = stayDayNums(stay, store.state.days);
+    if (dn) {
+      const num = el("span", "num");
+      num.append(el("small", "", "D"), " " + dn);
+      band.append(num);
+    }
+    const sh = el("div", "stub-h");
+    const kind = el("div", "stub-k");
+    const kk = el("span", "", "予約票");
+    kk.append(el("i", "", "Booking"));
+    kind.append(kk, el("span", "", [long, short].filter(Boolean).join(" · ")));
+    sh.append(kind, el("div", "stub-t", name));
+    if (str(stay.name) && str(stay.nameJp)) sh.append(el("div", "stub-w", str(stay.nameJp)));
+    stub.append(band, sh);
 
-    // The paper label tied to it.
-    const label = el("div", "kt-label");
     const p = el("div", "stub-p");
-    const k = el("div", "stub-k");
-    const kk = el("span", "", "予約");
-    kk.append(el("i", "", "Booking · " + name));
-    k.append(kk, el("span", "", span));
-    p.append(k);
     const ref = str(stay.tkRef);
     const said = deskLines(stay, now.date);
     if (ref || said) {
       const big = el("div", "ref-big");
-      big.append(el("small", "", "予約番号 Confirmation"));
-      if (ref) big.append(el("b", "", ref));
+      if (ref) {
+        big.append(el("small", "", "予約番号 Booking number"), el("b", [...ref].length > 14 ? "is-long" : "", ref));
+      }
       if (said) {
         const jp = el("p");
         jp.append(said.jp[0], el("br"), said.jp[1]);
@@ -419,23 +416,25 @@ export function mountStub(root, store, keep, { clock = null } = {}) {
       p.append(big);
     }
     const rows = [
-      ["お名前", "Name on booking", str(stay.tkName)],
-      ["人数", "In the room", str(stay.tkPeople)],
-      ["部屋", "Room", str(stay.tkRoom)],
-      ["泊数", "Nights", [nights, span].filter(Boolean).join(" · ")],
+      ["お名前", "Name on booking", str(stay.tkName), ""],
+      ["人数", "In the room", peopleWord(stay.tkPeople), ""],
+      ["部屋", "Room", str(stay.tkRoom), ""],
+      ["泊数", "Nights", short, span],
     ].filter((r) => r[2]);
     if (rows.length) {
       const dl = el("dl", "facts");
-      for (const [jp, en, v] of rows) {
+      for (const [jp, en, v, small] of rows) {
         const d = el("div");
         const dt = el("dt", "", jp);
         dt.append(el("i", "", en));
-        d.append(dt, el("dd", "", v));
+        const dd = el("dd", "", v);
+        if (small) dd.append(el("small", "", small));
+        d.append(dt, dd);
         dl.append(d);
       }
       p.append(dl);
     }
-    label.append(p);
+    stub.append(p);
     // The confirmation's pages, in order of person then page.
     if (pics.length) {
       const f = el("div", "stub-f");
@@ -444,15 +443,14 @@ export function mountStub(root, store, keep, { clock = null } = {}) {
       const pages = el("div", "pages" + (pics.length === 1 ? " is-one" : ""));
       pages.append(...pics.map((t) => slot(t, { zoom: true, page: true })));
       f.append(cap, pages);
-      label.append(el("div", "stub-perf"), f);
+      stub.append(el("div", "stub-perf"), f);
     }
     const foot = el("div", "stub-foot");
-    foot.append(keptLine(pics.length ? "pics" : null, pics.every((t) => keep.have(t.id))), el("span", "", nights));
-    label.append(foot);
-    hang.append(wrap, label);
-    const wl = el("span", "oa-x", "Screen stays on while the tag is off the hook.");
+    foot.append(keptLine(pics.length ? "pics" : null, pics.every((t) => keep.have(t.id))), el("span", "", stayDots(stay)));
+    stub.append(foot);
+    const wl = el("span", "oa-x", "Screen stays on while the booking is up.");
     wl.hidden = !locked;
-    ov.append(top, hang, wl);
+    ov.append(top, stub, wl);
     host.replaceChildren(ov);
     groupKey = null;
   }
@@ -607,8 +605,8 @@ export function mountStub(root, store, keep, { clock = null } = {}) {
       zoomIn(z);
       return;
     }
-    // The dark around the stub (or around the key tag and its label).
-    if (!ev.target.closest(".tstub, .kt-label, .kt-wrap")) close();
+    // The dark around the stub.
+    if (!ev.target.closest(".tstub")) close();
   });
   host.addEventListener("keydown", (ev) => {
     if ((ev.key === "Enter" || ev.key === " ") && ev.target.matches(".stub-code.can-zoom")) {
