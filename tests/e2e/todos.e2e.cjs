@@ -1160,7 +1160,8 @@ module.exports.push({
     await page.mouse.down();
     // Mo renumbers his planner: #3 is another item now. A pull lands under the finger.
     bookRow(backend, 3)[1] = "Buy a different thing entirely";
-    await page.dispatchEvent("#bwFetch", "click");
+    // Through the store, not a click: a click would go through the list's own handler, which clears the press.
+    await page.evaluate(() => { globalThis.__lt = globalThis.__matTest.store.syncTodos({ force: true }); });
     await until(() => page.evaluate(() => !document.querySelector('#bwOpen .bw-r[data-id="3"] .bw-n') || document.querySelector('#bwOpen .bw-r[data-id="3"] .bw-n').textContent.includes("different thing")), "row 3 shows the new item");
     await page.mouse.up();
     await page.waitForTimeout(600);
