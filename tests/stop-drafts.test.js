@@ -88,3 +88,15 @@ test("new-stop drafts on a day the trip no longer has are pruned at load", async
   pruneAddDrafts(s, who, ["2030-01-02", "2030-01-03"]);
   assert.deepEqual([...s.data.keys()].map((k) => JSON.parse(k.slice("mat.stopDraft.".length)).at(-1)).sort(), ["bkeep003", "keep0001", "stop0004"]);
 });
+
+test("dropAddDraft takes one new-stop draft off the phone and nothing else", async () => {
+  const { dropAddDraft } = await import("../js/views/stopsheet.js");
+  const s = memory();
+  const day = ["Trip", "2030-01-01", "A", "add", "2030-01-02"];
+  s.setItem(draftKey([...day, "one00001"]), "{}");
+  s.setItem(draftKey([...day, "two00002"]), "{}");
+  dropAddDraft(s, day, "one00001");
+  assert.equal(s.data.size, 1);
+  assert.ok(s.getItem(draftKey([...day, "two00002"])));
+  dropAddDraft({ removeItem() { throw new Error("blocked"); } }, day, "two00002");
+});

@@ -222,6 +222,15 @@ export function newestAddDraft(storage, scope) {
   return found[0].addId;
 }
 
+// Takes one new-stop draft (scope plus its stop id) off the phone.
+export function dropAddDraft(storage, scope, addId) {
+  try {
+    storage.removeItem(DRAFT + JSON.stringify([...scope, addId]));
+  } catch {
+    // left for the next opening
+  }
+}
+
 // New-stop drafts for this person and trip ([trip name, trip start, person])
 // on a day that is no longer one of the trip's days: nothing can open them.
 export function pruneAddDrafts(storage, who, days) {
@@ -498,7 +507,14 @@ export function mountStopSheet(root, store, { keep = null, storage = null } = {}
     date = day;
     stopId = null;
     const trip = store.state.trip;
-    const kept = storage && trip && store.state.me ? newestAddDraft(storage, [trip.name, trip.start, store.state.me, "add", day]) : null;
+    const scope = storage && trip && store.state.me ? [trip.name, trip.start, store.state.me, "add", day] : null;
+    let kept = scope ? newestAddDraft(storage, scope) : null;
+    // That save did land (its answer was lost): the id is already a stop, so a
+    // retry under it would write nothing. Start blank under a new id.
+    if (kept && (store.state.stops || []).some((s) => s.id === kept)) {
+      dropAddDraft(storage, scope, kept);
+      kept = null;
+    }
     addId = kept || newId();
     fill({});
     show("Add a stop", day, "Add stop");

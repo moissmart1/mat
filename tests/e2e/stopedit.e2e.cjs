@@ -287,6 +287,47 @@ module.exports = [
     },
   },
   {
+    name: "a kept new-stop draft whose id is already a stop opens blank, is dropped, and a new add gets a new id",
+    async run({ page }) {
+      const backend = await ready(page);
+      await openAdd(page);
+      await page.fill("#stWhat", "Walk");
+      backend.failWith = "network";
+      await page.click("#stSave");
+      await until(async () => !(await disabled(page, "#stDone")), "Done is available after the failed save");
+      await page.click("#stDone");
+      await waitSheetClosed(page);
+      backend.failWith = null;
+      // As if that save had landed after all: the draft's id is a stop on the trip.
+      const planted = await page.evaluate((id) => {
+        const k = Object.keys(localStorage).find((x) => x.startsWith("mat.stopDraft."));
+        const scope = JSON.parse(k.slice(14));
+        scope[scope.length - 1] = id;
+        localStorage.setItem("mat.stopDraft." + JSON.stringify(scope), localStorage.getItem(k));
+        localStorage.removeItem(k);
+        return scope.length;
+      }, SKY);
+      assert.ok(planted > 1);
+      await page.reload();
+      await until(() => page.evaluate(() => document.querySelectorAll("#rail .pg .tk").length === 11), "the tickets draw");
+      await openAdd(page);
+      assert.equal(await value(page, "#stWhat"), "", "the sheet opens blank");
+      assert.equal(await visible(page, "#stBack"), false, "no brought-back line");
+      assert.equal(await visible(page, "#stDiscard"), false);
+      const left = await page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("mat.stopDraft.")).length);
+      assert.equal(left, 0, "the draft is gone from the phone");
+      await page.fill("#stWhat", "Fresh walk");
+      await page.click("#stSave");
+      await waitSheetClosed(page);
+      await idle(page);
+      const sent = backend.requests.filter((r) => r.action === "addStop");
+      const last = sent[sent.length - 1];
+      assert.ok(last, "the add was sent");
+      assert.notEqual(last.args.stop.id, SKY, "a new id, not the existing stop's");
+      assert.equal((await rowTitles(page, D12)).filter((t) => t === "Fresh walk").length, 1);
+    },
+  },
+  {
     name: "new stops abandoned on the same day: the newest comes back and the older drafts are taken off",
     async run({ page }) {
       await ready(page);
