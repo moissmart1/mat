@@ -179,14 +179,14 @@ const slot = (page) => page.evaluate(() => {
   const n = document.getElementById("nextTicket");
   const b = document.getElementById("ntBtn");
   const t = (s) => (n.querySelector(s) ? n.querySelector(s).textContent.replace(/\s+/g, " ").trim() : null);
-  const seal = n.querySelector(".nt-seal .wh-s");
+  const seal = n.querySelector(".ntk-seal .wh-s");
   return {
     whose: n.dataset.whose,
-    label: t(".nt-l"),
-    tag: n.querySelector(".nt-tag").hidden ? "" : t(".nt-tag"),
-    title: t(".nt-tt"),
-    line: t(".nt-ln"),
-    go: t(".nt-go"),
+    label: t(".ntk-l"),
+    tag: n.querySelector(".ntk-tag").hidden ? "" : t(".ntk-tag"),
+    title: t(".ntk-tt"),
+    line: t(".ntk-ln"),
+    go: t(".ntk-go"),
     aria: b.getAttribute("aria-label"),
     seal: seal ? seal.className : "",
     sealText: seal ? seal.textContent : "",
@@ -547,7 +547,7 @@ cases.push({
   viewport: { width: 320, height: 568 },
   async run({ page, newPhone }) {
     await nothingBehind(page, "320");
-    const look = (p) => p.evaluate(() => ({ seal: document.querySelector("#nextTicket .wh-s").getBoundingClientRect().width, jp: getComputedStyle(document.querySelector("#nextTicket .nt-lj")).display, h: document.getElementById("ntBtn").getBoundingClientRect().height }));
+    const look = (p) => p.evaluate(() => ({ seal: document.querySelector("#nextTicket .wh-s").getBoundingClientRect().width, jp: getComputedStyle(document.querySelector("#nextTicket .ntk-lj")).display, h: document.getElementById("ntBtn").getBoundingClientRect().height }));
     const g = await look(page);
     assert.deepEqual({ seal: g.seal, jp: g.jp }, { seal: 34, jp: "none" }, "Dinner is a reference: no Japanese in the label");
     assert.ok(g.h >= 44);
@@ -570,9 +570,9 @@ cases.push({
     const g = await page.evaluate(() => {
       const n = document.getElementById("nextTicket").getBoundingClientRect();
       const nav = document.getElementById("nav").getBoundingClientRect();
-      const t = document.querySelector("#nextTicket .nt-t").getBoundingClientRect();
-      const l = document.querySelector("#nextTicket .nt-ln").getBoundingClientRect();
-      return { h: n.height, right: Math.round(nav.left - n.right), bottom: Math.round(innerHeight - n.bottom), oneLine: Math.abs(t.top - l.top) < 8 && l.left > t.left, label: getComputedStyle(document.querySelector("#nextTicket .nt-l")).display, bh: document.getElementById("ntBtn").getBoundingClientRect().height };
+      const t = document.querySelector("#nextTicket .ntk-t").getBoundingClientRect();
+      const l = document.querySelector("#nextTicket .ntk-ln").getBoundingClientRect();
+      return { h: n.height, right: Math.round(nav.left - n.right), bottom: Math.round(innerHeight - n.bottom), oneLine: Math.abs(t.top - l.top) < 8 && l.left > t.left, label: getComputedStyle(document.querySelector("#nextTicket .ntk-l")).display, bh: document.getElementById("ntBtn").getBoundingClientRect().height };
     });
     assert.deepEqual({ h: g.h, right: g.right, bottom: g.bottom, oneLine: g.oneLine, label: g.label }, { h: 52, right: 0, bottom: 0, oneLine: true, label: "none" });
     assert.ok(g.bh >= 44);
