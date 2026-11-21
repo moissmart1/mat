@@ -150,7 +150,10 @@ module.exports = [
       assert.equal(await page.inputValue("#rcQuery"), "ramen");
       assert.equal(await rows(page), 1);
       await page.fill("#rcQuery", "   ");
-      await emptyState(page);
+      await waitRows(page, 8);
+      assert.equal(await visible(page, "#rcClear"), false);
+      assert.equal(await visible(page, "#rcFindN"), false);
+      await expectText(page, "#rc .rc-tot span", "合計 Total");
     },
   },
   {
@@ -190,7 +193,8 @@ module.exports = [
       assert.ok(await flat(), "empty");
       assert.ok(await page.evaluate(() => { const q = document.getElementById("rcQuery"); return q.scrollWidth <= q.clientWidth; }), "placeholder whole");
       await shot(page, "find-320-empty.png");
-      await page.fill("#rcQuery", "ramen");
+      await page.click("#rcQuery"); // a tap brings the field into view, as on a phone
+      await page.keyboard.type("ramen");
       await waitRows(page, 1);
       assert.ok(await flat(), "ramen");
       const geo = await page.evaluate(() => {
