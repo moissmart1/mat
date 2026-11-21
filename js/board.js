@@ -69,6 +69,22 @@ export function boardFor(s, nowMs, here = null) {
   return { kind: "trip", small: now.local ? "次 Next · 現地" : "次 Next", big: stop.time, unit: "", l1: str(stop.title) || "Next stop", l2: tidyLine(h ? h.lead : nextLine(stop, now.minutes)) };
 }
 
+// ---- a long line runs sideways (issue 75, look B) ----
+
+// The long line's run: ms and px a second.
+export const RUN = { hold: 2000, pxs: 48, end: 2000, dark: 250 };
+
+// How far a line's words stick out of its window, in whole px; 0 when they fit (1 px of rounding is forgiven).
+export function overBy(wordsPx, windowPx) {
+  const d = Math.ceil(wordsPx - windowPx);
+  return d > 1 ? d : 0;
+}
+
+// How long the run takes for that distance.
+export function runMs(over) {
+  return Math.round((over / RUN.pxs) * 1000);
+}
+
 // ---- closed until tomorrow ----
 
 export const BOARD_KEY = "mat.board";

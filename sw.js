@@ -21,7 +21,7 @@
 //   script.googleusercontent.com), and anything else not listed here.
 // - Only OK answers are ever kept.
 
-const SW_VERSION = "c4578bfa4f";
+const SW_VERSION = "5061e80584";
 const SHELL_CACHE = "mat-shell-" + SW_VERSION;
 const FONT_CACHE = "mat-fonts";
 

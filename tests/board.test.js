@@ -4,7 +4,7 @@
 // is made up.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { boardFor, tidyLine, closedDate, isClosed, BOARD_KEY } from "../js/board.js";
+import { boardFor, tidyLine, closedDate, isClosed, BOARD_KEY, RUN, overBy, runMs } from "../js/board.js";
 import { tripNow } from "../js/plan.js";
 import { dec9State, et } from "./fixtures/dec9.js";
 
@@ -179,4 +179,25 @@ test("closed on Day 1 in its own zone: closed until the Days clock's day turns, 
   assert.equal(isClosed(kept, day(s, et("2026-12-09T10:01"))), true, "Japan's midnight passed at 10:00: still Day 1, still closed");
   assert.equal(isClosed(kept, day(s, et("2026-12-09T12:49"))), true);
   assert.equal(isClosed(kept, day(s, et("2026-12-09T12:50"))), false, "Day 2: back");
+});
+
+// ---- a long line runs sideways (issue 75) ----
+test("overBy: words that fit, or stick out by 1 px or less, are 0; otherwise the whole px they stick out, rounded up", () => {
+  assert.equal(overBy(200, 300), 0);
+  assert.equal(overBy(300, 300), 0);
+  assert.equal(overBy(301, 300), 0, "1 px of rounding is forgiven");
+  assert.equal(overBy(300.9, 300), 0);
+  assert.equal(overBy(301.1, 300), 2, "rounded up");
+  assert.equal(overBy(396, 300), 96);
+  assert.equal(overBy(396.2, 300), 97);
+});
+
+test("runMs: 48 px a second (96 px is 2000 ms, 150 px is 3125 ms, 0 is 0)", () => {
+  assert.equal(runMs(96), 2000);
+  assert.equal(runMs(150), 3125);
+  assert.equal(runMs(0), 0);
+});
+
+test("RUN: hold 2000, end 2000, dark 250, 48 px a second", () => {
+  assert.deepEqual(RUN, { hold: 2000, pxs: 48, end: 2000, dark: 250 });
 });
