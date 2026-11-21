@@ -374,9 +374,17 @@ cases.push({
     await page.reload();
     await page.clock.resume();
     await until(() => page.evaluate(() => !!globalThis.__matTest && document.querySelectorAll("#rc .rc-row").length > 0), "the app draws again", 10000);
+    // Wait on state, not time: the reload's own load has met no signal and
+    // everything it started has settled (else a late failure of it can mark
+    // the phone offline after signal is back and keep the picture waiting).
+    await until(() => page.evaluate(() => globalThis.__matTest.store.state.online === false), "the reload's load meets no signal", 10000);
+    await page.evaluate(() => globalThis.__matTest.store.idle());
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem("mat.queue") || "[]").filter((o) => o.ticket).length), 1, "the picture still waits on the phone");
     backend.failWith = null;
     await page.evaluate(() => globalThis.__matTest.store.checkRev());
+    await page.evaluate(() => globalThis.__matTest.store.idle());
     await until(() => live(backend).some((r) => r.planner_id === "T004:aaaaaaaaaa04"), "the waiting picture goes up", 20000);
+    await until(() => page.evaluate(() => JSON.parse(localStorage.getItem("mat.queue") || "[]").filter((o) => o.ticket).length === 0), "nothing waits any more", 10000);
     assert.equal(live(backend).some((r) => r.planner_id === "T010:aaaaaaaaaa10"), false);
   },
 });
