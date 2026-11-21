@@ -32,8 +32,10 @@
 //   box changes size (rotation, the desktop window) and Reduce Motion is
 //   switched; it is stopped (everything at rest, first word, lit) when the
 //   board is closed, cleared, hidden, scrolled out of sight or on another tab
-//   of the app (its screen goes inert), and starts again from the hold when seen. Under Reduce Motion
-//   nothing runs: the CSS wraps the words onto more rows.
+//   of the app (its screen goes inert), and starts again from the hold when
+//   seen. Under Reduce Motion nothing runs: the CSS wraps the words onto more
+//   rows. Fonts arriving in pieces and the line box resizing only re-measure:
+//   a line that is running carries on unless its overhang really changed.
 //   mountBoard is called once per page, so the listeners on document and
 //   matchMedia are never removed.
 // Every word on it is set with textContent.
@@ -137,12 +139,17 @@ export function mountBoard({ storage = null } = {}) {
       delete line.dataset.phase;
     }
   }
+  // Measures every line (layout sizes: a transform or opacity never changes them, so a
+  // moving line can be measured as it is). True when any line's overhang changed.
   function measure() {
-    rest();
+    let changed = false;
     for (const L of lines) {
-      L.over = L.line.hidden || !shown ? 0 : overBy(L.strip.offsetWidth, L.line.clientWidth);
-      L.line.classList.toggle("is-long", L.over > 0);
+      const over = L.line.hidden || !shown ? 0 : overBy(L.strip.offsetWidth, L.line.clientWidth);
+      if (over !== L.over) changed = true;
+      L.over = over;
+      L.line.classList.toggle("is-long", over > 0);
     }
+    return changed;
   }
   function run(longs, i) {
     const L = longs[i];
@@ -173,9 +180,15 @@ export function mountBoard({ storage = null } = {}) {
     if (!longs.length) return;
     after(RUN.hold, () => run(longs, 0));
   }
-  const remeasure = () => {
+  // From the hold, at the first word: new words, the board appearing, Reduce Motion switched.
+  const restart = () => {
     measure();
     start();
+  };
+  // Fonts arriving in pieces and the line box resizing: a line that is running is left
+  // running unless its overhang really changed (or nothing is going and something should be).
+  const remeasure = () => {
+    if (measure() || (timer === null && lines.some((L) => L.over > 0))) start();
   };
   document.addEventListener("visibilitychange", () => (document.hidden ? rest() : start()));
   if (document.fonts) {
@@ -185,7 +198,7 @@ export function mountBoard({ storage = null } = {}) {
   if (typeof ResizeObserver === "function") new ResizeObserver(remeasure).observe(txt);
   if (typeof matchMedia === "function") {
     const mq = matchMedia("(prefers-reduced-motion: reduce)");
-    if (mq.addEventListener) mq.addEventListener("change", remeasure);
+    if (mq.addEventListener) mq.addEventListener("change", restart);
   }
   if (typeof IntersectionObserver === "function") {
     new IntersectionObserver((entries) => {
@@ -216,7 +229,7 @@ export function mountBoard({ storage = null } = {}) {
       wrap.inert = false;
       wrap.classList.remove("is-shut");
       fill();
-      remeasure();
+      restart();
       return;
     }
     rest();
@@ -261,7 +274,7 @@ export function mountBoard({ storage = null } = {}) {
     const wasShown = shown;
     show(true);
     // show() measured when the board appeared; otherwise only when a line changed.
-    if (changed && wasShown) remeasure();
+    if (changed && wasShown) restart();
   }
 
   x.addEventListener("click", () => {
@@ -282,6 +295,10 @@ export function mountBoard({ storage = null } = {}) {
     for (const n of [small, unit, s1, s2]) n.textContent = "";
     bigN.data = "";
     rest();
+    for (const L of lines) {
+      L.over = 0;
+      L.line.classList.remove("is-long");
+    }
   }
 
   return { el: wrap, update, clear };

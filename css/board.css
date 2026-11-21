@@ -23,7 +23,7 @@
    words sit in a strip that js/views/board.js slides inside the line's own
    window. A hard edge, a steady pace. */
 .led-run{display:inline-block;vertical-align:top}
-.is-long>.led-run{will-change:transform}
+.led-1[data-phase="run"]>.led-run,.led-2[data-phase="run"]>.led-run{will-change:transform}
 .led-run.is-dark{opacity:0}
 @media (max-width:350px){
   .led-in{gap:7px;padding-left:8px}

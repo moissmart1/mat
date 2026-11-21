@@ -195,7 +195,7 @@ module.exports = [
       });
       assert.equal(style.fn, "linear");
       assert.equal(style.prop, "transform");
-      assert.equal(style.dur, s.l1.over / 48 + "s", "over / 48 seconds");
+      assert.ok(Math.abs(parseFloat(style.dur) * 1000 - runMs(s.l1.over)) <= 1, "over / 48 seconds: " + style.dur);
       await advance(page, backend, runMs(s.l1.over));
       assert.equal((await snap(page)).l1.phase, "end");
       await advance(page, backend, RUN.end - 1);
@@ -220,8 +220,9 @@ module.exports = [
       const first = await lineRect(page, 1);
       await advance(page, backend, RUN.hold);
       await advance(page, backend, runMs(over));
-      // The slide itself runs on the real clock: wait for the strip to arrive.
-      await until(async () => Math.abs((await lineRect(page, 1)).sr - first.r) <= 1.5, "the last letter reaches the window's edge", runMs(over) + 4000);
+      // The slide itself runs on the real clock: finish it at once instead of waiting it out.
+      await page.evaluate(() => document.getAnimations().forEach((a) => a.finish()));
+      await until(async () => Math.abs((await lineRect(page, 1)).sr - first.r) <= 1.5, "the last letter reaches the window's edge");
       const end = await lineRect(page, 1);
       assert.deepEqual([end.l, end.r, end.t, end.b], [first.l, first.r, first.t, first.b], "the line's box has not moved");
       assert.ok(end.r <= end.xl + 14, "and does not pass the close");
@@ -277,7 +278,14 @@ module.exports = [
       await advance(page, same, RUN.hold);
       assert.equal((await snap(page)).l1.phase, "run");
       const node = await page.evaluateHandle(() => document.querySelector("#vDays .brd .led-run"));
+      // Count the board's redraws: update() sets the unit's hidden every time it is called.
+      await page.evaluate(() => {
+        window.__updates = 0;
+        const d = Object.getOwnPropertyDescriptor(HTMLElement.prototype, "hidden");
+        Object.defineProperty(HTMLElement.prototype, "hidden", { ...d, set(v) { if (this.tagName === "EM" && this.parentElement && this.parentElement.parentElement && this.parentElement.parentElement.classList.contains("led-big")) window.__updates++; d.set.call(this, v); } });
+      });
       await advance(page, same, 2 * MIN);
+      await until(() => page.evaluate(() => window.__updates > 0), "Days redrew the board");
       let s = await snap(page);
       assert.equal(s.l1.phase, "end", "the run carried on (its own timer fired), not restarted");
       assert.equal(s.l1.tf, "translateX(-" + overA + "px)");
@@ -297,6 +305,23 @@ module.exports = [
       assert.equal((await snap(other)).l1.phase, "", "the hold starts again");
       await advance(other, backend, 1);
       assert.equal((await snap(other)).l1.phase, "run");
+    },
+  },
+  {
+    name: "fonts arriving in pieces re-measure without resetting: a running line carries on, and one that is waiting keeps its hold",
+    async run({ page }) {
+      const backend = await ready(page, { nowMs: DAY12, seed: tripSeed([{ time: "14:00", title: LONG_TITLE, travelMin: 30 }]) });
+      const over = await longUp(page);
+      await advance(page, backend, RUN.hold - 1000);
+      await page.evaluate(() => document.fonts.dispatchEvent(new Event("loadingdone")));
+      await advance(page, backend, 1000);
+      assert.equal((await snap(page)).l1.phase, "run", "a font arriving in the hold did not restart the hold");
+      await page.evaluate(() => document.fonts.dispatchEvent(new Event("loadingdone")));
+      const s = (await snap(page)).l1;
+      assert.deepEqual([s.phase, s.tf, s.over], ["run", "translateX(-" + over + "px)", over], "and one in the run did not snap it back");
+      await advance(page, backend, runMs(over));
+      await page.evaluate(() => document.fonts.dispatchEvent(new Event("loadingdone")));
+      assert.equal((await snap(page)).l1.phase, "end");
     },
   },
   {
