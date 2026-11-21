@@ -19,18 +19,18 @@
 //   bar (the trip's first day has begun, by the Days clock) and its badge.
 // - setBefore(open): how many Before items are still open (the slip's count;
 //   no slip at 0).
-// - The hook (S2 鍵札): when tonight's stay has a booking (passCase's hook), a
-//   brass peg at the top of the case with the small key tag on it, tonight's
-//   stay and its night, and 鍵札 Show booking (onStay(stayId, button): the app
-//   holds the booking up, js/views/stub.js). It shows even with no stop
-//   ticket at all.
+// - Tonight's stay (look A, 予約票): when tonight's stay has a booking
+//   (passCase's hook), lines of type at the top of the case: 今夜の宿 and the
+//   night, the stay's name, its booking number, and 予約票 Show booking
+//   (onStay(stayId, button): the app holds the booking up, js/views/stub.js).
+//   It shows even with no stop ticket at all.
 // - A ticket's first picture, small in the window, comes from the keep (the
 //   pictures already on this phone, js/tickets.js); nothing is fetched here.
 // Every title, detail, seat and reference goes in with textContent.
 
 import { passCase } from "../passcase.js";
 import { dayHead } from "../format.js";
-import { tagSmall } from "./keytag.js";
+import { nightsShort, nightsLong } from "../staywords.js";
 
 // How often the case looks again while the app is on screen: a ticket's time
 // passing moves it to the back pocket, and midnight on Day 1 brings the key.
@@ -188,20 +188,33 @@ export function mountPassCase(root, store, { clock, keep, where = null, onTicket
     return wrap;
   }
 
-  // Tonight's stay on its hook: the peg, the small tag, the words, Show booking.
-  function hookEl(k) {
-    const box = el("div", "pc-hook");
-    box.append(deco("span", "pc-peg", ""), tagSmall(k.ref, k));
-    const words = el("div", "pc-hk");
-    const night = k.state === "on" ? "Night " + k.n + " of " + k.total + "." : k.total + (k.total === 1 ? " night." : " nights.");
-    words.append(el("small", "", "今夜の宿 Tonight’s stay"), el("b", "", k.name), el("span", "", "On the hook every night you sleep there. " + night));
-    const show = button("pc-hkb");
+  // Tonight's stay, in type: the label and the night, the name, the booking
+  // number, and the key that holds the booking up.
+  function stayEl(k) {
+    const box = el("div", "pc-stay");
+    const label = el("div", "pc-stay-l");
+    const lw = el("span");
+    lw.append(deco("span", "", "今夜の宿 "), "Tonight’s stay");
+    const short = nightsShort(k);
+    label.append(lw);
+    if (short) label.append(deco("span", "", short));
+    box.append(label, el("div", "pc-stay-n", k.name));
+    if (k.ref) {
+      const r = el("div", "pc-stay-r");
+      const sm = el("small");
+      sm.append(deco("span", "", "予約番号 "), "Booking no.");
+      r.append(sm, el("b", "", k.ref));
+      box.append(r);
+    }
+    const show = button("pc-stay-b");
     show.dataset.act = "stay";
     show.dataset.stay = k.id;
-    show.append(deco("b", "", "鍵札"), " Show booking");
-    show.setAttribute("aria-label", "Show booking: " + k.name);
-    words.append(show);
-    box.append(words);
+    const w = el("span");
+    w.append(deco("b", "", "予約票"), "Show booking");
+    const nl = nightsLong(k);
+    show.append(w, deco("i", "", nl ? nl + " ›" : "›"));
+    show.setAttribute("aria-label", "Show booking: " + k.name + (nl ? ", " + nl.toLowerCase() : ""));
+    box.append(show);
     return box;
   }
 
@@ -242,7 +255,7 @@ export function mountPassCase(root, store, { clock, keep, where = null, onTicket
     }
 
     const box = el("div", "pc-case");
-    if (c.hook) box.append(hookEl(c.hook));
+    if (c.hook) box.append(stayEl(c.hook));
     const top = foil("次", "Next", "");
     top.lastChild.append(deco("span", "", "本日 "), c.empty ? "Today" : "Today · " + c.todayLeft + " left");
     box.append(top);
