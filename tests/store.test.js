@@ -3899,3 +3899,74 @@ test("the eve is emptied with the days when the trip comes off the phone", async
   p.store.forgot();
   assert.deepEqual([p.store.state.status, p.store.state.eves, p.store.state.days], ["nokey", [], []]);
 });
+
+// ---------- signal back: an old failure is not news; what waits goes at once ----------
+
+// A store whose api answers each request only when the test says so.
+function heldPhone() {
+  const calls = [];
+  const api = (action, args) => new Promise((resolve, reject) => calls.push({ action, args, resolve, reject }));
+  const net = () => Object.assign(new Error("Couldn’t reach the trip sheet."), { code: "network" });
+  const store = createStore({ api, storage: memStorage({ "mat.key": KEY, "mat.me": "Mo" }), now: () => NOW, wait: async () => {} });
+  const ok = (data = { entries: [], more: false }) => ({ ok: true, rev: 0, data });
+  return { store, calls, net, ok };
+}
+
+test("a request that started before the latest answer and then fails for lack of signal does not mark the phone offline", async () => {
+  const p = heldPhone();
+  const older = p.store.loadHistory(); // starts first
+  const newer = p.store.historyFor("x"); // starts second
+  assert.equal(p.calls.length, 2);
+  p.calls[1].resolve(p.ok()); // the newer one answers: signal
+  await newer;
+  assert.equal(p.store.state.online, true);
+  p.calls[0].reject(p.net()); // the older one's failure lands late
+  await older;
+  assert.equal(p.store.state.online, true, "old news: the phone has signal");
+  // A request that starts after that answer and fails: no signal, as before.
+  const after = p.store.loadHistory();
+  p.calls[2].reject(p.net());
+  await after;
+  assert.equal(p.store.state.online, false);
+});
+
+test("two requests that fail with no answer between them both count: the phone is offline", async () => {
+  const p = heldPhone();
+  const a = p.store.loadHistory();
+  const b = p.store.historyFor("x");
+  p.calls[0].reject(p.net());
+  p.calls[1].reject(p.net());
+  await a;
+  await b.catch(() => {});
+  assert.equal(p.store.state.online, false);
+});
+
+test("when signal comes back through any answer, a picture waiting on the phone is sent at once", async () => {
+  const p = phone({ seed: { stays: [INN] } });
+  await p.store.boot();
+  p.net.offline = true;
+  await p.store.checkRev();
+  assert.equal(p.store.state.online, false);
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]).toString("base64");
+  const token = p.store.addTicket({ stay: INN.id, who: "", seat: "", page: 1, mime: "image/png", w: 10, h: 10, data: png });
+  assert.equal((await p.store.ticketOutcome(token)).reason, "queued");
+  await p.store.idle();
+  assert.equal(p.fake.tables.Tickets.length, 0);
+  // Signal back, and the first answer is History's (not a check): the picture goes up without waiting for the next check.
+  p.net.offline = false;
+  await p.store.loadHistory();
+  await p.store.idle();
+  assert.equal(p.store.state.online, true);
+  assert.equal(p.fake.tables.Tickets.length, 1);
+  assert.equal(p.store.outbox().unsent, 0);
+});
+
+test("the hidden-page rule still holds alongside: a failure while hidden is not no signal", async () => {
+  let hidden = false;
+  const p = phone({ seed: SEED, isHidden: () => hidden });
+  await p.store.boot();
+  hidden = true;
+  p.net.offline = true;
+  await p.store.checkRev();
+  assert.equal(p.store.state.online, true);
+});

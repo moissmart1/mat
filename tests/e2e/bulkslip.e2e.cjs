@@ -383,7 +383,14 @@ cases.push({
     backend.failWith = null;
     await page.evaluate(() => globalThis.__matTest.store.checkRev());
     await page.evaluate(() => globalThis.__matTest.store.idle());
-    await until(() => live(backend).some((r) => r.planner_id === "T004:aaaaaaaaaa04"), "the waiting picture goes up", 20000);
+    const since = backend.requests.length;
+    try {
+      await until(() => live(backend).some((r) => r.planner_id === "T004:aaaaaaaaaa04"), "the waiting picture goes up", 20000);
+    } catch (err) {
+      // Say what the phone and the backend saw, so a failure can be read (not rerun).
+      const phone = await page.evaluate(() => { const s = globalThis.__matTest.store; return { online: s.state.online, status: s.state.status, notice: s.state.notice, unsent: s.outbox(), queue: JSON.parse(localStorage.getItem("mat.queue") || "[]").map((o) => Object.keys(o).join("+") + (o.ticket ? ":" + o.ticket.id + ":" + ("data" in o.ticket) : "") + (o.sent === false ? ":unsent" : "")) }; });
+      throw new Error(err.message + " " + JSON.stringify({ phone, sent: backend.requests.slice(since).map((b) => b.action + (b.action === "addTicket" ? ":" + b.args.ticket.id : "")) }));
+    }
     await until(() => page.evaluate(() => JSON.parse(localStorage.getItem("mat.queue") || "[]").filter((o) => o.ticket).length === 0), "nothing waits any more", 10000);
     assert.equal(live(backend).some((r) => r.planner_id === "T010:aaaaaaaaaa10"), false);
   },

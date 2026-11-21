@@ -375,15 +375,37 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
 
   // ---- talking to the backend ----
 
+  // Answers had from the backend so far. A request that fails for lack of
+  // signal after another one has answered since it started is old news: the
+  // signal is back, so it does not mark the phone offline again.
+  let contacts = 0;
+  // Signal just came back (the phone thought it had none) through an answer
+  // other than a load or a check: when something waits on the phone, a check
+  // runs at once (it sends what waits after seeing what the backend has, as
+  // every check does), not at the next 20-second one. A load or a check that
+  // answered sees to it itself.
+  function signalBack(action) {
+    if (action === "load" || action === "rev") return;
+    Promise.resolve().then(() => {
+      if (wiped || state.status !== "ready" || !state.online) return;
+      const waiting = resolving.length > 0 || ops.some((op) => isLiveAdd(op) && op.status === "queued");
+      if (waiting) track(checkRev());
+    });
+  }
+
   async function call(action, args, opts, { quiet = false } = {}) {
     if (wiped) throw refusedError();
     const wipesAt = wipes;
     const hiddenAt = hiddenCount;
+    const contactsAt = contacts;
     for (let attempt = 0; ; attempt++) {
       try {
         const r = opts ? await api(action, args, opts) : await api(action, args);
         if (wipes !== wipesAt) throw lateError();
+        const wasOnline = state.online;
         state.online = true;
+        contacts += 1;
+        if (!wasOnline) signalBack(action);
         // Contact after a write that got no reply: show what the backend has.
         // (refresh and checkRev see to it themselves.)
         if (reloadAfter !== null && action !== "load" && action !== "rev") reloadOnContact();
@@ -396,7 +418,7 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
           await wait(BUSY_DELAY_MS);
           continue;
         }
-        if (code === "network" && !quiet && !isHidden() && hiddenCount === hiddenAt) state.online = false;
+        if (code === "network" && !quiet && !isHidden() && hiddenCount === hiddenAt && contacts === contactsAt) state.online = false;
         if (code === "bad_key") {
           state.status = "nokey";
           state.keyRefused = true; // a key was tried and the trip said no
