@@ -35,7 +35,7 @@ const pics = (n) => (n === 1 ? "1 picture" : n + " pictures");
 const tickets = (n) => (n === 1 ? "1 ticket picture" : n + " ticket pictures");
 const ONLY_OPEN = "“Only when I open one”";
 
-export const NOTE = "Each needs signal once. Fetch them now, on Wi-Fi, and this phone works with no signal.";
+export const NOTE = "Each needs signal once. Fetch them now, on Wi‑Fi, and this phone works with no signal.";
 export const KEY_JP = "取込";
 
 // Progress of a pass: when one starts, of = n; while it runs, at = of - n + 1
@@ -96,7 +96,7 @@ function ariaFor(kind, n, total, where, progress, l1) {
 function bigFace(kind, n, mode, toGo, progress) {
   const fetchingText = progress ? "Fetching " + progress.at + " of " + progress.of : "";
   if (kind === "fetching") return { l1: fetchingText, l2: "Keep MAT open", note: NOTE, key: fetchingText, busy: true };
-  if (kind === "failed") return { l1: pics(n) + " could not be fetched", l2: "Try again on Wi-Fi", note: NOTE, key: "Try again", busy: false };
+  if (kind === "failed") return { l1: pics(n) + " could not be fetched", l2: "Try again on Wi‑Fi", note: NOTE, key: "Try again", busy: false };
   return {
     l1: pics(n) + " not on this phone",
     l2: mode === "open" ? "Set to " + ONLY_OPEN : toGo === 1 ? "Flying tomorrow" : "Flying in " + toGo + " days",
@@ -197,7 +197,7 @@ export function sheetFor(m) {
       : "Here in Safari. Safari can clear a site it has not seen for a week, so open MAT now and then. The Home Screen app keeps its own copy: open it once with signal too.",
   );
   if (m.mode === "open") notes.push("Ticket pictures are set to " + ONLY_OPEN + ". Change it in You, Ticket pictures.");
-  if (m.kind === "failed") notes.push("Some pictures would not fetch. This phone may be full, or the signal dropped. Try again on Wi-Fi.");
+  if (m.kind === "failed") notes.push("Some pictures would not fetch. This phone may be full, or the signal dropped. Try again on Wi‑Fi.");
   if (m.kind === "nokeep") notes.push("This window keeps nothing after it is closed (a private window, or storage is off). Open your link in an ordinary Safari window.");
   if (m.kind === "setup") notes.push("The app is still saving itself to this phone. It takes a moment with signal.");
   if (m.kind === "wait") notes.push(m.mode === "open" ? "No signal now. Fetch them when it is back." : "No signal now. The missing pictures come by themselves when it is back.");

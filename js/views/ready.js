@@ -180,11 +180,17 @@ export function mountReady(phone, store, { keep, clock, storage, durable = true,
     right.hidden = !m.right;
     words.setAttribute("aria-label", m.aria);
     put(keyT, m.key);
+    const keyHad = document.activeElement === key;
     key.hidden = !m.key || !!m.big;
+    // The key goes while a pass runs: focus that was on it goes to the words, not to the page.
+    if (keyHad && key.hidden && !m.big) words.focus({ preventScroll: true });
     if (m.key) key.setAttribute("aria-label", m.keyAria);
+    const hadFocus = document.activeElement === bigKey || document.activeElement === words || keyHad;
     words.hidden = !!m.big;
     note.hidden = !m.big;
     bigKey.hidden = !m.big;
+    // The tall foot comes or goes: focus stays in the line.
+    if (hadFocus && !line.contains(document.activeElement)) (m.big ? bigKey : m.key ? key : words).focus({ preventScroll: true });
     if (m.big) {
       put(note, m.big.note);
       put(bigT, m.big.key);
@@ -221,7 +227,13 @@ export function mountReady(phone, store, { keep, clock, storage, durable = true,
     put(goT, sh.key);
   }
 
+  // The keep opens after the page starts (and again for a new link): read everything again once it has.
+  let keepOpening = null;
   function update(quiet = false) {
+    if (keep.ready !== keepOpening) {
+      keepOpening = keep.ready;
+      Promise.resolve(keepOpening).then(() => update(), () => update());
+    }
     const s = store.state;
     const at = now();
     progress = track(progress, missingNow(s, at), isFetching(store));

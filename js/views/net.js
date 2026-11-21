@@ -49,7 +49,6 @@ export function mountNet(root, store, { ready = null } = {}) {
   key.id = "netKey";
   key.hidden = true;
   const keyJp = document.createElement("i");
-  keyJp.textContent = "取込";
   keyJp.setAttribute("aria-hidden", "true");
   const keyT = document.createElement("span");
   key.append(keyJp, keyT);
@@ -106,6 +105,8 @@ export function mountNet(root, store, { ready = null } = {}) {
     setWords(amber ? (s.queueStorageFailed ? KEEP_OPEN : "") : message, amber ? "" : jp);
     go.hidden = !amber;
     key.hidden = !amber || !m.strip.key;
+    // Its mark only while it shows, so the strip's words are only what it says.
+    put(keyJp, key.hidden ? "" : "取込");
     if (amber) {
       put(goT, m.strip.text + (m.strip.right ? " · " + m.strip.right : ""));
       go.setAttribute("aria-label", m.aria);

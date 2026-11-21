@@ -52,6 +52,8 @@ const LODGE = "planstay0002";
 const SHOTS = process.env.MAT_READY_SHOTS || "";
 async function shot(page, name) {
   if (!SHOTS) return;
+  // The board's lines have finished filling in (a CSS animation).
+  await until(() => page.evaluate(() => [...document.querySelectorAll(".led-wipe")].every((n) => !n.getClientRects().length)), "the board has filled in");
   fs.mkdirSync(SHOTS, { recursive: true });
   await page.screenshot({ path: path.join(SHOTS, name + ".jpg"), type: "jpeg", quality: 88 });
 }
@@ -312,7 +314,7 @@ module.exports = [
       await waitKind(page, "fetching");
       assert.equal(await text(page, "#vDays .rdy .rdy-t"), "Fetching 1 of 12");
       assert.equal(await text(page, "#vDays .rdy .rdy-r"), "Keep MAT open");
-      assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.id), "rdyKey", "focus stays where it was");
+      assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.id), "rdyWords", "the key goes while it fetches: focus moves to the words, not to the page");
       await shot(page, "line-fetching");
       h.release();
       h.restore();
@@ -336,7 +338,7 @@ module.exports = [
       assert.ok(contrast(RED, "rgb(9, 8, 7)") >= 4.5, "the red line passes 4.5:1 on the board's black: " + contrast(RED, "rgb(9, 8, 7)").toFixed(2));
       assert.equal(await visible(page, "#vDays .brd-x"), false, "no ×");
       assert.equal(await page.evaluate(() => localStorage.getItem("mat.board")), "2026-12-08", "nothing written to mat.board");
-      assert.equal(await text(page, "#vDays .rdy .rdy-note"), "Each needs signal once. Fetch them now, on Wi-Fi, and this phone works with no signal.");
+      assert.equal(await text(page, "#vDays .rdy .rdy-note"), "Each needs signal once. Fetch them now, on Wi‑Fi, and this phone works with no signal.");
       assert.equal(await text(page, "#rdyBigKey"), "取込Fetch all 12 now");
       assert.equal(await height(page, "#rdyBigKey"), 48);
       assert.equal(await visible(page, "#rdyWords"), false, "the tall foot in place of the small line");
@@ -350,8 +352,11 @@ module.exports = [
       assert.equal(await page.getAttribute("#rdyBigKey", "aria-disabled"), "true");
       assert.equal(await page.evaluate(() => document.activeElement.id), "rdyBigKey", "focus stays on the key");
       await shot(page, "two-days-fetching");
-      // A second tap while it runs does nothing.
-      await page.click("#rdyBigKey");
+      // A second tap while it runs does nothing (dispatched: Playwright will not click an aria-disabled button).
+      const askedBefore = h.asked.length;
+      await page.dispatchEvent("#rdyBigKey", "click");
+      assert.equal(h.asked.length, askedBefore, "no second pass");
+      assert.equal((await boardLines(page)).l1, "Fetching 1 of 12");
       h.release();
       h.restore();
       await waitKind(page, "ready");
@@ -506,8 +511,11 @@ module.exports = [
       assert.equal(await visible(page, "#net"), false, "the line is in sight: no strip");
       await page.evaluate(() => document.getElementById("vDays").scrollTo(0, 700));
       await until(() => page.evaluate(() => document.querySelector("#vDays .rdy").getBoundingClientRect().bottom < 0), "the line is scrolled away");
-      await advance(page, backend, 400); // the answer is held 300 ms
-      await until(() => page.evaluate(() => document.getElementById("net").classList.contains("is-amber") && !document.getElementById("net").hidden), "the amber strip comes", 4000);
+      // The observer reports at the next frame, and its answer is held 300 ms (a timer, on the page's paused clock).
+      await until(async () => {
+        await advance(page, backend, 400);
+        return page.evaluate(() => document.getElementById("net").classList.contains("is-amber") && !document.getElementById("net").hidden);
+      }, "the amber strip comes", 4000);
       assert.equal(await text(page, "#netWords"), "1 picture could not be fetched");
       assert.equal(await text(page, "#netKey"), "取込Try again");
       assert.equal(await colorOf(page, "#net"), AMBER);
@@ -522,11 +530,15 @@ module.exports = [
       // On another screen the strip stays.
       await page.evaluate(() => document.getElementById("vDays").scrollTo(0, 0));
       await until(() => page.evaluate(() => document.querySelector("#vDays .rdy").getBoundingClientRect().top > 44), "the line is back in sight");
-      await advance(page, backend, 400);
-      await until(async () => !(await visible(page, "#net")), "back at the top: the strip goes", 4000);
+      await until(async () => {
+        await advance(page, backend, 400);
+        return !(await visible(page, "#net"));
+      }, "back at the top: the strip goes", 4000);
       await page.click('#nav button[data-tab="money"]');
-      await advance(page, backend, 400);
-      await until(() => visible(page, "#netWords"), "on Money the strip says it");
+      await until(async () => {
+        await advance(page, backend, 400);
+        return visible(page, "#netWords");
+      }, "on Money the strip says it", 4000);
       back();
       await page.click("#netKey");
       await until(async () => !(await visible(page, "#net")), "fetched: the strip goes");

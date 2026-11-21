@@ -142,7 +142,7 @@ test("the board's face: only two days and one day before, with signal, and missi
   assert.equal(big(TWO, {}, { have: lacking("s1") }).key, "Fetch it now");
   assert.equal(big(TWO, {}, { have: lacking("s1") }).l1, "1 picture not on this phone");
   assert.equal(big(TWO, {}, { mode: "open" }).l2, "Set to “Only when I open one”");
-  assert.deepEqual(big(TWO, {}, { failed: true }), { l1: "3 pictures could not be fetched", l2: "Try again on Wi-Fi", note: NOTE, key: "Try again", busy: false });
+  assert.deepEqual(big(TWO, {}, { failed: true }), { l1: "3 pictures could not be fetched", l2: "Try again on Wi‑Fi", note: NOTE, key: "Try again", busy: false });
   assert.deepEqual(big(TWO, {}, { fetching: true, progress: { at: 2, of: 3, left: 2 } }), { l1: "Fetching 2 of 3", l2: "Keep MAT open", note: NOTE, key: "Fetching 2 of 3", busy: true });
   assert.equal(big(THREE, {}, {}), null, "three days before: the small line only");
   assert.equal(big(DAY12, {}, {}), null, "on the trip: never");
@@ -201,7 +201,7 @@ test("the sheet: verdict, rows, notes and key for each kind", () => {
   const lots = sh(WEEKS, { stops: many, tickets: many.map((x) => T("t" + x.id, { stop: x.id })) }, { have: () => false });
   assert.deepEqual(lots.rows[1].lines, ["Fri Dec 11 · Made-up stop 0", "Sat Dec 12 · Made-up stop 1", "Sun Dec 13 · Made-up stop 2", "Mon Dec 14 · Made-up stop 3", "Tue Dec 15 · Made-up stop 4", "and 3 more"]);
 
-  assert.equal(sh(WEEKS, {}, { have: lacking("s1"), failed: true }).notes[1], "Some pictures would not fetch. This phone may be full, or the signal dropped. Try again on Wi-Fi.");
+  assert.equal(sh(WEEKS, {}, { have: lacking("s1"), failed: true }).notes[1], "Some pictures would not fetch. This phone may be full, or the signal dropped. Try again on Wi‑Fi.");
   assert.equal(sh(WEEKS, {}, { have: lacking("s1"), failed: true }).key, "Try again");
   assert.equal(sh(WEEKS, {}, { kept: false }).notes[1], "This window keeps nothing after it is closed (a private window, or storage is off). Open your link in an ordinary Safari window.");
   assert.equal(sh(WEEKS, {}, { shell: false }).notes[1], "The app is still saving itself to this phone. It takes a moment with signal.");
