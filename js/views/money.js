@@ -5,7 +5,7 @@
 // root and redraws on every store change. Every figure comes from money.js and
 // format.js; text from people or the Sheet goes in with textContent only.
 
-import { standing, jpyOf, cadCents, shares } from "../money.js";
+import { standing, jpyOf, cadCents, shares, expenseShares } from "../money.js";
 import { tripDay } from "../time.js";
 import { tripNow } from "../plan.js";
 import { mountSlip, viewerOwed } from "./slip.js";
@@ -22,6 +22,59 @@ export function setAsideText(list) {
   return list.length === 1
     ? "1 line in the Sheet can’t be read (" + why + "). It’s left out of the totals. Tell Mo."
     : list.length + " lines in the Sheet can’t be read (" + why + "). They’re left out of the totals. Tell Mo.";
+}
+
+// The export uses the same exchange rates, rounding, and transfers as the slip.
+export function settlementSummary(state, exportedAt) {
+  const { live, list, bal, simplify } = viewerOwed(state);
+  const ageMs = Date.parse(exportedAt) - state.loadedAt;
+  const hasLoad = Number.isFinite(state.loadedAt);
+  const fresh = hasLoad && ageMs >= 0 && ageMs <= 60000;
+  return {
+    trip: state.trip.name,
+    exportedAt,
+    lastLoadedAt: hasLoad ? new Date(state.loadedAt).toISOString() : null,
+    settlementCurrency: "CAD",
+    simplified: simplify,
+    online: state.online,
+    provisional: !state.online || !fresh || [...state.expenses, ...state.payments].some((row) => row.pending || row.failed),
+    excludedRows: (state.setAside || []).length,
+    expenses: live.map((e) => ({
+      day: e.day, description: e.title, paidBy: e.paidBy, amount: e.amount,
+      currency: e.currency, rate: e.rate, cadCents: cadCents(e),
+      splitMode: e.splitMode || "equal", split: [...e.split], splitValues: [...(e.splitVals || [])],
+      sharesCadCents: expenseShares(e),
+    })),
+    payments: state.payments.filter((p) => !p.removed).map((p) => ({
+      from: p.from, to: p.to, cadCents: Math.round(p.cad * 100), recordedAt: p.stampedAt,
+    })),
+    balances: bal,
+    transfers: list.map(({ from, to, cents }) => ({ from, to, cents })),
+  };
+}
+
+export function summaryText(summary) {
+  const lines = [summary.trip + " — Settlement summary", "Amounts in CAD unless labelled otherwise.",
+    "Prepared " + summary.exportedAt, "Last loaded " + (summary.lastLoadedAt || "unknown")];
+  if (summary.provisional) lines.push("Provisional: pending changes or figures awaiting refresh.");
+  if (summary.excludedRows) lines.push("Unreadable rows excluded: " + summary.excludedRows);
+  lines.push("", "Expenses");
+  for (const e of summary.expenses) {
+    lines.push(e.day + " · " + e.description + " · " + e.paidBy + " paid " + e.amount + " " + e.currency +
+      " (" + dollars(e.cadCents) + " CAD, " + e.rate + " JPY/CAD)");
+    lines.push("  " + e.splitMode + " split: " + Object.entries(e.sharesCadCents).map(([who, cents]) => who + " " + dollars(cents)).join(", "));
+  }
+  if (!summary.expenses.length) lines.push("None");
+  lines.push("", "Recorded payments");
+  for (const p of summary.payments) lines.push(p.from + " → " + p.to + "  " + dollars(p.cadCents));
+  if (!summary.payments.length) lines.push("None");
+  lines.push("", "Balances");
+  for (const [who, cents] of Object.entries(summary.balances)) lines.push(who + " " +
+    (cents < 0 ? "owes " : cents > 0 ? "is owed " : "") + dollars(Math.abs(cents)));
+  lines.push("", summary.simplified ? "Remaining transfers (simplified)" : "Remaining transfers");
+  for (const t of summary.transfers) lines.push(t.from + " → " + t.to + "  " + dollars(t.cents));
+  if (!summary.transfers.length) lines.push("All settled");
+  return lines.join("\n");
 }
 
 function el(tag, cls, text) {
@@ -177,7 +230,25 @@ export function mountMoney(root, store, { onRing = () => {}, onLine = () => {}, 
   slip.id = "slip";
   const rc = el("div", "rc");
   rc.id = "rc";
-  root.replaceChildren(top, slip, rc);
+  const summary = el("details", "settlement-summary");
+  const content = el("pre");
+  const download = el("button", "", "Download text");
+  download.type = "button";
+  summary.append(el("summary", "", "Settlement summary"), content, download);
+  const refreshSummary = () => {
+    content.textContent = summaryText(settlementSummary(store.state, new Date().toISOString()));
+  };
+  summary.addEventListener("toggle", () => { if (summary.open && !summary.hidden) refreshSummary(); });
+  download.addEventListener("click", () => {
+    refreshSummary();
+    const url = URL.createObjectURL(new Blob([content.textContent + "\n"], { type: "text/plain;charset=utf-8" }));
+    const link = el("a");
+    link.href = url;
+    link.download = "settlement-summary.txt";
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+  root.replaceChildren(top, slip, rc, summary);
   mountSlip(slip, store);
 
   histBtn.addEventListener("click", () => onHistory());
@@ -207,6 +278,8 @@ export function mountMoney(root, store, { onRing = () => {}, onLine = () => {}, 
       asideNote.hidden = true;
       histBtn.hidden = true;
       slip.hidden = true;
+      summary.hidden = true;
+      content.textContent = "";
       rc.replaceChildren();
       return;
     }
@@ -234,6 +307,8 @@ export function mountMoney(root, store, { onRing = () => {}, onLine = () => {}, 
     histN.hidden = fresh === 0;
 
     drawReceipt(rc, s, live, ctx);
+    summary.hidden = false;
+    if (summary.open) refreshSummary();
   }
 
   render(store.state);

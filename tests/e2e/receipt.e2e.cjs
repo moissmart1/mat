@@ -32,6 +32,22 @@ const BOARD = {
 
 module.exports = [
   {
+    name: "the receipt settlement summary can be read and downloaded as plain text",
+    async run({ page }) {
+      await open(page);
+      await waitRows(page, 8);
+      await page.locator(".settlement-summary summary").click();
+      await expectText(page, ".settlement-summary pre", /Recorded payments/);
+      const [download] = await Promise.all([
+        page.waitForEvent("download"),
+        page.getByRole("button", { name: "Download text" }).click(),
+      ]);
+      assert.equal(download.suggestedFilename(), "settlement-summary.txt");
+      const file = fs.readFileSync(await download.path(), "utf8");
+      assert.equal(file.trimEnd(), await page.locator(".settlement-summary pre").textContent());
+    },
+  },
+  {
     name: "within a day the newest line is at the top",
     async run({ page }) {
       const mk = (id, title, addedAt) => ({
