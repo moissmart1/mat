@@ -168,6 +168,8 @@ const ADDRESS_KEY_REFUSED = "That link didn’t work. This phone stays on the li
 
 // ticketData(id) -> Promise<base64 | null>: a ticket picture's data from the
 // phone's keep, to send one that was queued (its data is never in mat.queue).
+// null: the keep works and does not have it (lost). Rejects: the keep could
+// not be read (it did not open): the picture waits and is tried again.
 // afterLoad(): called after every load that answered (js/tickets.js
 // fetchMissing hangs here).
 export function createStore({ api, storage, durableStorage = true, now = () => Date.now(), wait = defaultWait, clear = (queue) => clearTrip(storage, { queue }), ticketData = async () => null, afterLoad = null, isHidden = () => false }) {
@@ -842,7 +844,19 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
     // A queued picture's data comes back from the keep; lost there, it is dropped and said.
     // One whose request may have landed is asked about without its data
     // (fix round 1, I5): the backend answers the first add, or that it never had it.
-    if (op.kind === "ticket" && isAdd(op) && !(await fillTicket(op)) && !op.lost) {
+    op.keepWait = false;
+    const filled = op.kind === "ticket" && isAdd(op) ? await fillTicket(op) : true;
+    // The keep could not be read: the picture may be in it, so it is not lost.
+    // It stays waiting (and the next contact tries again), and is never sent
+    // without its data on a guess.
+    if (filled === "unsure") {
+      op.keepWait = true;
+      op.status = "queued";
+      settleTicket(op, { saved: false, reason: "queued" });
+      changed();
+      return;
+    }
+    if (!filled && !op.lost) {
       removeOp(op);
       state.notice = TICKET_LOST;
       settleTicket(op, { saved: false, reason: "lost" });
@@ -1099,7 +1113,7 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
     try {
       data = await ticketData(op.id);
     } catch {
-      data = null;
+      return "unsure";
     }
     if (typeof data !== "string" || !data) return false;
     op.args = { ticket: { ...op.args.ticket, data } };
@@ -1499,6 +1513,7 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
         if (!isAdd(op) || op.status !== "queued") continue;
         if (op.undone || !ops.includes(op)) continue; // undone since the pass began
         await send(op);
+        if (op.keepWait) continue; // its picture could not be read from the keep: the rest still go
         if (op.status === "queued" && !op.undone) return; // still no signal
       }
       for (const op of resolving.slice()) {

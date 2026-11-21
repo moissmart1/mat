@@ -475,6 +475,61 @@ test("store: a queued picture whose data the phone lost is dropped with a senten
   assert.deepEqual(again.store.state.tickets, []);
 });
 
+test("store: a queued picture whose keep could not be read (it did not open) is not lost: it waits, the rest still go, and it goes up once the keep answers", async () => {
+  const kept = new Map();
+  const p = phone({ ticketData: async (id) => kept.get(id) || null });
+  await p.store.boot();
+  p.net.offline = true;
+  await p.store.checkRev();
+  const token = p.store.addTicket(picture());
+  const id = p.store.state.tickets[0].id;
+  kept.set(id, pngData);
+  assert.equal((await p.store.ticketOutcome(token)).reason, "queued");
+  p.store.addExpense({ day: "2026-12-11", title: "Dinner", amount: 14500, currency: "JPY", paidBy: "Mo", split: ["Mo", "Ajen", "Trenton"], splitMode: "equal", splitVals: [], note: "", kind: "" });
+  // Opened again with signal, but the keep does not open in time (a slow start): ticketData rejects.
+  let readable = false;
+  const again = phone({ fake: p.fake, storage: p.storage, ticketData: async (i) => { if (!readable) throw new Error("The ticket keep is not open."); return kept.get(i) || null; } });
+  await again.store.boot();
+  await again.store.idle();
+  assert.equal(again.fake.tables.Tickets.length, 0, "not sent without its data");
+  assert.equal(again.net.sent.some((b) => b.action === "addTicket"), false);
+  assert.equal(again.store.state.notice, null, "not said to be lost");
+  assert.ok(again.store.state.tickets.some((t) => t.id === id && t.pending), "still waiting on the screen");
+  assert.ok(again.storage.getItem("mat.queue").includes(id), "still in mat.queue");
+  assert.ok(again.fake.tables.Expenses.some((e) => e.title === "Dinner"), "the line queued after it still went up");
+  // The next contact, the keep answering: it goes up with its picture.
+  readable = true;
+  await again.store.checkRev();
+  await again.store.idle();
+  assert.equal(again.fake.tables.Tickets.length, 1);
+  assert.equal((await again.fake({ key: KEY, action: "ticket", args: { id } })).data.data, pngData);
+  assert.equal(JSON.parse(again.storage.getItem("mat.queue")).length, 0);
+});
+
+test("the keep: an open that never answered is tried again by reopen, and then reads what is kept; with no IndexedDB at all it says so", async () => {
+  const idb = fakeIndexedDB();
+  const first = createKeep({ indexedDB: idb });
+  await first.ready;
+  assert.equal(await first.put("a", blobOf(PNG, 10, "image/png")), true);
+  // The next start: the first open never answers (a slow start), so the keep is in memory.
+  const realOpen = idb.open.bind(idb);
+  let hang = true;
+  idb.open = (...args) => (hang ? { result: null, error: null, onsuccess: null, onerror: null, onblocked: null, onupgradeneeded: null } : realOpen(...args));
+  const keep = createKeep({ indexedDB: idb, openWaitMs: 20 });
+  await keep.ready;
+  assert.equal(keep.lasting, false);
+  assert.equal(keep.none, false);
+  assert.equal(await keep.get("a"), null);
+  hang = false;
+  await keep.reopen();
+  assert.equal(keep.lasting, true);
+  assert.equal((await keep.get("a")).size, 10);
+  const none = createKeep({ indexedDB: undefined });
+  await none.reopen();
+  assert.equal(none.none, true);
+  assert.equal(none.lasting, false);
+});
+
 test("store: a refused picture says the backend's reason through its outcome and is gone from the screen", async () => {
   const p = phone();
   await p.store.boot();

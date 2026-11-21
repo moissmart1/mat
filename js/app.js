@@ -272,8 +272,16 @@ function start() {
       keep.wipe();
     },
     ticketData: async (id) => {
-      const blob = await keep.get(id);
-      return blob ? toBase64(blob) : null;
+      let blob = await keep.get(id);
+      // The keep did not open (IndexedDB answered too late, as on a slow start): once more.
+      if (!blob && !keep.lasting && !keep.none) {
+        await keep.reopen();
+        blob = await keep.get(id);
+      }
+      if (blob) return toBase64(blob);
+      // Still not open: the picture may well be in it. Not lost: it waits (the store tries again later).
+      if (!keep.lasting && !keep.none) throw new Error("The ticket keep is not open.");
+      return null;
     },
     afterLoad: () => {
       pruneKeep(store, keep);

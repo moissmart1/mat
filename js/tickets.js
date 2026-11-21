@@ -257,6 +257,9 @@ export function createKeep({ indexedDB = globalThis.indexedDB, name = "mat-ticke
   let wiped = false;
   // One per wipe: a put begun before a wipe never lands after it.
   let gen = 0;
+  // This browser has no IndexedDB at all: nothing is ever kept past this visit.
+  const none = !indexedDB || typeof indexedDB.open !== "function";
+  let reopening = null;
   const tell = () => {
     for (const fn of [...subs]) {
       try {
@@ -361,6 +364,23 @@ export function createKeep({ indexedDB = globalThis.indexedDB, name = "mat-ticke
     // The wipe number now: pass it to put so a picture begun before a wipe is not kept after it.
     get gen() {
       return gen;
+    },
+    // No IndexedDB in this browser at all (not one that is only slow or failing).
+    get none() {
+      return none;
+    },
+    // The database did not open (it answered too late, or failed): try once
+    // more, for a picture waiting to be sent from it (js/app.js ticketData).
+    // Not after a wipe; one try at a time.
+    reopen() {
+      if (wiped || db || none) return ready;
+      if (!reopening) {
+        reopening = ready = open();
+        reopening.finally(() => {
+          reopening = null;
+        });
+      }
+      return reopening;
     },
     have: (id) => known.has(id) || mem.has(id),
     async get(id) {

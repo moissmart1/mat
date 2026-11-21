@@ -425,8 +425,13 @@ cases.push({
     await page.click("#bulkPunch");
     await added(page);
     await expectText(page, "#bulk .sl.is-done .sl-c", "D3 Sat 10:00Aonami Museum1 picture waiting for signal");
+    // Said to wait on this phone only once it is in the keep (not "Keep MAT open").
+    const said = await texts(page, "#bulk .ba-done-s");
+    assert.ok(said.some((t) => /They wait on this phone and go up when there is signal\.$/.test(t)), JSON.stringify(said));
     assert.equal(calls(backend, "addTicket").length, 0, "never sent");
-    // MAT closed at once (a reload), then signal back.
+    // MAT closed at once (a reload), then signal back. On a slow start the
+    // keep's database can answer after its 3 seconds (2026-11-21, CI): the
+    // picture is then not lost, it is read once the keep opens.
     await page.reload();
     await page.clock.resume();
     await until(() => page.evaluate(() => !!globalThis.__matTest && document.querySelectorAll("#rc .rc-row").length > 0), "the app draws again", 10000);
