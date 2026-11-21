@@ -3,22 +3,15 @@
 // no signal, and the service worker's offline shell.
 
 const assert = require("node:assert/strict");
-const { SEED, NOON12, open, advance, until, text, expectText, visible } = require("./helpers.cjs");
+const { SEED, NOON12, open, advance, until, atRest, text, expectText, visible } = require("./helpers.cjs");
 
 // ---- small tools for this file ----
 
 const POLL_MS = 20000;
 const NO_SIGNAL = "No signal. Showing what this phone last saw.";
 
-const waitOpen = (page) =>
-  until(
-    () => page.evaluate(() => {
-      const reg = document.getElementById("reg");
-      return reg.classList.contains("is-open") && Math.abs(reg.getBoundingClientRect().bottom - innerHeight) < 1;
-    }),
-    "the register opens",
-  );
-const waitClosed = (page) => until(() => page.evaluate(() => !document.getElementById("reg").classList.contains("is-open")), "the register closes");
+const waitOpen = (page) => atRest(page, "#reg", { message: "the register opens" });
+const waitClosed = (page) => atRest(page, "#reg", { open: false, message: "the register closes" });
 const rowCount = (page) => page.evaluate(() => document.querySelectorAll("#rc .rc-row").length);
 const waitRows = (page, n) => until(async () => (await rowCount(page)) === n, "expected " + n + " receipt rows");
 const idle = (page) => page.evaluate(() => globalThis.__matTest.store.idle());

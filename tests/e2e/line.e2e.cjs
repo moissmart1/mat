@@ -3,31 +3,17 @@
 
 const assert = require("node:assert/strict");
 const P = require("../../backend/Pure.js");
-const { SEED, NOON12, SEEDED_AT, open, advance, until, text, expectText, visible } = require("./helpers.cjs");
+const { SEED, NOON12, SEEDED_AT, open, advance, until, atRest, text, expectText, visible } = require("./helpers.cjs");
 
 // ---- small tools for this file ----
 
 const isOpen = (page, id) => page.evaluate((i) => document.getElementById(i).classList.contains("is-open"), id);
 // Open, and risen all the way (the sheet slides up over 500 ms).
-const waitSheet = (page) =>
-  until(
-    () => page.evaluate(() => {
-      const s = document.getElementById("line");
-      return s.classList.contains("is-open") && Math.abs(s.getBoundingClientRect().bottom - innerHeight) < 1;
-    }),
-    "the line sheet opens",
-  );
-const waitSheetClosed = (page) => until(async () => !(await isOpen(page, "line")), "the line sheet closes");
+const waitSheet = (page) => atRest(page, "#line", { message: "the line sheet opens" });
+const waitSheetClosed = (page) => atRest(page, "#line", { open: false, message: "the line sheet closes" });
 // Open, and risen all the way: the register slides up over 500 ms, and a key tapped
-// mid-slide can be missed (computed transform is "none" once it has settled).
-const waitRegOpen = (page) =>
-  until(
-    () => page.evaluate(() => {
-      const r = document.getElementById("reg");
-      return r.classList.contains("is-open") && getComputedStyle(r).transform === "none";
-    }),
-    "the register opens",
-  );
+// mid-slide can be missed.
+const waitRegOpen = (page) => atRest(page, "#reg", { message: "the register opens" });
 const rowCount = (page) => page.evaluate(() => document.querySelectorAll("#rc .rc-row").length);
 const waitRows = (page, n) => until(async () => (await rowCount(page)) === n, "expected " + n + " receipt rows");
 const rowOf = (page, title) =>
@@ -140,7 +126,7 @@ module.exports = [
       await keys(page, "del del del del del 1 5 0 0 0");
       await expectText(page, "#xAmt", "¥15,000");
       await page.click("#kGo");
-      await until(() => page.evaluate(() => !document.getElementById("reg").classList.contains("is-open")), "the register closes after Save");
+      await atRest(page, "#reg", { open: false, message: "the register closes after Save" });
       await waitRow(page, "Shibuya dinner", (r) => r.amt === "¥15,000", "has the new amount");
       await page.evaluate(() => globalThis.__matTest.store.idle());
 
@@ -398,7 +384,7 @@ module.exports = [
       const row = await rowOf(page, "Taxi back");
       await page.evaluate((id) => document.querySelector('#rc .rc-row[data-id="' + id + '"]').click(), row.id);
       await waitSheet(page);
-      await until(async () => !(await isOpen(page, "reg")), "the register closes");
+      await atRest(page, "#reg", { open: false, message: "the register closes" });
       await expectText(page, "#lineBody .ln-t", "Taxi back");
     },
   },

@@ -6,7 +6,7 @@
 // Dec 11 has two.
 
 const assert = require("node:assert/strict");
-const { WITH_PLAN, open, advance, until, expectText } = require("./helpers.cjs");
+const { WITH_PLAN, open, advance, until, atRest, expectText } = require("./helpers.cjs");
 
 const D11 = "2026-12-11";
 const D12 = "2026-12-12";
@@ -128,10 +128,7 @@ module.exports = [
     async run({ page }) {
       const backend = await ready(page);
       await page.click("#youBtn");
-      await until(() => page.evaluate(() => {
-        const s = document.getElementById("you");
-        return s.classList.contains("is-open") && Math.abs(s.getBoundingClientRect().bottom - innerHeight) < 1;
-      }), "Settings opens");
+      await atRest(page, "#you", { message: "Settings opens" });
       await page.click("#setDemo");
       await page.click('#setDemoDays button[data-date="' + D12 + '"]');
       await expectText(page, "#demo", /^Pretending it’s Sat Dec 12, 07:00/);

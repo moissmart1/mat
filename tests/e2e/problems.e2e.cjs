@@ -3,7 +3,7 @@
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
-const { SEED, NOON12, open, until } = require("./helpers.cjs");
+const { SEED, NOON12, open, until, atRest } = require("./helpers.cjs");
 
 const PLANNER_ID = "fakePlannerSheet_0123456789abcdefXYZ";
 const SHOTS = require("./shots.cjs")("problems");
@@ -23,13 +23,7 @@ async function openYou(page, paymentProblems, extra = {}) {
   await open(page, { seed: { ...SEED, plannerId: PLANNER_ID, paymentsPulledAt: JUST_PULLED, paymentProblems }, nowMs: NOON12, ...extra });
   await until(() => page.evaluate(() => document.querySelectorAll("#rc .rc-row").length > 0), "the receipt draws");
   await page.click("#youBtn");
-  await until(
-    () => page.evaluate(() => {
-      const s = document.getElementById("you");
-      return s.classList.contains("is-open") && Math.abs(s.getBoundingClientRect().bottom - innerHeight) < 1;
-    }),
-    "the settings sheet opens",
-  );
+  await atRest(page, "#you", { message: "the settings sheet opens" });
 }
 
 const blocks = (page) =>

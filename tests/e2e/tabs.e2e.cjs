@@ -2,7 +2,7 @@
 // which one the app opens on.
 
 const assert = require("node:assert/strict");
-const { WITH_PLAN, open, until, expectText, visible } = require("./helpers.cjs");
+const { WITH_PLAN, open, until, atRest, expectText, visible } = require("./helpers.cjs");
 
 const NOV15 = Date.parse("2026-11-15T12:00:00+09:00");
 
@@ -105,7 +105,7 @@ module.exports = [
       await open(page, { seed: WITH_PLAN, tab: "days" });
       await showing(page, "#vDays");
       await page.click("#ring");
-      await until(() => page.evaluate(() => document.getElementById("reg").classList.contains("is-open")), "the register opens");
+      await atRest(page, "#reg", { message: "the register opens" });
       await expectText(page, "#xDay", "Sat 12");
     },
   },
@@ -115,11 +115,11 @@ module.exports = [
       await open(page, { seed: WITH_PLAN, tab: "days" });
       await showing(page, "#vDays");
       await page.click("#ring");
-      await until(() => page.evaluate(() => document.getElementById("reg").classList.contains("is-open")), "the register opens");
+      await atRest(page, "#reg", { message: "the register opens" });
       await showing(page, "#vMoney");
       assert.equal(await stored(page, "mat.tab"), "days");
       await page.click("#regDone");
-      await until(() => page.evaluate(() => !document.getElementById("reg").classList.contains("is-open")), "the register closes");
+      await atRest(page, "#reg", { open: false, message: "the register closes" });
       await showing(page, "#vDays");
       assert.equal(await stored(page, "mat.tab"), "days");
     },
@@ -130,9 +130,9 @@ module.exports = [
       await open(page, { seed: WITH_PLAN, tab: "money" });
       await showing(page, "#vMoney");
       await page.click("#ring");
-      await until(() => page.evaluate(() => document.getElementById("reg").classList.contains("is-open")), "the register opens");
+      await atRest(page, "#reg", { message: "the register opens" });
       await page.click("#regDone");
-      await until(() => page.evaluate(() => !document.getElementById("reg").classList.contains("is-open")), "the register closes");
+      await atRest(page, "#reg", { open: false, message: "the register closes" });
       await showing(page, "#vMoney");
     },
   },
@@ -151,10 +151,7 @@ module.exports = [
       await open(page, { seed: WITH_PLAN, tab: "days" });
       await showing(page, "#vDays");
       await page.click("#youBtn");
-      await until(() => page.evaluate(() => {
-        const s = document.getElementById("you");
-        return s.classList.contains("is-open") && Math.abs(s.getBoundingClientRect().bottom - innerHeight) < 1;
-      }), "settings open");
+      await atRest(page, "#you", { message: "settings open" });
       await page.click("#setReport");
       await expectText(page, "#ubarT", "Copied. Paste it to Mo or Claude.");
       assert.match(await clipboard(page), /^Screen: Days$/m);

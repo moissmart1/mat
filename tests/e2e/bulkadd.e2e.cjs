@@ -9,7 +9,7 @@
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
-const { SEED, PLAN, makeBackend, open, until, text, expectText, visible } = require("./helpers.cjs");
+const { SEED, PLAN, makeBackend, open, until, atRest, text, expectText, visible } = require("./helpers.cjs");
 const { pngBytes, pdfBytes } = require("./pictures.cjs");
 
 const SHOTS = process.env.MAT_TAB_SHOTS || "";
@@ -195,7 +195,9 @@ cases.push({
     // Open Day 2: the Days screen on Senso-ji's day, the sheets gone.
     await expectText(page, "#bulkOpenDay", "Open Day 2 · see the stubs");
     await page.click("#bulkOpenDay");
-    await until(() => page.evaluate(() => !document.getElementById("bulk").classList.contains("is-open") && !document.getElementById("you").classList.contains("is-open") && document.getElementById("vDays").classList.contains("is-active")), "Days shows");
+    await atRest(page, "#bulk", { open: false, message: "Days shows: Add tickets closes" });
+    await atRest(page, "#you", { open: false, message: "Days shows: You closes" });
+    await until(() => page.evaluate(() => document.getElementById("vDays").classList.contains("is-active")), "Days shows");
     // Done starts afresh.
     await openBulk(page);
     await expectText(page, "#bulk .ba-done-h", "6 tickets added to 4 stops.");
@@ -342,7 +344,8 @@ cases.push({
     assert.equal(backend.fake.tables.Tickets.filter((r) => r.stop === RW2).length, 1, "the second choice, D5");
     // Escape closes it; focus back on You.
     await page.keyboard.press("Escape");
-    await until(() => page.evaluate(() => !document.getElementById("bulk").classList.contains("is-open") && document.activeElement.id === "youBtn"), "closed, focus on You");
+    await atRest(page, "#bulk", { open: false, message: "closed" });
+    await until(() => page.evaluate(() => document.activeElement.id === "youBtn"), "closed, focus on You");
   },
 });
 
@@ -652,7 +655,7 @@ for (const how of ["Forget this phone", "a refused key"]) {
       assert.ok(srcs.length > 0);
       // Closed: what it sorted is kept behind the close.
       await page.keyboard.press("Escape");
-      await until(() => page.evaluate(() => !document.getElementById("bulk").classList.contains("is-open")), "closed");
+      await atRest(page, "#bulk", { open: false, message: "closed" });
       assert.ok((await page.evaluate(() => document.getElementById("bulk").textContent)).includes("T019"));
       await page.evaluate(() => {
         window.__revoked = [];
@@ -667,7 +670,7 @@ for (const how of ["Forget this phone", "a refused key"]) {
         await page.evaluate(() => globalThis.__matTest.store.checkRev());
       } else {
         await page.dispatchEvent("#youBtn", "click");
-        await until(() => page.evaluate(() => document.getElementById("you").classList.contains("is-open")), "settings open");
+        await atRest(page, "#you", { message: "settings open" });
         await page.dispatchEvent("#setForget", "click");
         await page.dispatchEvent("#setForget", "click");
       }

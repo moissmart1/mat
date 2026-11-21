@@ -6,7 +6,7 @@
 
 const assert = require("node:assert/strict");
 const fs = require("fs");
-const { WITH_PLAN, open, until, text } = require("./helpers.cjs");
+const { WITH_PLAN, open, until, atRest, text } = require("./helpers.cjs");
 
 const SHOTS = require("./shots.cjs")("loc");
 const shot = async (page, name) => {
@@ -31,10 +31,7 @@ async function ready(page, opts = {}) {
   return backend;
 }
 const isOpen = (page, id) => page.evaluate((i) => !!document.getElementById(i) && document.getElementById(i).classList.contains("is-open"), id);
-const waitSheet = (page) => until(() => page.evaluate(() => {
-  const s = document.getElementById("stop");
-  return !!s && s.classList.contains("is-open") && Math.abs(s.getBoundingClientRect().bottom - innerHeight) < 1;
-}), "the stop sheet opens");
+const waitSheet = (page) => atRest(page, "#stop", { message: "the stop sheet opens" });
 async function openEdit(page, id) {
   if (!(await page.evaluate((sel) => document.querySelector(sel).classList.contains("is-open"), row(id)))) await page.dispatchEvent(row(id) + " .r-b", "click");
   await until(() => page.evaluate((sel) => {
@@ -49,7 +46,7 @@ const stored = (backend, id) => {
   const r = backend.fake.tables.Stops.find((x) => x.id === id);
   return [String(r.lat || ""), String(r.lng || "")];
 };
-const saved = (page) => until(async () => !(await isOpen(page, "stop")), "the sheet closes, saved");
+const saved = (page) => atRest(page, "#stop", { open: false, message: "the sheet closes, saved" });
 
 module.exports = [
   {

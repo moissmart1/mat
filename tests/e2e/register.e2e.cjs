@@ -2,21 +2,14 @@
 
 const assert = require("node:assert/strict");
 const P = require("../../backend/Pure.js");
-const { SEED, NOON12, open, advance, until, text, expectText, visible } = require("./helpers.cjs");
+const { SEED, NOON12, open, advance, until, atRest, text, expectText, visible } = require("./helpers.cjs");
 
 // ---- small tools for this file ----
 
 const isOpen = (page) => page.evaluate(() => document.getElementById("reg").classList.contains("is-open"));
 // Open, and risen all the way (the sheet slides up over 500 ms).
-const waitOpen = (page) =>
-  until(
-    () => page.evaluate(() => {
-      const reg = document.getElementById("reg");
-      return reg.classList.contains("is-open") && Math.abs(reg.getBoundingClientRect().bottom - innerHeight) < 1;
-    }),
-    "the register opens",
-  );
-const waitClosed = (page) => until(async () => !(await isOpen(page)), "the register closes");
+const waitOpen = (page) => atRest(page, "#reg", { message: "the register opens" });
+const waitClosed = (page) => atRest(page, "#reg", { open: false, message: "the register closes" });
 const rowCount = (page) => page.evaluate(() => document.querySelectorAll("#rc .rc-row").length);
 const waitRows = (page, n) => until(async () => (await rowCount(page)) === n, "expected " + n + " receipt rows");
 // What the backend holds, as the app would read it back.

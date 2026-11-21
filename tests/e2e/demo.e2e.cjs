@@ -6,7 +6,7 @@
 // real time is Nov 15, 12:00 in Japan, before the trip.
 
 const assert = require("node:assert/strict");
-const { WITH_PLAN, open, advance, until, text, expectText, visible } = require("./helpers.cjs");
+const { WITH_PLAN, open, advance, until, atRest, text, expectText, visible } = require("./helpers.cjs");
 
 const NOV15 = Date.parse("2026-11-15T12:00:00+09:00");
 const row = (id) => '.r[data-id="' + id + '"]';
@@ -30,11 +30,7 @@ const demoDay = (page) => page.evaluate(() => globalThis.__matTest.clock.demoDay
 // A plan whose Dec 12 ticket is taller than the screen.
 const LONG = { ...WITH_PLAN, stops: [...WITH_PLAN.stops, ...Array.from({ length: 16 }, (_, i) => ({ id: "longstop" + String(i).padStart(2, "0"), date: "2026-12-12", time: String(10 + (i % 12)).padStart(2, "0") + ":" + (i < 12 ? "10" : "40"), title: "Extra stop " + i }))] };
 
-const waitYou = (page) =>
-  until(() => page.evaluate(() => {
-    const s = document.getElementById("you");
-    return s.classList.contains("is-open") && Math.abs(s.getBoundingClientRect().bottom - innerHeight) < 1;
-  }), "Settings opens");
+const waitYou = (page) => atRest(page, "#you", { message: "Settings opens" });
 
 // Settings, Try another day, then the day's button ("Sat 12").
 async function tryDay(page, label) {
@@ -78,7 +74,7 @@ module.exports = [
       assert.equal(labels.length, 11);
       assert.equal(labels[2], "Sat 12");
       await page.click('#setDemoDays button[data-date="2026-12-12"]');
-      await until(() => page.evaluate(() => !document.getElementById("you").classList.contains("is-open")), "Settings closes");
+      await atRest(page, "#you", { open: false, message: "Settings closes" });
       await expectText(page, "#demo", "Pretending it’s Sat Dec 12, 07:00Stop");
       await expectText(page, "#dayCount", /^Day 3 of 11 today/);
       await until(async () => (await inView(page)) === "2026-12-12", "Dec 12 is in view");
@@ -119,10 +115,7 @@ module.exports = [
       await tryDay(page, "Sat 12");
       await advance(page, backend, 60000); // the demo says 09:00; the real time is 12:01 on Nov 15
       await page.click("#ring");
-      await until(() => page.evaluate(() => {
-        const r = document.getElementById("reg");
-        return r.classList.contains("is-open") && Math.abs(r.getBoundingClientRect().bottom - innerHeight) < 1;
-      }), "the register opens");
+      await atRest(page, "#reg", { message: "the register opens" });
       await expectText(page, "#xDay", "Before");
       assert.equal(writes(backend).length, 0, "opening the register sends nothing");
       await page.fill("#xWhat", "Ramen");
@@ -178,7 +171,7 @@ module.exports = [
       const backend = await ready(page);
       await tryDay(page, "Sat 12");
       await page.click("#dayCount");
-      await until(() => page.evaluate(() => document.getElementById("allDays").classList.contains("is-open")), "the list opens");
+      await atRest(page, "#allDays", { message: "the list opens" });
       const stamps = () => page.$$eval("#allDaysList .ad-row", (rows) => rows.map((r) => (r.querySelector(".ad-st") || {}).textContent || ""));
       const s = await stamps();
       assert.deepEqual(s.slice(0, 4), ["used", "used", "today", ""]);
@@ -257,7 +250,7 @@ module.exports = [
       await ready(page, { seed: LONG });
       await tryDay(page, "Sat 12");
       await page.click("#dayCount");
-      await until(() => page.evaluate(() => document.getElementById("allDays").classList.contains("is-open")), "the list opens");
+      await atRest(page, "#allDays", { message: "the list opens" });
       const hit = await page.evaluate(() => {
         const r = document.getElementById("demo").getBoundingClientRect();
         const el = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);

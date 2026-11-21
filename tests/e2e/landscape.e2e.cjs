@@ -59,7 +59,7 @@ const isOpen = (page, id) => page.evaluate((i) => {
 }, id);
 // Open and at rest: a tap is never aimed at a sheet still sliding up (helpers.cjs atRest).
 const waitOpen = (page, id) => atRest(page, "#" + id);
-const waitClosed = (page, id) => until(async () => !(await isOpen(page, id)), "#" + id + " closes");
+const waitClosed = (page, id) => atRest(page, "#" + id, { open: false });
 const activeView = (page) => page.evaluate(() => document.querySelector(".view.is-active").id);
 
 // Taps a stop on the Days ticket and waits until it has opened all the way

@@ -3,7 +3,7 @@
 // by the other phones, removed, and put back from History.
 
 const assert = require("node:assert/strict");
-const { SEED, NOON12, open, until, text, expectText, visible } = require("./helpers.cjs");
+const { SEED, NOON12, open, until, atRest, text, expectText, visible } = require("./helpers.cjs");
 
 // ---- small tools for this file ----
 
@@ -30,14 +30,7 @@ const people = (backend) => backend.fake.primitives.readTable_("People");
 const photoOf = (backend, name) => people(backend).find((p) => p.name === name).photo;
 const setPersonRequests = (backend) => backend.requests.filter((r) => r.action === "setPerson").length;
 
-const waitYou = (page) =>
-  until(
-    () => page.evaluate(() => {
-      const s = document.getElementById("you");
-      return s.classList.contains("is-open") && Math.abs(s.getBoundingClientRect().bottom - innerHeight) < 1;
-    }),
-    "the settings sheet opens",
-  );
+const waitYou = (page) => atRest(page, "#you", { message: "the settings sheet opens" });
 const waitClosed = (page, id) => until(() => page.evaluate((i) => !document.getElementById(i).classList.contains("is-open"), id), id + " closes");
 
 async function ready(page, opts = {}) {
@@ -94,7 +87,7 @@ const splitter = (n) => '#xSplit .seal[data-p="' + n + '"]';
 
 async function checkRegister(page) {
   await page.click("#ring");
-  await until(() => page.evaluate(() => document.getElementById("reg").classList.contains("is-open")), "the register opens");
+  await atRest(page, "#reg", { message: "the register opens" });
   const on = await waitSeal(page, payer("Mo"), (s) => s.pic && s.on, "Mo's paid seal shows the picture, on");
   assert.ok(isColour(on), "on: full colour in the vermilion ring " + JSON.stringify(on));
   assert.equal(on.alt, "");
@@ -123,7 +116,7 @@ async function checkLine(page) {
   assert.equal(await page.getAttribute(row, "aria-label"), "Mo", "the seal still says whose it is");
   assert.equal((await sealOf(page, '#rc .rc-row[data-id="seedexp002"] .mini')).text, "AJ");
   await page.click('#rc .rc-row[data-id="seedexp001"]');
-  await until(() => page.evaluate(() => document.getElementById("line").classList.contains("is-open")), "the line sheet opens");
+  await atRest(page, "#line", { message: "the line sheet opens" });
   await waitSeal(page, "#line .ln-paid .mini", (s) => s.pic, "the line sheet's payer seal");
   const shared = await page.$$eval("#line .ln-d .mini", (els) => els.map((e) => (e.classList.contains("has-pic") ? "pic" : e.textContent)));
   assert.deepEqual(shared, ["pic", "AJ", "TR"], "shared by: Mo's picture, the others' initials");
@@ -139,7 +132,7 @@ module.exports = [
     async run({ page }) {
       const backend = await ready(page);
       await page.click('#rc .rc-row[data-id="seedexp001"]');
-      await until(() => page.evaluate(() => document.getElementById("line").classList.contains("is-open")), "the line sheet opens");
+      await atRest(page, "#line", { message: "the line sheet opens" });
       const seals = () => page.evaluate(() => ({
         paid: document.querySelector("#line .ln-paid .mini").classList.contains("has-pic"),
         shared: [...document.querySelectorAll("#line .ln-d .mini")].map((e) => (e.classList.contains("has-pic") ? "pic" : e.textContent)),

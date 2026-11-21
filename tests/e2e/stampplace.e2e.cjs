@@ -7,7 +7,7 @@
 
 const assert = require("node:assert/strict");
 const fs = require("fs");
-const { WITH_PLAN, NOON12, makeBackend, open, until, text } = require("./helpers.cjs");
+const { WITH_PLAN, NOON12, makeBackend, open, until, atRest, text } = require("./helpers.cjs");
 const { geoStub, leaks, HERE } = require("./geostub.cjs");
 
 const SHOTS = require("./shots.cjs")("loc");
@@ -41,10 +41,7 @@ async function ready(page, { where = "on", geo = {}, backend } = {}) {
 }
 const openBook = async (page) => {
   await page.click("#stampBtn");
-  await until(() => page.evaluate(() => {
-    const b = document.getElementById("book");
-    return b.classList.contains("is-open") && Math.abs(b.getBoundingClientRect().bottom - innerHeight) < 1;
-  }), "the book opens");
+  await atRest(page, "#book", { message: "the book opens" });
 };
 const cell = (id) => '#bookGrid .bk-cell[data-def="' + id + '"]';
 const presses = (be) => be.requests.filter((r) => r.action === "pressStamp");

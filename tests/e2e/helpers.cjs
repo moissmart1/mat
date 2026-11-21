@@ -179,12 +179,15 @@ async function until(check, message, timeout = 5000) {
 // screen; CI 2026-11-21, and the register's keys in line.e2e before that).
 // Infinite animations and scroll-driven ones (the Days rail's fan) never end
 // and are not the slide, so they are left out.
-async function atRest(page, selector, { open: isOpen = true, cls = "is-open", timeout = 5000 } = {}) {
+// An element that is not there at all counts as shut. message: what the
+// failure says (default: the selector opens or closes and comes to rest).
+async function atRest(page, selector, { open: isOpen = true, cls = "is-open", timeout = 5000, message } = {}) {
   let last = null;
   await until(async () => {
     const now = await page.evaluate(([sel, cls, isOpen]) => {
       const el = document.querySelector(sel);
-      if (!el || el.classList.contains(cls) !== isOpen) return null;
+      if (!el) return isOpen ? null : "gone";
+      if (el.classList.contains(cls) !== isOpen) return null;
       const moving = el.getAnimations({ subtree: true }).some((a) => a.playState === "running" && a.timeline === document.timeline && a.effect && a.effect.getTiming().iterations !== Infinity);
       if (moving) return null;
       const b = el.getBoundingClientRect();
@@ -193,7 +196,7 @@ async function atRest(page, selector, { open: isOpen = true, cls = "is-open", ti
     const same = now !== null && now === last;
     last = now;
     return same;
-  }, selector + (isOpen ? " opens" : " closes") + " and comes to rest", timeout);
+  }, (message || selector + (isOpen ? " opens" : " closes")) + " (and comes to rest)", timeout);
 }
 
 // The trimmed textContent of the first match, or null when there is none.

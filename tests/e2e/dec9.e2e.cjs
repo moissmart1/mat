@@ -8,7 +8,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const P = require("../../backend/Pure.js");
-const { SEED, makeBackend, open, advance, until, text, expectText, visible } = require("./helpers.cjs");
+const { SEED, makeBackend, open, advance, until, atRest, text, expectText, visible } = require("./helpers.cjs");
 
 const SHOTS = process.env.MAT_TAB_SHOTS || "";
 const DEC9 = JSON.parse(fs.readFileSync(require("node:path").join(__dirname, "..", "fixtures", "dec9.json"), "utf8"));
@@ -213,7 +213,7 @@ const cases = [
       await page.click('[data-tab="days"]');
       await until(() => page.evaluate(() => document.getElementById("vDays").classList.contains("is-active")), "back on Days");
       await page.click(row(TRAIN) + " .r-edit");
-      await until(() => page.evaluate(() => document.getElementById("stop").classList.contains("is-open")), "the stop sheet opens");
+      await atRest(page, "#stop", { message: "the stop sheet opens" });
       await expectText(page, "#stDay", "前夜 Tue Dec 8");
     },
   },
@@ -263,7 +263,7 @@ const cases = [
     async run({ page }) {
       const backend = await ready(page, et("2026-12-09T11:45"));
       await page.click("#ring");
-      await until(() => page.evaluate(() => document.getElementById("reg").classList.contains("is-open")), "the register opens");
+      await atRest(page, "#reg", { message: "the register opens" });
       await expectText(page, "#xDay", "Wed 9");
       await page.fill("#xWhat", "Shuttle tip");
       for (const k of ["5"]) await page.click('#pad .key[data-k="' + k + '"]');
@@ -282,7 +282,7 @@ const cases = [
     async run({ page }) {
       await ready(page, et("2026-12-08T17:00"));
       await page.click("#ring");
-      await until(() => page.evaluate(() => document.getElementById("reg").classList.contains("is-open")), "the register opens");
+      await atRest(page, "#reg", { message: "the register opens" });
       await expectText(page, "#xDay", "Before");
     },
   },
@@ -367,7 +367,7 @@ cases.push(
       backend.fake.tables.Stamps.push({ id: "d9|Mo", def: "d9", who: "Mo", at: new Date(et("2026-12-09T10:30")).toISOString(), gone: "" });
       await ready(page, now, { backend });
       await page.click("#stampBtn");
-      await until(() => page.evaluate(() => { const b = document.getElementById("book"); return b.classList.contains("is-open") && Math.abs(b.getBoundingClientRect().bottom - innerHeight) < 1; }), "the book opens");
+      await atRest(page, "#book", { message: "the book opens" });
       assert.equal(await text(page, "#bookTH"), "今日 Today");
       const mine = await page.evaluate(() => { const p = document.querySelector("#bookWho .bk-p:nth-child(1)"); return p.querySelector("b").textContent + "|" + p.querySelector("span i").textContent; });
       assert.equal(mine, "You|00:30", "Today is Dec 9's stamp (pressed), not Dec 10's (not yet)");

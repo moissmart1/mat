@@ -27,15 +27,9 @@ const isOpen = (page, id) => page.evaluate((i) => {
 }, id);
 // Open and at rest: a tap is never aimed at a sheet still sliding up (helpers.cjs atRest).
 const waitOpen = (page, id) => atRest(page, "#" + id);
-const waitClosed = (page, id) => until(async () => !(await isOpen(page, id)), "#" + id + " closes");
-// Sheets rise over half a second of real time (the page's clock is paused,
-// so this looks twice, 120 ms apart, from here): wait until one stands still.
-const still = (page, id) => until(async () => {
-  const top = () => page.evaluate((i) => document.getElementById(i).getBoundingClientRect().top, id);
-  const a = await top();
-  await page.waitForTimeout(120);
-  return (await isOpen(page, id)) && Math.abs((await top()) - a) < 0.5;
-}, "#" + id + " stands still");
+const waitClosed = (page, id) => atRest(page, "#" + id, { open: false });
+// Sheets rise over half a second of real time: wait until one stands still.
+const still = (page, id) => atRest(page, "#" + id, { message: "#" + id + " stands still" });
 
 async function both(page, opts = {}) {
   const backend = await open(page, { seed: WITH_PLAN, nowMs: NOON12, tab: "money", ...opts });

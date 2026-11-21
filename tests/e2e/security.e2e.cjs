@@ -3,7 +3,7 @@
 // line after its link was replaced; the release check's read-only key.
 
 const assert = require("node:assert/strict");
-const { SEED, WITH_PLAN, NOON12, ORIGIN, open, until, text, expectText, visible } = require("./helpers.cjs");
+const { SEED, WITH_PLAN, NOON12, ORIGIN, open, until, atRest, text, expectText, visible } = require("./helpers.cjs");
 
 const matKeys = (page) => page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("mat.")).sort());
 const drawsTrip = (page) => page.evaluate(() => document.body.innerText.includes("Niseko lodge") || document.body.innerText.includes("Rail passes"));
@@ -17,7 +17,7 @@ async function ready(page, opts = {}) {
 
 async function openYou(page) {
   await page.dispatchEvent("#youBtn", "click");
-  await until(() => page.evaluate(() => document.getElementById("you").classList.contains("is-open")), "the settings sheet opens");
+  await atRest(page, "#you", { message: "the settings sheet opens" });
 }
 
 module.exports = [
@@ -78,7 +78,7 @@ module.exports = [
       await until(() => visible(page, "#gate"), "the no-key screen shows");
       // The no-key screen (over everything) shows at once; Settings closes once
       // the pictures, the offline copy and the worker are gone, the end of Forget.
-      await until(() => page.evaluate(() => !document.getElementById("you").classList.contains("is-open")), "Settings closed");
+      await atRest(page, "#you", { open: false, message: "Settings closed" });
       assert.equal(await text(page, "#gate p"), "This phone needs the trip link. Open it from your email again, or paste it here.");
       assert.deepEqual(await matKeys(page), []);
       assert.equal(await drawsTrip(page), false);

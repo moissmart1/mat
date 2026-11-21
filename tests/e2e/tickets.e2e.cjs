@@ -7,7 +7,7 @@
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
-const { WITH_PLAN, makeBackend, open, advance, until, text, expectText } = require("./helpers.cjs");
+const { WITH_PLAN, makeBackend, open, advance, until, atRest, text, expectText } = require("./helpers.cjs");
 const { png } = require("./pictures.cjs");
 
 const SHOTS = require("./shots.cjs")("tickets");
@@ -365,7 +365,7 @@ cases.push({
     const backend = await ticketed();
     await ready(page, { backend });
     await page.dispatchEvent("#youBtn", "click");
-    await until(() => page.evaluate(() => document.getElementById("you").classList.contains("is-open")), "You opens");
+    await atRest(page, "#you", { message: "You opens" });
     await page.evaluate(() => document.getElementById("setTix").scrollIntoView({ block: "center" }));
     await expectText(page, "#setTix", "Ticket picturesEvery phone keeps every ticket, so they open with no signal. Up to about 50 MB in all.On Wi‑Fi and mobile");
     await shot(page, "you-tix-all-393");
@@ -439,7 +439,7 @@ cases.push({
     await showTicket(page, SKY);
     await page.keyboard.press("Escape");
     await page.dispatchEvent("#youBtn", "click");
-    await until(() => page.evaluate(() => document.getElementById("you").classList.contains("is-open")), "You opens");
+    await atRest(page, "#you", { message: "You opens" });
     await page.dispatchEvent("#setForget", "click");
     await page.dispatchEvent("#setForget", "click");
     await until(() => page.evaluate(() => { const g = document.getElementById("gate"); return !!g && !g.hidden; }), "the no-key screen shows");

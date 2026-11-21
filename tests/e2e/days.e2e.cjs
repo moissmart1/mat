@@ -3,7 +3,7 @@
 // Dec 12 in Japan, Day 3.
 
 const assert = require("node:assert/strict");
-const { WITH_PLAN, NOON12, makeBackend, open, advance, until, text, expectText } = require("./helpers.cjs");
+const { WITH_PLAN, NOON12, makeBackend, open, advance, until, atRest, text, expectText } = require("./helpers.cjs");
 
 async function ready(page, opts = {}) {
   const backend = await open(page, { seed: WITH_PLAN, tab: "days", ...opts });
@@ -153,7 +153,7 @@ module.exports = [
       await clickEdge("2026-12-20", "right", 11);
       await clickEdge("2026-12-19", "left", 10);
       await page.click(tk("2026-12-19") + " .tk-add");
-      await until(() => page.locator("#stop").evaluate((s) => s.classList.contains("is-open")), "the selected ticket opens its stop editor");
+      await atRest(page, "#stop", { message: "the selected ticket opens its stop editor" });
     },
   },
   {

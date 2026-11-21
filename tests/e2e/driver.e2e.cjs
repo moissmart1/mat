@@ -8,7 +8,7 @@
 
 const assert = require("node:assert/strict");
 const fs = require("fs");
-const { WITH_PLAN, open, until, text } = require("./helpers.cjs");
+const { WITH_PLAN, open, until, atRest, text } = require("./helpers.cjs");
 
 const SHOTS = require("./shots.cjs")("loc");
 const shot = async (page, name) => {
@@ -36,12 +36,12 @@ async function ready(page, opts = {}) {
 }
 async function openCard(page, date = "2026-12-12") {
   await page.dispatchEvent(tk(date) + " .tk-stay", "click");
-  await until(() => isOpen(page, "stay"), "the hotel card opens");
+  await atRest(page, "#stay", { message: "the hotel card opens" });
 }
 async function openDriver(page) {
   await page.evaluate(() => document.querySelector("#stay .drv").scrollIntoView({ block: "center" }));
   await page.click("#stay .drv");
-  await until(() => isOpen(page, "driver"), "the driver's screen opens");
+  await atRest(page, "#driver", { message: "the driver's screen opens" });
   // Fitted once the fonts are in.
   await until(() => page.evaluate(() => document.getElementById("driver").dataset.fit === "1"), "the type is fitted");
 }
@@ -142,7 +142,7 @@ module.exports = [
       }
       await shot(page, "2-driver-" + tag);
       await page.click("#driverDone");
-      await until(async () => !(await isOpen(page, "driver")), "Done closes it");
+      await atRest(page, "#driver", { open: false, message: "Done closes it" });
       assert.equal(await isOpen(page, "stay"), true, "back on the hotel card");
       assert.equal(await page.evaluate(() => document.getElementById("phone").classList.contains("driver-open")), false);
       assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.classList.contains("drv")), true, "focus back on the key");
@@ -216,15 +216,15 @@ module.exports = [
       await openCard(page);
       await openDriver(page);
       await page.keyboard.press("Escape");
-      await until(async () => !(await isOpen(page, "driver")), "Escape closes the driver's screen");
+      await atRest(page, "#driver", { open: false, message: "Escape closes the driver's screen" });
       assert.equal(await isOpen(page, "stay"), true, "the card is still open");
       await page.keyboard.press("Escape");
-      await until(async () => !(await isOpen(page, "stay")), "a second Escape closes the card");
+      await atRest(page, "#stay", { open: false, message: "a second Escape closes the card" });
       await openCard(page);
       await openDriver(page);
       // The scrim: on a computer, over the Money pane.
       await page.mouse.click(1100, 450);
-      await until(async () => !(await isOpen(page, "driver")), "the scrim closes it");
+      await atRest(page, "#driver", { open: false, message: "the scrim closes it" });
       assert.equal(await isOpen(page, "stay"), true);
     },
   },
@@ -260,7 +260,7 @@ module.exports = [
       await new Promise((r) => setTimeout(r, 200));
       assert.equal(await text(page, "#driver .dc-bot"), "Hold the phone up to the driver.");
       await page.click("#driverDone");
-      await until(async () => !(await isOpen(page, "driver")), "closes");
+      await atRest(page, "#driver", { open: false, message: "closes" });
     },
   },
   {
@@ -282,14 +282,15 @@ module.exports = [
       await openCard(page);
       await openDriver(page);
       await page.click("#driverDone");
-      await until(async () => !(await isOpen(page, "driver")), "closes");
+      await atRest(page, "#driver", { open: false, message: "closes" });
       await page.click("#stayDone");
-      await until(async () => !(await isOpen(page, "stay")), "the card closes");
+      await atRest(page, "#stay", { open: false, message: "the card closes" });
       await openCard(page);
       await openDriver(page);
       // A tab switch is under the driver's screen: closing the card from elsewhere closes it too.
       await page.evaluate(() => document.querySelector('#nav [data-tab="money"]').click());
-      await until(async () => !(await isOpen(page, "driver")) && !(await isOpen(page, "stay")), "a tab switch closes both");
+      await atRest(page, "#driver", { open: false, message: "a tab switch closes the driver's screen" });
+      await atRest(page, "#stay", { open: false, message: "a tab switch closes the card" });
       assert.equal(await page.evaluate(() => /(^|\s)[a-z]+-open(\s|$)/.test(document.getElementById("phone").className)), false);
     },
   },

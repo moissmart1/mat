@@ -7,7 +7,7 @@
 
 const shotPath = require("./shots.cjs");
 const assert = require("node:assert/strict");
-const { WITH_PLAN, NOON12, makeBackend, open, advance, until, text, expectText, visible } = require("./helpers.cjs");
+const { WITH_PLAN, NOON12, makeBackend, open, advance, until, atRest, text, expectText, visible } = require("./helpers.cjs");
 
 const HOUR = 3600000;
 const KEY = "test-key";
@@ -49,14 +49,7 @@ async function ready(page, { defs = DEFS, backend, nowMs = NOON12, seed } = {}) 
 const press = (be, action = "pressStamp") => be.requests.filter((r) => r.action === action);
 const isOpen = (page) => page.evaluate(() => document.getElementById("book").classList.contains("is-open"));
 // Open, and risen all the way (the panel slides up over half a second of real time).
-const waitBook = (page) =>
-  until(
-    () => page.evaluate(() => {
-      const b = document.getElementById("book");
-      return b.classList.contains("is-open") && Math.abs(b.getBoundingClientRect().bottom - innerHeight) < 1;
-    }),
-    "the book opens",
-  );
+const waitBook = (page) => atRest(page, "#book", { message: "the book opens" });
 const openBook = async (page) => {
   await page.click("#stampBtn");
   await waitBook(page);
@@ -215,7 +208,7 @@ module.exports = [
       assert.equal(await isOpen(page), true);
       assert.equal(await page.evaluate(() => document.activeElement.dataset.def), TODAY);
       await page.keyboard.press("Escape");
-      await until(async () => !(await isOpen(page)), "the book closes");
+      await atRest(page, "#book", { open: false, message: "the book closes" });
       assert.equal(await page.evaluate(() => document.activeElement.id), "stampBtn", "focus returns to the Days button");
     },
   },
@@ -267,7 +260,7 @@ module.exports = [
       await page.click(cell(TODAY));
       await until(() => stampsDrawn(page).then((n) => n === 1), "pressed");
       await page.click("#bookDone");
-      await until(async () => !(await isOpen(page)), "the book closes");
+      await atRest(page, "#book", { open: false, message: "the book closes" });
       await until(() => page.locator(".tk-stampline").count().then((n) => n === 0), "the line goes");
       assert.equal(await text(page, "#stampBtn"), "1/12");
     },
@@ -281,7 +274,7 @@ module.exports = [
       await until(() => stampsDrawn(page).then((n) => n === 1), "pressed");
       await idle(page);
       await page.click("#bookDone");
-      await until(async () => !(await isOpen(page)), "closed");
+      await atRest(page, "#book", { open: false, message: "closed" });
       await page.click("#youBtn");
       await page.click("#setHist");
       await until(() => page.locator("#tape .tp-row").count().then((n) => n >= 1), "the tape shows");
@@ -314,7 +307,7 @@ module.exports = [
       await until(() => stampsDrawn(page).then((n) => n === 1), "pressed");
       await idle(page);
       await page.click("#bookDone");
-      await until(async () => !(await isOpen(page)), "closed");
+      await atRest(page, "#book", { open: false, message: "closed" });
       // 03:20 on Dec 13 in Japan: Dec 12's window closed at 03:00
       await advance(page, be, 14 * HOUR);
       await page.click("#youBtn");
@@ -425,7 +418,7 @@ module.exports = [
       await until(() => stampsDrawn(page).then((n) => n === 1), "pressed");
       await idle(page);
       await page.click("#bookDone");
-      await until(async () => !(await isOpen(page)), "closed");
+      await atRest(page, "#book", { open: false, message: "closed" });
       await page.click("#youBtn");
       await page.click("#setHist");
       await until(() => page.locator("#tape .tp-row").count().then((n) => n >= 2), "the tape shows both");
@@ -501,7 +494,7 @@ module.exports = [
       const box = await page.locator(cell("iss")).boundingBox();
       assert.ok(box.width >= 44 && box.height >= 44 && box.x >= 0 && box.x + box.width <= viewport.width);
       await page.click("#bookDone");
-      await until(async () => !(await isOpen(page)), "closed");
+      await atRest(page, "#book", { open: false, message: "closed" });
     },
   })),
 ];
