@@ -9,7 +9,8 @@ import { standing, jpyOf, cadCents, shares, expenseShares } from "../money.js";
 import { tripDay } from "../time.js";
 import { tripNow } from "../plan.js";
 import { mountSlip, viewerOwed } from "./slip.js";
-import { yen, dollars, typed, dayHead, issuer, pt, freshText, sentence, tripSpan } from "../format.js";
+import { yen, dollars, typed, dayHead, issuer, pt, freshText, sentence, tripSpan, japanTime } from "../format.js";
+import { copyText } from "../clip.js";
 import { fillSeal } from "../picture.js";
 
 const UNREACHABLE = "Couldn’t reach the trip sheet.";
@@ -24,53 +25,67 @@ export function setAsideText(list) {
     : list.length + " lines in the Sheet can’t be read (" + why + "). They’re left out of the totals. Tell Mo.";
 }
 
-// The export uses the same exchange rates, rounding, and transfers as the slip.
-export function settlementSummary(state, exportedAt) {
-  const { live, list, bal, simplify } = viewerOwed(state);
-  const ageMs = Date.parse(exportedAt) - state.loadedAt;
-  const hasLoad = Number.isFinite(state.loadedAt);
-  const fresh = hasLoad && ageMs >= 0 && ageMs <= 60000;
+// The settlement summary under the receipt: plain text to paste into the
+// group chat or screenshot. Its figures come from the slip's own source
+// (viewerOwed), so rates, rounding and transfers are the slip's. Only the
+// fields listed here go in: no e-Transfer addresses, keys, links or notes.
+// "Provisional" is #21's signal: this phone has money lines the Sheet
+// hasn't confirmed.
+const SPLIT = { equal: "Split equally", parts: "Split by parts", exact: "Split by amounts" };
+const PROVISIONAL = "Provisional. Some changes haven’t synced.";
+// Oldest first, as a summary reads: before the trip, then each day, then the
+// order the lines were added in.
+const byDay = (a, b) => (a.day === b.day ? 0 : a.day === "pre" ? -1 : b.day === "pre" ? 1 : a.day < b.day ? -1 : 1) ||
+  ((a.addedAt || "") < (b.addedAt || "") ? -1 : (a.addedAt || "") > (b.addedAt || "") ? 1 : 0);
+
+export function settlementSummary(state, nowMs) {
+  const { live, list, bal, simplify, provisional } = viewerOwed(state);
   return {
     trip: state.trip.name,
-    exportedAt,
-    lastLoadedAt: hasLoad ? new Date(state.loadedAt).toISOString() : null,
-    settlementCurrency: "CAD",
+    preparedAt: nowMs,
+    loadedAt: Number.isFinite(state.loadedAt) ? state.loadedAt : null,
     simplified: simplify,
-    online: state.online,
-    provisional: !state.online || !fresh || [...state.expenses, ...state.payments].some((row) => row.pending || row.failed),
-    excludedRows: (state.setAside || []).length,
-    expenses: live.map((e) => ({
+    provisional,
+    excluded: setAsideText(state.setAside),
+    expenses: live.slice().sort(byDay).map((e) => ({
       day: e.day, description: e.title, paidBy: e.paidBy, amount: e.amount,
       currency: e.currency, rate: e.rate, cadCents: cadCents(e),
-      splitMode: e.splitMode || "equal", split: [...e.split], splitValues: [...(e.splitVals || [])],
-      sharesCadCents: expenseShares(e),
+      splitMode: e.splitMode || "equal", sharesCadCents: expenseShares(e),
     })),
     payments: state.payments.filter((p) => !p.removed).map((p) => ({
-      from: p.from, to: p.to, cadCents: Math.round(p.cad * 100), recordedAt: p.stampedAt,
+      from: p.from, to: p.to, cadCents: Math.round(p.cad * 100),
     })),
     balances: bal,
     transfers: list.map(({ from, to, cents }) => ({ from, to, cents })),
   };
 }
 
+// The figures part of the text: everything but the Prepared and Last loaded
+// lines, so a redraw can tell whether anything that matters has changed.
+const TIME_LINE = /^(Prepared|Last loaded) /;
+export const summaryFigures = (text) => text.split("\n").filter((line) => !TIME_LINE.test(line)).join("\n");
+
 export function summaryText(summary) {
-  const lines = [summary.trip + " — Settlement summary", "Amounts in CAD unless labelled otherwise.",
-    "Prepared " + summary.exportedAt, "Last loaded " + (summary.lastLoadedAt || "unknown")];
-  if (summary.provisional) lines.push("Provisional: pending changes or figures awaiting refresh.");
-  if (summary.excludedRows) lines.push("Unreadable rows excluded: " + summary.excludedRows);
+  const lines = [summary.trip + " — Settlement summary", "Dollar amounts are CAD.",
+    "Prepared " + japanTime(summary.preparedAt),
+    "Last loaded " + (summary.loadedAt === null ? "unknown" : japanTime(summary.loadedAt))];
+  if (summary.provisional) lines.push(PROVISIONAL);
+  if (summary.excluded) lines.push(summary.excluded);
   lines.push("", "Expenses");
   for (const e of summary.expenses) {
-    lines.push(e.day + " · " + e.description + " · " + e.paidBy + " paid " + e.amount + " " + e.currency +
-      " (" + dollars(e.cadCents) + " CAD, " + e.rate + " JPY/CAD)");
-    lines.push("  " + e.splitMode + " split: " + Object.entries(e.sharesCadCents).map(([who, cents]) => who + " " + dollars(cents)).join(", "));
+    const yenLine = e.currency !== "CAD";
+    lines.push(dayHead(e.day).en + " · " + e.description + " · " + e.paidBy + " paid " + typed(e) +
+      (yenLine ? " (" + dollars(e.cadCents) + " at " + e.rate + " JPY/CAD)" : ""));
+    lines.push("  " + (SPLIT[e.splitMode] || SPLIT.equal) + ": " + Object.entries(e.sharesCadCents).map(([who, cents]) => who + " " + dollars(cents)).join(", "));
   }
   if (!summary.expenses.length) lines.push("None");
   lines.push("", "Recorded payments");
   for (const p of summary.payments) lines.push(p.from + " → " + p.to + "  " + dollars(p.cadCents));
   if (!summary.payments.length) lines.push("None");
   lines.push("", "Balances");
-  for (const [who, cents] of Object.entries(summary.balances)) lines.push(who + " " +
-    (cents < 0 ? "owes " : cents > 0 ? "is owed " : "") + dollars(Math.abs(cents)));
+  for (const [who, cents] of Object.entries(summary.balances)) {
+    lines.push(who + (cents < 0 ? " owes " + dollars(-cents) : cents > 0 ? " is owed " + dollars(cents) : " is even"));
+  }
   lines.push("", summary.simplified ? "Remaining transfers (simplified)" : "Remaining transfers");
   for (const t of summary.transfers) lines.push(t.from + " → " + t.to + "  " + dollars(t.cents));
   if (!summary.transfers.length) lines.push("All settled");
@@ -230,23 +245,61 @@ export function mountMoney(root, store, { onRing = () => {}, onLine = () => {}, 
   slip.id = "slip";
   const rc = el("div", "rc");
   rc.id = "rc";
-  const summary = el("details", "settlement-summary");
-  const content = el("pre");
-  const download = el("button", "", "Download text");
-  download.type = "button";
-  summary.append(el("summary", "", "Settlement summary"), content, download);
-  const refreshSummary = () => {
-    content.textContent = summaryText(settlementSummary(store.state, new Date().toISOString()));
+  // The settlement summary: a second strip of receipt paper under the
+  // receipt, shut until its heading is tapped. The text is built when it
+  // opens and when Copy summary is tapped; a sync redraws it only when the
+  // figures change, so a selection being made on an iPhone isn't wiped.
+  const summary = el("section", "rc rc-sum");
+  summary.id = "rcSum";
+  const sumHead = el("button", "rc-sum-h");
+  sumHead.type = "button";
+  sumHead.id = "rcSumBtn";
+  sumHead.setAttribute("aria-expanded", "false");
+  sumHead.setAttribute("aria-controls", "rcSumBody");
+  sumHead.append(el("span", "", "Settlement summary"), el("i", "rc-sum-mark"));
+  sumHead.lastChild.setAttribute("aria-hidden", "true");
+  const sumBody = el("div", "rc-sum-b");
+  sumBody.id = "rcSumBody";
+  sumBody.hidden = true;
+  const content = el("pre", "rc-sum-t");
+  content.id = "rcSumText";
+  const copyBtn = el("button", "rc-sum-copy", "Copy summary");
+  copyBtn.type = "button";
+  copyBtn.id = "rcSumCopy";
+  const copyRow = el("div", "rc-sum-act");
+  copyRow.append(copyBtn);
+  sumBody.append(el("div", "rule"), content, copyRow);
+  summary.append(sumHead, sumBody);
+  let shownFigures = null;
+  const buildSummary = () => summaryText(settlementSummary(store.state, now()));
+  const showSummary = (text) => {
+    content.textContent = text;
+    shownFigures = summaryFigures(text);
   };
-  summary.addEventListener("toggle", () => { if (summary.open && !summary.hidden) refreshSummary(); });
-  download.addEventListener("click", () => {
-    refreshSummary();
-    const url = URL.createObjectURL(new Blob([content.textContent + "\n"], { type: "text/plain;charset=utf-8" }));
-    const link = el("a");
-    link.href = url;
-    link.download = "settlement-summary.txt";
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  const isShown = () => !summary.hidden && !sumBody.hidden;
+  // A redraw while it is shown: only when the figures changed.
+  const redrawSummary = () => {
+    const text = buildSummary();
+    if (summaryFigures(text) !== shownFigures) showSummary(text);
+  };
+  sumHead.addEventListener("click", () => {
+    const open = sumBody.hidden;
+    sumBody.hidden = !open;
+    sumHead.setAttribute("aria-expanded", String(open));
+    if (open) showSummary(buildSummary());
+  });
+  let copiedTimer = null;
+  copyBtn.addEventListener("click", () => {
+    // Built afresh in the tap's own turn, so Safari still counts the tap.
+    const text = buildSummary();
+    showSummary(text);
+    copyText(Promise.resolve(text)).then((ok) => {
+      copyBtn.textContent = ok ? "Copied." : "Couldn’t copy that.";
+      clearTimeout(copiedTimer);
+      copiedTimer = setTimeout(() => {
+        copyBtn.textContent = "Copy summary";
+      }, 2000);
+    });
   });
   root.replaceChildren(top, slip, rc, summary);
   mountSlip(slip, store);
@@ -280,6 +333,7 @@ export function mountMoney(root, store, { onRing = () => {}, onLine = () => {}, 
       slip.hidden = true;
       summary.hidden = true;
       content.textContent = "";
+      shownFigures = null;
       rc.replaceChildren();
       return;
     }
@@ -308,7 +362,7 @@ export function mountMoney(root, store, { onRing = () => {}, onLine = () => {}, 
 
     drawReceipt(rc, s, live, ctx);
     summary.hidden = false;
-    if (summary.open) refreshSummary();
+    if (isShown()) redrawSummary();
   }
 
   render(store.state);

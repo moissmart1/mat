@@ -80,6 +80,15 @@ export function clock(ms) {
   return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
 }
 
+// "Fri Dec 20, 14:12 Japan time": a moment in Japan's time (UTC+9, no summer
+// time) whatever zone the phone is in; "" when ms is not a time.
+export function japanTime(ms) {
+  if (!Number.isFinite(ms)) return "";
+  const d = new Date(ms + 9 * 3600000);
+  const two = (n) => String(n).padStart(2, "0");
+  return WD[d.getUTCDay()] + " " + MON[d.getUTCMonth()] + " " + d.getUTCDate() + ", " + two(d.getUTCHours()) + ":" + two(d.getUTCMinutes()) + " Japan time";
+}
+
 // The day of a moment in the phone's own time zone, as "YYYY-MM-DD" ("" when ms is not a time).
 export function localDay(ms) {
   if (!isFinite(ms)) return "";

@@ -325,6 +325,18 @@ button.s-wl > span{text-decoration:underline dotted rgba(21,18,15,.5) 1.5px;text
   .tk-stay:hover{background:rgba(21,18,15,.04)}
 }
 
-.settlement-summary{margin:12px var(--gr) 16px var(--gl)}
-.settlement-summary summary,.settlement-summary button{cursor:pointer;min-height:44px}
-.settlement-summary pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;user-select:text;-webkit-user-select:text}
+/* The settlement summary: a second strip of the receipt's paper under it
+   (js/views/money.js), shut until its heading is tapped. The heading reads
+   as a receipt day heading; Copy summary is drawn as Ring up is. */
+.rc-sum-h{display:flex;width:100%;justify-content:space-between;align-items:center;gap:8px;min-height:44px;padding:0;border:0;background:none;
+  color:var(--print);font-weight:900;font-size:16px;text-align:left}
+.rc-sum-h:active{background:rgba(21,18,15,.07)}
+.rc-sum-mark{flex:none;width:9px;height:9px;margin-right:4px;border-right:2px solid var(--print);border-bottom:2px solid var(--print);
+  transform:translateY(-2px) rotate(45deg);transition:transform .15s ease-out}
+.rc-sum-h[aria-expanded="true"] .rc-sum-mark{transform:translateY(2px) rotate(-135deg)}
+.rc-sum-b .rule{margin-top:6px}
+.rc-sum-t{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;font-size:13.5px;font-weight:500;line-height:1.45;
+  font-variant-numeric:tabular-nums;user-select:text;-webkit-user-select:text}
+.rc-sum-act{display:flex;justify-content:flex-end;margin-top:12px}
+.rc-sum-copy{border:1.5px solid var(--print);background:none;color:var(--print);padding:0 13px;height:40px;border-radius:3px;font-weight:900;font-size:14px}
+.rc-sum-copy:active{transform:scale(.97)}
