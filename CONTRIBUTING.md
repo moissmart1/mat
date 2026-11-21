@@ -19,7 +19,10 @@ read `AGENTS.md` as well.
 
 ## How a change gets to the phones
 
-1. Branch from `dev`. Name the branch for what it does.
+1. Branch from `dev`. Name the branch for what it does. On the release Mac,
+   push from a clean checkout at the outgoing commit. Feature and CI pushes
+   scan the checkout and the files and messages of every outgoing commit
+   against the full private list.
 2. Use Node 25, the version the release runs on. Make the change with its tests. `npm test` runs the unit tests;
    `node tests/e2e/run.cjs <words>` runs the browser tests whose file names
    match the words (they need Google Chrome).
@@ -35,6 +38,31 @@ read `AGENTS.md` as well.
 6. At the next release the owner takes `dev` into `main`: the full unit and
    browser suites run, the backend is deployed first, then the site, and the
    live app is checked. Only then is it out.
+
+## The release gate (owner only)
+
+`npm run gate` checks the release candidate on the owner's Mac (clean tree,
+stamps, version number, the privacy scan, the unit tests). It also scans every
+commit the next step makes public: each commit's added lines and its message.
+Then it pushes exactly that commit to a branch of its own,
+`ci/release-<commit>`, and waits for the `check` run on GitHub for that
+commit (about 15 minutes; it asks once a minute, for up to 40). Every job must
+pass: the unit tests, the four browser slices and `browser-all`. The gate
+counts the browser cases itself from the commit's test files, and each
+slice's log must show every one of its cases run and passed; what the
+workflow says it ran is not enough. A slice GitHub cancelled well before its
+time limit (a lost runner) is run once more. A slice that timed out or ran to
+its limit hung, and fails the gate, as does a test that failed or passed only
+on a second try. The receipt it writes names the GitHub run, and
+`npm run ship` shows it on its first line. The branch is removed afterwards
+(left on GitHub after a failure, to look at; the next gate replaces it). The
+slice logs it read are kept in `.git/mat-gate/e2e.log`.
+
+`npm run gate -- --local` runs the browser tests on the Mac instead, as the
+gate did before (about 15 minutes, in the local test queue). If `gh` is not
+signed in or GitHub cannot be reached, the gate stops and says so; it never
+switches to the Mac by itself. The backend deploy and the live checks stay on
+the Mac in `npm run ship`.
 
 ## Rules that are not negotiable
 

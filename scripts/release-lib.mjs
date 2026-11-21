@@ -133,6 +133,32 @@ export function readReceipt(tree, root = ROOT) {
   }
 }
 
+// Where the gate's browser tests ran, in words: "GitHub (run …)" or "this Mac"
+// (a receipt from before issue 9 has no runner: it was this Mac).
+export function runnerText(receipt) {
+  const r = receipt && receipt.runner;
+  if (r && r.kind === "github") return "GitHub, run " + r.runId + (r.attempt > 1 ? " attempt " + r.attempt : "") + " (" + r.url + ")";
+  return "this Mac";
+}
+
+// Why a receipt does not let this commit out, or null when it does. The same
+// rules for a receipt from either runner: for this tree and version, and every
+// test counted and passed.
+export function judgeReceipt(receipt, { tree, appVersion }) {
+  if (!receipt) return "This commit has not passed the gate.";
+  if (receipt.tree !== tree) return "The gate's receipt is for other files (" + String(receipt.tree).slice(0, 7) + ").";
+  if (receipt.appVersion !== appVersion) return "The gate passed version " + receipt.appVersion + ", but this commit is version " + appVersion + ".";
+  const u = receipt.unit || {};
+  const e = receipt.e2e || {};
+  if (u.fail || e.fail) return "The gate's receipt for this commit records failing tests.";
+  if (!(u.pass > 0) || !(e.pass > 0)) return "The gate's receipt counts no unit or no browser tests.";
+  const r = receipt.runner;
+  if (r && r.kind === "github" && (!r.runId || !/^https:\/\/github\.com\//.test(String(r.url || "")) || r.headSha !== receipt.head)) {
+    return "The gate's receipt names no GitHub run for this commit.";
+  }
+  return null;
+}
+
 // --- the live backend --------------------------------------------------------
 
 // The stamp the live backend answers with ("" from a backend older than the
@@ -186,6 +212,34 @@ export async function liveStampUntil(apiUrl, wanted, { ask = liveStamp, sleep, t
   return last === null ? "" : last;
 }
 
+// Calls migrate until an answer comes from the backend that carries `wanted`
+// (this commit's stamp), then trusts that answer's `added` list. Right after a
+// deploy a request can still land on the previous version, which answers ok with
+// "nothing to add" (2026-11-18, and again 2026-11-20); such an answer, and a
+// refusal from the old version, are asked again with a growing wait (3 s, then
+// 1.5 times longer, at most 15 s each) until about `budgetMs` of waiting has
+// passed. Resolves { ok: true, added, calls } or { ok: false, why, calls }.
+// ask and sleep stand in for the network and the clock in tests.
+export async function migrateUntilCurrent(ask, wanted, { sleep = (ms) => new Promise((r) => setTimeout(r, ms)), budgetMs = 120000 } = {}) {
+  let waited = 0;
+  let calls = 0;
+  let seen = "no answer";
+  // A missing wanted stamp can never be "this commit": refuse rather than match an answer without one.
+  if (typeof wanted !== "string" || wanted.trim() === "") return { ok: false, added: [], calls: 0, why: "no commit stamp to wait for" };
+  for (let wait = 3000; ; wait = Math.min(Math.round(wait * 1.5), 15000)) {
+    const r = await ask().catch(() => null);
+    calls++;
+    if (r && r.ok === true && r.data && r.data.stamp === wanted) {
+      return { ok: true, added: Array.isArray(r.data.added) ? r.data.added : [], calls };
+    }
+    seen = !r ? "no answer" : r.ok === true ? "answered by backend " + ((r.data && r.data.stamp) || "older than the stamp") : "refused (" + (r.error || r.message || "no reason") + ")";
+    if (waited + wait > budgetMs) break;
+    await sleep(wait);
+    waited += wait;
+  }
+  return { ok: false, why: "migrate was only ever answered by the wrong backend (last: " + seen + "; wanted " + wanted + ") after " + calls + " calls over about " + Math.round(waited / 1000) + " seconds.", calls };
+}
+
 // --- rules that are pure, so tests can pin them -----------------------------
 
 // A change the phones must fetch needs a new APP_VERSION, or they keep the old one.
@@ -195,27 +249,28 @@ export function needsBump(changed, shell) {
   return changed.some((f) => files.has(f));
 }
 
+export function isReleaseRef(ref) {
+  return ref === "refs/heads/main" || ref === "refs/heads/dev";
+}
+
 // Why a push must not go out, or null when it may.
 //   remoteRef, localSha: what git hands a pre-push hook
 //   receipt: the gate's receipt for that commit's tree, or null
 //   commitStamp: BACKEND_STAMP in that commit ("" before the stamp existed)
 //   live: the stamp the live backend answers with
-export function judgePush({ remoteRef, localSha, receipt, commitStamp, live, ci = null }) {
+export function judgePush({ remoteRef, localSha, receipt, commitStamp, live, scan = null }) {
   if (/refs\/original\//.test(remoteRef)) return "refs/original is never pushed: it holds history that was removed on purpose.";
-  // ci/<name>: a branch that only exists to try the checks on GitHub. It can
-  // reach no phone (the site is served from main, which GitHub lets only the
-  // owner change), so it needs no receipt; but the repository is public, so
-  // exactly what is pushed must have passed the private-data scan.
-  if (/^refs\/heads\/ci\/[\w.-]+$/.test(remoteRef)) {
-    if (/^0+$/.test(localSha)) return null;
-    if (!ci || !ci.atHead || !ci.clean) return "A ci/ branch is pushed from its own clean checkout, at the commit being pushed.";
-    if (ci.found) return "The private-data scan found " + ci.found + " thing(s) in this commit. Nothing was pushed.";
+  if (!isReleaseRef(remoteRef)) {
+    if (!remoteRef.startsWith("refs/heads/") || (remoteRef.startsWith("refs/heads/ci/") && !/^refs\/heads\/ci\/[\w.-]+$/.test(remoteRef))) {
+      return "Push a feature branch, a ci/<name> branch, or a release branch.";
+    }
+    if (/^0+$/.test(localSha)) {
+      return remoteRef.startsWith("refs/heads/ci/") ? null : "Feature branch deletion is not allowed by this hook.";
+    }
+    if (!scan || !scan.atHead || !scan.clean) return "Push a feature or CI branch from a clean checkout at the commit being pushed.";
+    if (scan.found !== 0) return "The private-data scan found " + scan.found + " thing(s) in this commit. Nothing was pushed.";
     return null;
   }
-  // main is production (the site is served from it). dev is where reviewed work
-  // waits for a release; from this Mac it is only ever set to a commit that
-  // could be released, so the same checks apply to it.
-  if (remoteRef !== "refs/heads/main" && remoteRef !== "refs/heads/dev") return "Only main and dev are pushed from here (" + remoteRef + " is neither).";
   if (/^0+$/.test(localSha)) return "main and dev are never deleted.";
   if (!receipt) return "This commit has not passed the gate. Run `npm run gate`, then `npm run ship`.";
   if (receipt.unit.fail || receipt.e2e.fail) return "The gate's receipt for this commit records failing tests.";

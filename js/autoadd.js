@@ -118,7 +118,7 @@ export function byHand(items, tickets) {
   const hand = (tickets || []).filter((t) => t && !t.gone && !t.from);
   const keep = [], out = [];
   for (const it of items) {
-    const here = (t) => (it.stay ? t.stay === it.stay : it.newStay ? false : !t.stay && t.stop === it.stop);
+    const here = (t) => (it.stay ? t.stay === it.stay : it.newStay || it.newStop ? false : !t.stay && t.stop === it.stop);
     const filled = hand.some((t) => here(t) && (!it.who || !t.who || t.who === it.who));
     (filled ? out : keep).push(it);
   }

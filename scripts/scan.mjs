@@ -12,6 +12,7 @@
 //
 // It never prints what it found, only where.
 
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -71,6 +72,66 @@ export function scanTree(root = ROOT, { patternsOnly = false } = {}) {
     for (const f of findings(text, { deployId, words })) out.push({ file, ...f });
   }
   return out;
+}
+
+// [{ commit, file, rule, line }] for every commit in `commits`: its message,
+// every path in its tree, and the contents of every file in its tree, read
+// from Git's objects (not from a diff, which a NUL byte or a `-diff`/`binary`
+// attribute, even one in .git/info/attributes, turns into "Binary files
+// differ" with nothing to read). So an intermediate version that is no longer
+// in the checkout is read as well. A file shared by many commits is read once,
+// and a finding is said once. Fails closed: a shallow repository or a git
+// error throws, and with no private list the answer is a finding. It never
+// says what it found, only where. Used by the push check (scanOutgoing) and by
+// the gate before it pushes a ci/ branch.
+export function scanCommits(commits, root = ROOT, { words, deployId } = {}) {
+  const list = words === undefined ? privateWords() : words;
+  if (list === null) return [{ commit: "(setup)", file: "(setup)", rule: "the private list is missing: run `npm run private` (it needs ~/.config/mat/env)", line: 0 }];
+  const rules = { words: list, deployId: deployId === undefined ? readConfig(root).deployId : deployId };
+  const read = (...args) => execFileSync("git", ["--no-replace-objects", ...args], {
+    cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 256 * 1024 * 1024,
+  });
+  if (read("rev-parse", "--is-shallow-repository").trim() !== "false") throw new Error("Incomplete history (a shallow clone)");
+  const out = [];
+  const seenBlob = new Set();
+  const seenPath = new Set();
+  for (const sha of commits) {
+    const commit = sha.slice(0, 7);
+    for (const f of findings(read("show", "-s", "--format=%B", sha), rules)) out.push({ commit, file: "(commit message)", ...f });
+    for (const entry of read("ls-tree", "-rz", sha).split("\0").filter(Boolean)) {
+      const tab = entry.indexOf("\t");
+      const [, type, oid] = entry.slice(0, tab).split(" ");
+      const path = entry.slice(tab + 1);
+      // A path that holds something private is never said, not even for its contents.
+      const named = findings(path, rules);
+      const where = named.length ? "(a file name)" : path;
+      if (!seenPath.has(path)) {
+        seenPath.add(path);
+        for (const f of named) out.push({ commit, file: where, rule: f.rule, line: 0 });
+      }
+      if (type !== "blob" || BINARY.test(path) || seenBlob.has(oid)) continue;
+      seenBlob.add(oid);
+      for (const f of findings(read("cat-file", "blob", oid), rules)) out.push({ commit, file: where, ...f });
+    }
+  }
+  return out;
+}
+
+// For the push check: how many findings in every commit the push sends (a new
+// branch: everything not already on origin's dev or main). Throws when there
+// is no private list or the history is incomplete.
+export function scanOutgoing(root, localSha, remoteSha) {
+  const read = (...args) => execFileSync("git", ["--no-replace-objects", ...args], {
+    cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024,
+  });
+  if (read("rev-parse", "--is-shallow-repository").trim() !== "false") throw new Error("Incomplete history");
+  const words = privateWords();
+  if (words === null) throw new Error("Missing private list");
+  const exclude = /^0+$/.test(remoteSha)
+    ? read("for-each-ref", "--format=%(objectname)", "refs/remotes/origin/dev", "refs/remotes/origin/main").trim().split(/\s+/).filter(Boolean)
+    : [remoteSha];
+  const commits = read("rev-list", localSha, "--not", ...exclude).trim().split(/\s+/).filter(Boolean);
+  return scanCommits(commits, root, { words, deployId: readConfig(root).deployId }).length;
 }
 
 function main() {

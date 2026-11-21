@@ -39,7 +39,8 @@ function readTableOrNull_(tab, columns) {
 // Writes one row below the last, formatting it first (text columns "@", the
 // rest "General") so it never relies on setup() having formatted enough rows.
 // Callers hold the write lock, so getLastRow() + 1 is free.
-function appendObj_(tab, obj) {
+// With readBack, return the cells as stored, reading only the newly written row.
+function appendObj_(tab, obj, readBack) {
   var sh = sheet_(tab);
   var headers = headersOf_(sh);
   var rowNum = sh.getLastRow() + 1;
@@ -48,6 +49,7 @@ function appendObj_(tab, obj) {
   var range = sh.getRange(rowNum, 1, 1, headers.length);
   range.setNumberFormats([headers.map(function (h) { return isTextColumn(tab, h) ? "@" : "General"; })]);
   range.setValues([objToRow(headers, obj)]);
+  if (readBack) return rowToObj(headers, range.getValues()[0]);
 }
 
 // Writes rows below the last as one block, formatted as appendObj_ does.

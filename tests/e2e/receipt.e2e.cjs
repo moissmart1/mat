@@ -5,6 +5,12 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { ORIGIN, SEED, NOON12, makeBackend, open, until, text, expectText, visible } = require("./helpers.cjs");
 
+const homelinkShot = async (page, name) => {
+  const dir = process.env.MAT_TAB_SHOTS;
+  if (!dir) return;
+  fs.mkdirSync(dir, { recursive: true });
+  await page.screenshot({ path: path.join(dir, name) });
+};
 const NAMES = ["Mo", "Ajen", "Trenton"];
 const lib = async () => ({ ...(await import("../../js/money.js")), ...(await import("../../js/format.js")) });
 const live = (seed) => seed.expenses.filter((e) => !e.deleted);
@@ -224,7 +230,7 @@ module.exports = [
     name: "no key: says so and loads nothing",
     async run({ page }) {
       const backend = await open(page, { seed: SEED, nowMs: NOON12, key: null });
-      await expectText(page, "#gate p", "This phone needs the trip link. Open it from your chat again, or paste it here.");
+      await expectText(page, "#gate p", "This phone needs the trip link. Open it from your email again, or paste it here.");
       assert.ok(await visible(page, "#gate"));
       assert.equal(await page.evaluate(() => document.getElementById("rc").childElementCount), 0, "#rc is empty");
       assert.equal(backend.requests.length, 0, "no calls without a key");
@@ -234,7 +240,7 @@ module.exports = [
     name: "no key: pasting the trip link opens the trip without a reload, and keeps the key off the screen and the address",
     async run({ page }) {
       const backend = await open(page, { seed: SEED, nowMs: NOON12, key: null });
-      await expectText(page, "#gate p", "This phone needs the trip link. Open it from your chat again, or paste it here.");
+      await expectText(page, "#gate p", "This phone needs the trip link. Open it from your email again, or paste it here.");
       assert.ok(await visible(page, "#keyPaste"));
       assert.equal(await page.locator('label[for="keyPaste"]').count(), 0, "no label: the sentence says what the field is for");
       assert.equal(await page.getAttribute("#keyPaste", "aria-label"), "Trip link");
@@ -268,6 +274,47 @@ module.exports = [
       assert.equal(await page.evaluate(() => location.href.includes("test-key")), false);
       assert.equal(await page.evaluate(() => document.body.innerText.includes("test-key")), false, "the key is not drawn");
       assert.equal(await page.inputValue("#keyPaste"), "", "the field lets the key go");
+    },
+  },
+  {
+    name: "no key in Safari: the gate says to open the email again; pictures when MAT_TAB_SHOTS is set",
+    async run({ page }) {
+      await open(page, { seed: SEED, nowMs: NOON12, key: null });
+      await expectText(page, "#gate p", "This phone needs the trip link. Open it from your email again, or paste it here.");
+      assert.equal(await page.evaluate(() => navigator.standalone === true), false);
+      await homelinkShot(page, "gate-safari.png");
+    },
+  },
+  {
+    name: "no key on the Home Screen app: the gate says to copy the link from the email, and pasting a valid link still signs in",
+    async run({ page }) {
+      await page.addInitScript(() => Object.defineProperty(navigator, "standalone", { value: true, configurable: true }));
+      const backend = await open(page, { seed: SEED, nowMs: NOON12, key: null });
+      await expectText(page, "#gate p", "The Home Screen app keeps its own sign-in. Find the email with your own MAT link, press and hold the link, tap Copy Link, then paste it here.");
+      assert.ok(await visible(page, "#keyPaste"));
+      await homelinkShot(page, "gate-standalone.png");
+      await page.fill("#keyPaste", ORIGIN + "/#k=test-key");
+      await page.click("#keyGo");
+      await waitRows(page, 8);
+      assert.equal(await visible(page, "#gate"), false);
+      assert.equal(await page.evaluate(() => localStorage.getItem("mat.key")), "test-key");
+      assert.ok(backend.requests.some((r) => r.action === "load"));
+    },
+  },
+  {
+    name: "no key on the Home Screen app: a refused link says how to fix it, and pasting a good link signs in",
+    async run({ page }) {
+      await page.addInitScript(() => Object.defineProperty(navigator, "standalone", { value: true, configurable: true }));
+      const backend = await open(page, { seed: SEED, nowMs: NOON12, key: null });
+      await until(() => visible(page, "#keyPaste"), "the paste field");
+      await page.fill("#keyPaste", "wrong-key-123");
+      await page.click("#keyGo");
+      await until(() => backend.requests.some((r) => r.action === "load"), "it tries the key");
+      await expectText(page, "#gate p", "That link no longer works here. Find the email with your own MAT link, press and hold the link, tap Copy Link, then paste it here.");
+      await page.fill("#keyPaste", ORIGIN + "/#k=test-key");
+      await page.click("#keyGo");
+      await waitRows(page, 8);
+      assert.equal(await visible(page, "#gate"), false);
     },
   },
   {
@@ -331,7 +378,7 @@ module.exports = [
       assert.deepEqual(lines, ["Ring up what you paid.", "The slip says who pays whom.", "Stamp it the moment you send."]);
       // In a Safari tab (not from the Home Screen), one more line under them, dimmer.
       assert.ok(await visible(page, "#how #howHome"));
-      assert.equal(await text(page, "#howHome"), "Add it to your Home Screen from You 設定, so this phone stays signed in.");
+      assert.equal(await text(page, "#howHome"), "Add it to your Home Screen from You 設定. The Home Screen app asks for your link once: paste it from your email.");
       const dim = await page.evaluate(() => [getComputedStyle(document.querySelector("#how .how-l")).opacity, getComputedStyle(document.getElementById("howHome")).opacity].map(Number));
       assert.ok(dim[1] < dim[0], "dimmer than the three lines: " + dim);
 

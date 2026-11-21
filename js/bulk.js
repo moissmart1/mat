@@ -39,6 +39,11 @@
 // (newStay: { name, firstNight, lastNight } from the line). Everywhere a
 // place, choice or item has `stop` it may instead have `stay` or `newStay`,
 // exactly one (placeKey tells them apart).
+//
+// A stop to add (bulk C, 2026-11-20): a line with no stop near it on its day
+// offers to add one from the line itself (newStop: { date, time, title },
+// newStopFrom), as a lodging line offers its stay. A newStop place holds no
+// pictures yet; two files of one line share it (the same placeKey).
 
 import { LIMITS } from "./tickets.js";
 import { minutesOf } from "./plan.js";
@@ -283,7 +288,7 @@ export function spanOf(st) {
 // at most 80 letters), its first night (start_date) and last (the day before
 // end_date, else the first). null with no name or no usable date.
 export function newStayFrom(row) {
-  const name = (str(row && row.title) || str(row && row.provider)).slice(0, 80).trim();
+  const name = [...(str(row && row.title) || str(row && row.provider))].slice(0, 80).join("").trim();
   const first = str(row && row.start_date);
   if (!name || !DATE.test(first)) return null;
   const end = str(row.end_date);
@@ -291,10 +296,23 @@ export function newStayFrom(row) {
   return { name, firstNight: first, lastNight: last };
 }
 
-// What a place is, as a key: "stop:<id>", "stay:<id>" or "new:<first night>:<name>".
-export const placeKey = (p) => (p.stay ? "stay:" + p.stay : p.newStay ? "new:" + p.newStay.firstNight + ":" + p.newStay.name : "stop:" + p.stop);
-// Only the place's own field: { stop }, { stay } or { newStay }.
-export const placeOf = (p) => (p.stay ? { stay: p.stay } : p.newStay ? { newStay: p.newStay } : { stop: p.stop });
+// The stop a line with no stop would add: its day (start_date, a day of the
+// trip), its time (start_time when it is a time like 14:30, else none) and
+// its title (the title, else the provider, at most 80 letters). null when the
+// date is not a day of the trip or there is no name.
+const TIME = /^([01]\d|2[0-3]):[0-5]\d$/;
+export function newStopFrom(row, days) {
+  const title = [...(str(row && row.title) || str(row && row.provider))].slice(0, 80).join("").trim();
+  const date = str(row && row.start_date);
+  if (!title || !DATE.test(date) || !(days || []).some((d) => d && d.date === date)) return null;
+  const time = str(row.start_time);
+  return { date, time: TIME.test(time) ? time : "", title };
+}
+
+// What a place is, as a key: "stop:<id>", "stay:<id>", "new:<first night>:<name>" or "newstop:<date>:<time>:<title>".
+export const placeKey = (p) => (p.stay ? "stay:" + p.stay : p.newStay ? "new:" + p.newStay.firstNight + ":" + p.newStay.name : p.newStop ? "newstop:" + p.newStop.date + ":" + p.newStop.time + ":" + p.newStop.title : "stop:" + p.stop);
+// Only the place's own field: { stop }, { stay }, { newStay } or { newStop }.
+export const placeOf = (p) => (p.stay ? { stay: p.stay } : p.newStay ? { newStay: p.newStay } : p.newStop ? { newStop: p.newStop } : { stop: p.stop });
 const target = (got) => (got && got.sure ? (got.sure.stay ? { stay: got.sure.stay } : { stop: got.sure.id }) : null);
 
 // A lodging line to a stay: { sure: { stay } } or { card }.
@@ -372,7 +390,9 @@ function stopForRow(row, s) {
     return { card: { kind: "close", ask: (offer.length === 2 ? "Two stops" : offer.length + " stops") + " are close" + (t === null ? "." : " to " + row.start_time + "."), hint: "Day " + n + ".", short: offer.length + " stops on D" + n, choices: offer.map((x) => ({ stop: x.id })) } };
   }
   const at = t === null ? "" : " at " + row.start_time;
-  return { card: { kind: "nostop", ask: "No stop on Day " + n + at + ".", hint: onDay.length ? "Day " + n + " has " + onDay.length + (onDay.length === 1 ? " stop" : " stops") + ", none close." : "Day " + n + " has no stops.", short: "no stop on D" + n, choices: [] } };
+  // A stop to add from the line itself, when it has a name.
+  const ns = newStopFrom(row, days);
+  return { card: { kind: "nostop", ask: "No stop on Day " + n + at + ".", hint: onDay.length ? "Day " + n + " has " + onDay.length + (onDay.length === 1 ? " stop" : " stops") + ", none close." : "Day " + n + " has no stops.", short: "no stop on D" + n, choices: ns ? [{ newStop: ns }] : [] } };
 }
 
 const rowLabel = (rows) => {
@@ -464,10 +484,10 @@ export function sortFiles({ files = [], rows = [], listError = null, state = {},
   const ans = answers instanceof Map ? answers : new Map(Object.entries(answers || {}));
   const live = (s.tickets || []).filter((t) => t && !t.gone);
   const onStop = (id) => live.filter((t) => t.stop === id).length;
-  // The pictures on a place now: a stop's, a stay's, none on a stay still to add.
-  const onPlace = (p) => (p.stay ? live.filter((t) => t.stay === p.stay).length : p.newStay ? 0 : onStop(p.stop));
-  // A place that is there: a live stop, a live stay, or a stay to add with a name and a first night.
-  const isPlace = (p) => (p.stay ? staysById.has(p.stay) : p.newStay ? !!(p.newStay && str(p.newStay.name) && DATE.test(String(p.newStay.firstNight))) : stopsById.has(p.stop));
+  // The pictures on a place now: a stop's, a stay's, none on a stay or stop still to add.
+  const onPlace = (p) => (p.stay ? live.filter((t) => t.stay === p.stay).length : p.newStay || p.newStop ? 0 : onStop(p.stop));
+  // A place that is there: a live stop, a live stay, a stay to add with a name and a first night, or a stop to add on a day of the trip with a name.
+  const isPlace = (p) => (p.stay ? staysById.has(p.stay) : p.newStay ? !!(p.newStay && str(p.newStay.name) && DATE.test(String(p.newStay.firstNight))) : p.newStop ? !!(str(p.newStop.title) && days.some((d) => d && d.date === p.newStop.date)) : stopsById.has(p.stop));
   const list = listError ? [] : rows;
   const out = { items: [], cards: [], out: [], quiet: 0, listError, now: live.length, after: live.length };
   const used = new Set();
@@ -511,7 +531,7 @@ export function sortFiles({ files = [], rows = [], listError = null, state = {},
   // In the trip's order: day, time, then the file's name; a stay's at its first night, 15:00.
   const order = (p) => {
     if (p.stay || p.newStay) return (p.stay ? staysById.get(p.stay).firstNight : p.newStay.firstNight) + " 15:00 " + p.file.name;
-    const st = stopsById.get(p.stop);
+    const st = p.newStop || stopsById.get(p.stop);
     return (st.date || "") + " " + (minutesOf(st.time) === null ? "99:99" : st.time) + " " + p.file.name;
   };
   placed.sort((a, b) => (order(a) < order(b) ? -1 : order(a) > order(b) ? 1 : 0));
@@ -523,7 +543,7 @@ export function sortFiles({ files = [], rows = [], listError = null, state = {},
     const pk = placeKey(p);
     const onStay = !!(p.stay || p.newStay);
     // Fix round 1, M5: the same picture is already there only for the same person (two people's codes can share a cover page).
-    const there = (!p.newStay && isThere(p.file.key, p.stop || "", p.who, placeOf(p))) || out.items.some((q) => placeKey(q) === pk && q.who === p.who && sigEq(q.file.sig, p.file.sig));
+    const there = (!p.newStay && !p.newStop && isThere(p.file.key, p.stop || "", p.who, placeOf(p))) || out.items.some((q) => placeKey(q) === pk && q.who === p.who && sigEq(q.file.sig, p.file.sig));
     if (there) {
       out.out.push({ kind: "there", file: p.file, label: p.label, key: p.key, ...placeOf(p), why: "already there" });
       continue;
@@ -534,10 +554,10 @@ export function sortFiles({ files = [], rows = [], listError = null, state = {},
     if (want > room) {
       const full = room === 0;
       const tripFull = LIMITS.perTrip - trip <= LIMITS.perStop - has;
-      const title = p.stay ? str(staysById.get(p.stay).name) || "The stay" : p.newStay ? p.newStay.name : stopLabel(stopsById.get(p.stop), days).title;
+      const title = p.stay ? str(staysById.get(p.stay).name) || "The stay" : p.newStay ? p.newStay.name : p.newStop ? p.newStop.title : stopLabel(stopsById.get(p.stop), days).title;
       const what = onStay ? "stay" : "stop";
       limitCards.push({
-        kind: "limit", key: p.key, file: p.file, label: p.label, onList: p.rowIds.length > 0, who: p.who, rowIds: p.rowIds,
+        kind: "limit", key: p.key, file: p.file, label: p.label, onList: p.rowIds.length > 0, who: p.who, rowIds: p.rowIds, place: placeOf(p), pages: p.pages, room,
         ask: full ? (tripFull ? "The trip is full: " + LIMITS.perTrip + " pictures." : title + " is full: " + LIMITS.perStop + " of " + LIMITS.perStop + ".") : p.pages + " pages, " + room + " fit.",
         hint: tripFull ? "A trip holds " + LIMITS.perTrip + " pictures." : "A " + what + " holds " + LIMITS.perStop + " pictures; " + title + " has " + has + ".",
         short: full ? (tripFull ? "trip full, " + LIMITS.perTrip + " of " + LIMITS.perTrip : what + " full, " + LIMITS.perStop + " of " + LIMITS.perStop) : p.pages + " pages, " + room + " fit",
