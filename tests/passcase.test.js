@@ -109,6 +109,31 @@ test("a ticket's fields: time, title, detail, seat, the day's number and line, t
   assert.equal(c.today.find((x) => x.id === "e").first, null, "reference only: no picture");
 });
 
+test("every ticket says whose it is (window, today, later, used): mine with my seat, all, none with the holders, ref", () => {
+  const people = [{ name: "Mo" }, { name: "Ajen" }, { name: "Trenton" }];
+  const base = full();
+  base.people = people;
+  base.tickets = base.tickets.map((t) => (t.who ? { ...t, seat: t.who === "Mo" ? "Car 3 · 7B" : "" } : t));
+  // Mo: his own code on c, one code for all on a / d / f, pages on b, references on e, g and y1.
+  const c = passCase(base, NOON, { have });
+  const all = [c.next, ...c.today, ...c.later, ...c.used];
+  assert.ok(all.every((t) => t.whose && typeof t.whose.kind === "string"), "every ticket has whose");
+  assert.deepEqual(c.next.whose, { kind: "mine", seat: "Car 3 · 7B", holders: ["Mo", "Ajen", "Trenton"], count: 3 });
+  assert.deepEqual(c.today.find((x) => x.id === "d").whose, { kind: "all", seat: "", holders: [], count: 0 });
+  assert.deepEqual(c.today.find((x) => x.id === "e").whose, { kind: "ref", seat: "", holders: [], count: 0 });
+  assert.equal(c.later.find((x) => x.id === "f").whose.kind, "all");
+  assert.equal(c.used.find((x) => x.id === "b").whose.kind, "all", "pages are for all of us");
+  assert.equal(c.used.find((x) => x.id === "y1").whose.kind, "ref");
+  // Someone with no code of their own on c: none, and who has theirs.
+  const zed = passCase({ ...base, me: "Zed", people: [...people, { name: "Zed" }] }, NOON, { have });
+  assert.deepEqual(zed.next.whose, { kind: "none", seat: "", holders: ["Mo", "Ajen", "Trenton"], count: 3 });
+  // Nobody chosen: nobody's.
+  assert.equal(passCase({ ...base, me: null }, NOON, { have }).next.whose.kind, "none");
+  // My code with no seat on it: the stop's.
+  const noSeat = passCase({ ...base, tickets: full().tickets }, NOON, { have });
+  assert.equal(noSeat.next.whose.seat, "Car 3 · 7A");
+});
+
 test("the window's lead line comes from the existing leave-by: travel minutes, or where you are; none for a later day", () => {
   const c = passCase(full(), NOON, { have });
   assert.equal(c.next.lead, "Leave by 13:30 · in 10 min");

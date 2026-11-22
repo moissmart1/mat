@@ -76,7 +76,12 @@ const drawn = new WeakMap();
 // line, and without its distances (they move as the phone does).
 const LEAD = /(<b class="r-lv)(?: is-late)?(">)[^<]*(<\/b>)/;
 const DIST = /(<span class="dist">)[^<]*(<\/span>)/g;
-const withoutLead = (html) => html.replace(LEAD, "$1$2$3").replace(DIST, "$1$2");
+// And without its 券 line and the words on Show ticket's right (whose it is,
+// a picture reaching this phone, a person's picture changed: issue #83), so a
+// row keeps its node, and Show ticket the focus the stub hands back to it.
+const MARK = /<div class="r-fx tk-mark[^"]*">[\s\S]*?<\/div>/;
+const TKI = /(<button class="r-tk"[^>]*>[\s\S]*?<i>)[^<]*(<\/i>)/;
+const withoutLead = (html) => html.replace(LEAD, "$1$2$3").replace(DIST, "$1$2").replace(MARK, "").replace(TKI, "$1$2");
 
 // Puts the fresh rows into `rows` in order, keeping each old row that is
 // drawn the same. A row that differs only in its leave-by line's words (the
@@ -100,6 +105,12 @@ function patchRows(rows, fresh) {
         lead.textContent = next.textContent;
         if (lead.className !== next.className) lead.className = next.className;
       }
+      const mk = keep.querySelector(".tk-mark");
+      const nmk = r.querySelector(".tk-mark");
+      if (mk && nmk && mk.outerHTML !== nmk.outerHTML) mk.replaceWith(nmk);
+      const ti = keep.querySelector(".r-tk i");
+      const nti = r.querySelector(".r-tk i");
+      if (ti && nti && ti.textContent !== nti.textContent) ti.textContent = nti.textContent;
       const from = r.querySelectorAll(".dist");
       keep.querySelectorAll(".dist").forEach((d, i) => {
         if (from[i] && d.textContent !== from[i].textContent) d.textContent = from[i].textContent;
@@ -238,7 +249,7 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
 
   // The part of the Days view a row can be read in, in the same terms: below
   // the status bar and no-signal strip (the view's top padding) and the demo
-  // banner, above the tab bar.
+  // banner, above the tab bar and the next ticket's slot (js/views/nextticket.js).
   function readable() {
     const pad = parseFloat(getComputedStyle(root).paddingTop) || 0;
     const banner = demo.hidden ? 0 : demo.offsetHeight;
@@ -246,7 +257,10 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
     const box = root.getBoundingClientRect();
     // Held sideways the bar is a rail beside the view, not over its foot.
     const bar = nav && nav.offsetHeight ? nav.getBoundingClientRect() : null;
-    const under = bar && bar.left < box.right && bar.right > box.left ? Math.max(0, box.bottom - bar.top) : 0;
+    const slot = document.getElementById("nextTicket");
+    const st = slot && !slot.hidden && slot.offsetHeight ? slot.getBoundingClientRect() : null;
+    const over = (r) => (r && r.left < box.right && r.right > box.left ? Math.max(0, box.bottom - r.top) : 0);
+    const under = Math.max(over(bar), over(st));
     const top = root.scrollTop + pad + banner + 8;
     return { top, bottom: Math.max(top, root.scrollTop + root.clientHeight - under - 8) };
   }
@@ -772,6 +786,20 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
   }
   document.addEventListener("visibilitychange", wake);
   new MutationObserver(wake).observe(root, { attributes: true, attributeFilter: ["class"] });
+  // The next ticket's slot comes up over the foot of the day (its tickets
+  // arrive after the day is drawn): today's next stop is brought clear of it.
+  const phoneEl = root.closest(".phone");
+  if (phoneEl) {
+    let slotWas = phoneEl.classList.contains("has-slot");
+    new MutationObserver(() => {
+      const on = phoneEl.classList.contains("has-slot");
+      if (on === slotWas) return;
+      slotWas = on;
+      // Never under something standing over the day (any sheet, the stub, the register, the book).
+      const covered = !!phoneEl.querySelector(".sheet.is-open") || /(^|\s)[a-z]+-open(\s|$)/.test(phoneEl.className);
+      if (on && root.classList.contains("is-active") && dates.length && settledOn === cur && !held() && !covered) revealNext();
+    }).observe(phoneEl, { attributes: true, attributeFilter: ["class"] });
+  }
 
   render(store.state);
   store.subscribe(render);

@@ -95,6 +95,9 @@ button.bar-t{border:0;background:none;padding:0;min-height:36px;min-width:0;colo
 .r-fx b{border:1.5px solid var(--print);border-radius:2px;padding:0 4px 1px;font-weight:900}
 /* 現在地 under the name: the distance from where you are (only with a position). */
 .r-fx .here{margin-right:1px}
+/* Whose the ticket is (issue #83, C-3): a seal and the words. */
+.tk-mark .wh-l{display:inline-flex;align-items:center;gap:5px;min-width:0}
+.tk-mark u{text-decoration:none;font-weight:900}
 .r-fx.at{margin-top:5px;margin-bottom:5px;align-items:flex-start}
 /* One line, as drawn (it may run on under the sign's column); on a narrow phone it breaks after the dot only. */
 @media (max-width:350px){ .r-fx.at .dist{min-width:0;white-space:normal;line-height:1.3;padding-top:1px} }

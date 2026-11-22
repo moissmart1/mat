@@ -184,7 +184,8 @@ cases.push({
     await expectText(page, "#pcWin .pc-lv", "こんどLeave by 13:30 · in 10 min");
     await expectText(page, "#pcWin .pc-st", "券3 codes · on this phone");
     await expectText(page, "#pcWin .num", "D 03");
-    await expectText(page, "#pcShow", "切符Show ticketCar 7 · 10A–C");
+    // Mo's own code (whose, issue #83): his seat.
+    await expectText(page, "#pcShow", "切符Show ticketYours · Car 7 · 10A");
     // The first picture (this phone's person's) small in the window.
     await until(() => page.evaluate(() => {
       const img = document.querySelector("#pcWin .pc-th img");
@@ -230,7 +231,9 @@ cases.push({
     assert.equal(await page.evaluate((s) => document.querySelector(s).classList.contains("is-ref"), slot(DINNER)), true);
     // On this phone.
     await expectText(page, slot(EXPRESS) + " .pc-st", "券1 code · on this phone");
-    await expectText(page, slot(EXPRESS) + " .pc-d", "13Sun");
+    // A later day's date under the time; at the right, whose it is.
+    await expectText(page, slot(EXPRESS) + " .pc-t", "10:08Sun 13");
+    await expectText(page, slot(EXPRESS) + " .wh-col", "全All of us");
     await expectText(page, slot(LUNCH) + " .pc-st", "券2 pages · on this phone");
     // The back pocket: struck through and dimmed.
     const used = await page.evaluate((s) => {
@@ -240,7 +243,7 @@ cases.push({
     assert.deepEqual(used, { line: "line-through", op: "0.55" });
     // Names that read sensibly.
     assert.equal(await page.evaluate((s) => document.querySelector(s).getAttribute("aria-label"), slot(DINNER)), "Show ticket: Dinner, 19:00, reference only, TEST-0412");
-    assert.equal(await page.evaluate((s) => document.querySelector(s).getAttribute("aria-label"), slot(MEIJI)), "Used: Meiji Shrine, 09:00, 1 code, on this phone");
+    assert.equal(await page.evaluate((s) => document.querySelector(s).getAttribute("aria-label"), slot(MEIJI)), "Used: Meiji Shrine, 09:00, 1 code, on this phone, one code for all of us");
     // Every slot opens its own stub.
     for (const [id, title] of [[DINNER, "Dinner"], [EXPRESS, "Limited express to Nara"], [MEIJI, "Meiji Shrine"], [TEA, "Tea ceremony"]]) {
       await page.click(slot(id));

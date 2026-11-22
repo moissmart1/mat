@@ -14,7 +14,11 @@
 //
 // What it shows, by the stop's pictures (js/tickets.js ticketKinds):
 // - per-person codes: one page each, swiped or picked with the seals; it
-//   opens on this phone's person first, then the others in trip order;
+//   opens on this phone's person first, then the others in trip order. Each
+//   person's page says whose it is at its head (issue #83, Mo's pick A-2):
+//   their seal with their picture, the name, and あなたの券 Your code, or
+//   "Mo’s code, not yours" in vermilion. The seals under the code are all in
+//   colour, the one in view ringed in vermilion;
 // - one code for everyone; a PDF's pages one under another (tap to enlarge);
 // - no picture: the booking ref, large, with a sentence for staff.
 // A picture not on this phone yet is fetched now when there is signal
@@ -35,8 +39,9 @@
 import { header, nightOf, staySpan } from "../plan.js";
 import { fillSeal } from "../picture.js";
 import { dayHead } from "../format.js";
-import { ticketKinds, hasFacts, hasStayFacts, stayPictures, sniff, fromBase64 } from "../tickets.js";
+import { ticketKinds, hasFacts, hasStayFacts, stayPictures, sniff, fromBase64, sameName } from "../tickets.js";
 import { nightsShort, nightsLong, stayDots, stayDayNums, peopleWord } from "../staywords.js";
+import { sealFor } from "./nextticket.js";
 
 const NUMBER_WORD = { 2: "TWO", 3: "THREE", 4: "FOUR", 5: "FIVE", 6: "SIX" };
 
@@ -285,7 +290,8 @@ export function mountStub(root, store, keep, { clock = null } = {}) {
         groups.get(g).push(t);
       }
       const order = [...groups.keys()].sort((a, b) => {
-        const rank = (n) => (n === "" ? 1e6 : n === me ? -1 : people.indexOf(n) === -1 ? 1e5 : people.indexOf(n));
+        const at = (n) => people.findIndex((x) => sameName(x, n));
+        const rank = (n) => (n === "" ? 1e6 : sameName(n, me) ? -1 : at(n) === -1 ? 1e5 : at(n));
         return rank(a) - rank(b);
       });
       const pp = el("div", "pp");
@@ -295,7 +301,24 @@ export function mountStub(root, store, keep, { clock = null } = {}) {
         const pg = el("div", "pp-pg");
         pg.dataset.who = who;
         const head = el("div", "stub-who");
-        head.append(el("b", "", who ? who.toUpperCase() : "ALL"), el("span", "", str(pics[0].seat) || (who ? "" : str(stop.tkSeat))));
+        const seat = el("span", "", str(pics[0].seat) || (who ? "" : str(stop.tkSeat)));
+        if (who) {
+          // Whose code this is: the seal, the name, and yours or not yours.
+          head.classList.add("is-whose");
+          const mine = sameName(who, me);
+          const person = (store.state.people || []).find((x) => x && sameName(x.name, who));
+          const hd = el("span", "wh-head");
+          const words = el("span");
+          const small = el("small", mine ? "" : "is-not");
+          if (mine) {
+            const jp = el("span", "", "あなたの券 ");
+            jp.setAttribute("aria-hidden", "true");
+            small.append(jp, "Your code");
+          } else small.append(who + "’s code, not yours");
+          words.append(el("b", "", who.toUpperCase()), small);
+          hd.append(sealFor(mine ? "me" : "other", { ...person, initials: [...who][0].toUpperCase() }, who, "s46"), words);
+          head.append(hd, seat);
+        } else head.append(el("b", "", "ALL"), seat);
         pg.append(head, ...pics.map((t) => slot(t, { zoom: pics.length > 1, page: pics.length > 1 })));
         pp.append(pg);
       });
@@ -307,13 +330,13 @@ export function mountStub(root, store, keep, { clock = null } = {}) {
           const b = el("button");
           b.type = "button";
           b.dataset.k = String(i);
-          b.setAttribute("aria-label", who ? (who === me ? "Your code" : who + "’s code") : "The code for everyone");
+          b.setAttribute("aria-label", who ? (sameName(who, me) ? "Your code" : who + "’s code") : "The code for everyone");
           const seal = el("span", "seal" + (i === 0 ? " is-on" : ""), who ? "" : "全");
           if (who) {
-            const person = (store.state.people || []).find((x) => x && x.name === who);
+            const person = (store.state.people || []).find((x) => x && sameName(x.name, who));
             fillSeal(seal, { ...person, initials: [...who][0].toUpperCase() }, who);
           }
-          b.append(seal, who === me ? "You" : who || "All");
+          b.append(seal, sameName(who, me) ? "You" : who || "All");
           w3.append(b);
         });
         p.append(w3);
