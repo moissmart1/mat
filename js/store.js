@@ -195,6 +195,9 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
   // How many times the trip was taken off (fix round 1, I1): a reply that
   // left before a wipe and lands after it is dropped, never drawn.
   let wipes = 0;
+  // Each boot() is a new one: a reply to a request made under an earlier boot
+  // (an earlier pasted key) is not this boot's, and never refuses or opens it.
+  let boots = 0;
   // ---- storage, never allowed to throw ----
   const getItem = (k) => {
     try {
@@ -233,6 +236,11 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
     // the link is kept, and the app's checks keep trying (issue #85). Never
     // after a refusal.
     linkKept: false,
+    // linkFault, while a link is kept: "signal" (no answer at all: no signal,
+    // a dead network) or "sheet" (the trip sheet answered with an error).
+    // linkChecking: a key with no trip yet whose first load since boot() has
+    // not answered (the screen says it is checking the link).
+    linkFault: null, linkChecking: false,
     // personal: this phone opened its own person's link (load said so); me is then theirs.
     // cleared: the trip was taken off this phone after its key was refused ({ kept: own unsent lines kept }).
     personal: false, cleared: null, queueStorageFailed: false,
@@ -408,6 +416,7 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
   async function call(action, args, opts, { quiet = false } = {}) {
     if (wiped) throw refusedError();
     const wipesAt = wipes;
+    const bootsAt = boots;
     const hiddenAt = hiddenCount;
     const contactsAt = contacts;
     for (let attempt = 0; ; attempt++) {
@@ -431,6 +440,8 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
           continue;
         }
         if (code === "network" && !quiet && !isHidden() && hiddenCount === hiddenAt && contacts === contactsAt) state.online = false;
+        // A key pasted since this request went out replaced the one it was refused for.
+        if (code === "bad_key" && boots !== bootsAt) throw lateError();
         if (code === "bad_key") {
           state.status = "nokey";
           state.keyRefused = true; // a key was tried and the trip said no
@@ -439,6 +450,12 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
         throw err;
       }
     }
+  }
+
+  // Why a kept link has not opened yet: no answer at all, or the trip sheet
+  // answered with an error (busy, a garbled reply, not set up).
+  function faultOf(err) {
+    return err && err.code === "network" ? "signal" : "sheet";
   }
 
   function lateError() {
@@ -499,7 +516,7 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
       loadedAt: null, lastChange: null, notice: null, setAside: [],
       history: { entries: [], more: false, loading: false, error: null, firstPageError: null },
       cleared: had ? { kept: mine.length } : null,
-      linkKept: false,
+      linkKept: false, linkFault: null, linkChecking: false,
       queueStorageFailed: memoryQueue !== null,
       settlementProvisional: false,
     });
@@ -587,10 +604,13 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
   async function refresh() {
     const startSeq = writeSeq;
     const mine = ++loadCount;
+    const bootAt = boots;
     let r;
     try {
       r = await call("load", {});
     } catch (err) {
+      if (bootAt !== boots) return false; // an earlier boot's key: not this one's to judge
+      state.linkChecking = false;
       // A key with no trip yet whose load got no answer (a link pasted with no
       // signal, or the app opened again still without it): the key is kept,
       // the no-key screen says so, and the app's checks try again (issue #85).
@@ -599,10 +619,13 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
       if (!base && !refused && getItem("mat.key")) {
         state.status = "nokey";
         state.linkKept = true;
+        state.linkFault = faultOf(err);
       } else if (state.status !== "nokey") state.status = base ? "ready" : "error";
       changed();
       return false;
     }
+    if (bootAt !== boots) return false; // an earlier boot's key: its trip is not opened
+    state.linkChecking = false;
     if (reloadAfter !== null && mine > reloadAfter) reloadAfter = null;
     if (mine < appliedLoad) return true; // a newer load already landed
     appliedLoad = mine;
@@ -615,6 +638,7 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
     state.loadedAt = now();
     state.status = "ready";
     state.linkKept = false;
+    state.linkFault = null;
     saveCache();
     changed();
     afterContact();
@@ -658,7 +682,8 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
       } else {
         r = await call("rev", {});
       }
-    } catch {
+    } catch (err) {
+      if (state.linkKept) state.linkFault = faultOf(err); // still no answer, or the sheet answering badly
       changed();
       return;
     }
@@ -777,14 +802,18 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
       state.rev = r.rev;
       state.loadedAt = now();
       state.status = "ready";
+      state.linkChecking = false;
       saveCache();
       changed();
     }
   }
 
   async function boot({ candidate = null } = {}) {
+    boots += 1;
     state.keyRefused = false;
     state.linkKept = false;
+    state.linkFault = null;
+    state.linkChecking = false;
     wiped = false;
     state.cleared = null;
     const key = getItem("mat.key");
@@ -805,6 +834,12 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
     }
     // Who you are, from the saved trip, until the load says again.
     if (base) takeIdentity(base);
+    // No trip on this phone yet: the no-key screen says the link is being
+    // checked until the load answers (issue #85).
+    else {
+      state.status = "nokey";
+      state.linkChecking = true;
+    }
     // Whatever painting the cache does, the load still goes out.
     try {
       restoreQueue();

@@ -162,6 +162,7 @@ i{font-style:normal}
 .gate-key button:active{transform:translateY(1.5px);box-shadow:var(--paper-down)}
 .gate-key-m{min-height:1.35em;color:var(--text);font-weight:700;font-size:14px}
 .gate-key-m:empty{min-height:0}
+.gate-other{min-height:44px;padding:8px 12px;border:0;background:none;color:var(--text);font-weight:700;font-size:14px;text-decoration:underline;text-underline-offset:3px}
 
 /* ---------- held sideways (a phone in landscape) ----------
    No phone drawn on the table: the app fills the screen's height as one

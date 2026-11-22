@@ -779,7 +779,10 @@ function start() {
   });
   window.addEventListener("online", () => {
     if (!connected) return;
-    store.flush().then(check);
+    // A pasted key no load has confirmed yet (issue #85): load first; the
+    // load sends what is waiting (store afterContact), never before.
+    if (store.state.linkKept || store.state.linkChecking) check();
+    else store.flush().then(check);
   });
 
   // Once started, the list is fetched if it is an hour old.
