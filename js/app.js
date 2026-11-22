@@ -791,7 +791,9 @@ function start() {
   const check = () => {
     if (inFlight) return inFlight;
     const st = store.state.status;
-    if (st !== "ready" && st !== "error") return Promise.resolve();
+    // linkKept: a pasted link that has not reached the trip yet (issue #85):
+    // the check asks again, and the trip opens once it answers.
+    if (st !== "ready" && st !== "error" && !store.state.linkKept) return Promise.resolve();
     const mine = store.checkRev().finally(() => {
       if (inFlight === mine) inFlight = null;
     });
@@ -827,7 +829,10 @@ function start() {
   });
   window.addEventListener("online", () => {
     if (!connected) return;
-    store.flush().then(check);
+    // A pasted key no load has confirmed yet (issue #85): load first; the
+    // load sends what is waiting (store afterContact), never before.
+    if (store.state.linkKept || store.state.linkChecking) check();
+    else store.flush().then(check);
   });
 
   // Once started, the list is fetched if it is an hour old.
