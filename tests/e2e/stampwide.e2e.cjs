@@ -5,7 +5,7 @@
 
 const assert = require("node:assert/strict");
 const fs = require("fs");
-const { WITH_PLAN, NOON12, makeBackend, open, until } = require("./helpers.cjs");
+const { WITH_PLAN, NOON12, makeBackend, open, until, atRest } = require("./helpers.cjs");
 
 const HOUR = 3600000;
 const FIRST = Date.parse("2026-12-10T00:00:00+09:00");
@@ -45,7 +45,7 @@ module.exports = [
       fs.mkdirSync(SHOTS, { recursive: true });
       await page.screenshot({ path: SHOTS + "/8-wide-days.png" });
       await page.click("#stampBtn");
-      await until(() => page.evaluate(() => document.getElementById("book").classList.contains("is-open")), "the book opens");
+      await atRest(page, "#book", { message: "the book opens" });
       await page.waitForTimeout(700);
       const book = await box(page, "#book");
       assert.ok(book.x >= days.x - 1 && book.r <= days.r + 1 && book.b <= phone.b + 1 && book.y >= phone.y - 1, "the book stays inside the Days pane: " + JSON.stringify({ book, days }));
@@ -59,7 +59,7 @@ module.exports = [
       assert.deepEqual(done, { seen: true, onTop: true }, "Done is in reach");
       await page.screenshot({ path: SHOTS + "/9-wide-book.png" });
       await page.keyboard.press("Escape");
-      await until(() => page.evaluate(() => !document.getElementById("book").classList.contains("is-open")), "Escape closes the book");
+      await atRest(page, "#book", { open: false, message: "Escape closes the book" });
     },
   },
 ];

@@ -3,7 +3,7 @@
 // notice it raises is seen above the open sheet.
 
 const assert = require("node:assert/strict");
-const { ORIGIN, SEED, NOON12, open, advance, until, text, expectText } = require("./helpers.cjs");
+const { ORIGIN, SEED, NOON12, open, advance, until, atRest, text, expectText } = require("./helpers.cjs");
 
 const PHEAD = ["payment_id", "date_paid", "payer", "description", "category", "vendor", "booking_ref", "amount", "currency", "amount_cad", "cad_is_exact", "split_between", "split_type", "status", "include_in_split", "source", "added_by", "notes"];
 const prow = (o) => PHEAD.map((h) => (o[h] === undefined ? "" : o[h]));
@@ -23,13 +23,7 @@ async function ready(page, opts = {}) {
   const backend = await open(page, { seed: SEED, nowMs: NOON12, ...opts });
   await until(() => page.evaluate(() => document.querySelectorAll("#rc .rc-row").length > 0), "the receipt draws");
   await page.click("#youBtn");
-  await until(
-    () => page.evaluate(() => {
-      const s = document.getElementById("you");
-      return s.classList.contains("is-open") && Math.abs(s.getBoundingClientRect().bottom - innerHeight) < 1;
-    }),
-    "the settings sheet opens",
-  );
+  await atRest(page, "#you", { message: "the settings sheet opens" });
   return backend;
 }
 
@@ -82,7 +76,7 @@ async function noticeAboveSheet(page) {
   assert.ok(await onTop(page, "#youDone"), "Done is not covered by the notice");
   assert.ok(await inView(page, "#youDone"), "Done is in view");
   await page.click("#youDone");
-  await until(() => page.evaluate(() => !document.getElementById("you").classList.contains("is-open")), "Done closes the sheet");
+  await atRest(page, "#you", { open: false, message: "Done closes the sheet" });
 }
 
 module.exports = [

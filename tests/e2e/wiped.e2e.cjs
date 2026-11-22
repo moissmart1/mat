@@ -3,7 +3,7 @@
 // e-Transfer address. While merely loading or offline, what is drawn stays.
 
 const assert = require("node:assert/strict");
-const { WITH_PLAN, NOON12, makeBackend, open, until, text, visible } = require("./helpers.cjs");
+const { WITH_PLAN, NOON12, makeBackend, open, until, atRest, text, visible } = require("./helpers.cjs");
 const { png } = require("./pictures.cjs");
 
 const line = (o) => ({ day: "2026-12-11", currency: "CAD", rate: 111, splitMode: "equal", splitVals: [], note: "", kind: "", deleted: false, ...o });
@@ -87,7 +87,7 @@ for (const size of SIZES) {
     async run({ page }) {
       await ready(page);
       await page.dispatchEvent("#youBtn", "click");
-      await until(() => page.evaluate(() => document.getElementById("you").classList.contains("is-open")), "settings open");
+      await atRest(page, "#you", { message: "settings open" });
       await page.dispatchEvent("#setForget", "click");
       await page.dispatchEvent("#setForget", "click");
       await assertGone(page);
@@ -148,7 +148,7 @@ async function openTicketed(page, how) {
     assert.ok((await blobImages(page)) > 0, "the stub holds a blob: picture");
   } else {
     await page.dispatchEvent(mrow + " .r-edit", "click");
-    await until(() => page.evaluate(() => document.getElementById("stop").classList.contains("is-open")), "the edit sheet opens");
+    await atRest(page, "#stop", { message: "the edit sheet opens" });
     await until(() => blobImages(page).then((n) => n > 0), "the sheet shows the thumbnail");
   }
   assert.equal(await hasRef(page), true, "the reference is in the page before the wipe");
@@ -187,7 +187,7 @@ for (const size of SIZES) {
     async run({ page }) {
       await openTicketed(page, "edit");
       await page.dispatchEvent("#youBtn", "click");
-      await until(() => page.evaluate(() => document.getElementById("you").classList.contains("is-open")), "settings open");
+      await atRest(page, "#you", { message: "settings open" });
       await page.dispatchEvent("#setForget", "click");
       await page.dispatchEvent("#setForget", "click");
       await assertTicketsGone(page);

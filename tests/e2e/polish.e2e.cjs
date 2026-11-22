@@ -541,7 +541,7 @@ cases.push({
     await page.evaluate(() => document.activeElement.blur());
     await expectArrowIgnored(page, "not while the register is open");
     await page.keyboard.press("Escape");
-    await until(async () => !(await isOpen(page, "reg")), "the register closes");
+    await atRest(page, "#reg", { open: false, message: "the register closes" });
     // A Days sheet is open: not.
     // Opened without a click in the strip, so the browser's own arrow scrolling is not aimed at it.
     await page.evaluate((d) => document.querySelector('#rail .pg[data-date="' + d + '"] .tk-stay').click(), D12);

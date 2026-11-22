@@ -3,7 +3,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const { ORIGIN, SEED, NOON12, makeBackend, open, advance, until, text, expectText, visible } = require("./helpers.cjs");
+const { ORIGIN, SEED, NOON12, makeBackend, open, advance, until, atRest, text, expectText, visible } = require("./helpers.cjs");
 
 const homelinkShot = async (page, name) => {
   const dir = process.env.MAT_TAB_SHOTS;
@@ -591,7 +591,7 @@ module.exports.push(
       assert.ok((await page.locator("#slip .s-row.is-open").count()) > 0, "the slip still draws");
       // The rest of the app works: open a line, and the stand-in rate line stays away.
       await page.click('#rc .rc-row[data-id="seedexp001"]');
-      await until(() => page.evaluate(() => document.getElementById("line").classList.contains("is-open")), "a line opens");
+      await atRest(page, "#line", { message: "a line opens" });
       assert.equal(await visible(page, "#rateNote"), false);
       // Mo fixes the Sheet; a reload loads it.
       row.split = "Mo,Ajen,Trenton";

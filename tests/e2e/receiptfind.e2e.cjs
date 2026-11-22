@@ -3,7 +3,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const { SEED, NOON12, open, until, text, expectText, visible } = require("./helpers.cjs");
+const { SEED, NOON12, open, until, atRest, text, expectText, visible } = require("./helpers.cjs");
 
 const rows = (page) => page.evaluate(() => document.querySelectorAll("#rc .rc-row").length);
 const waitRows = (page, n) => until(async () => (await rows(page)) === n, "expected " + n + " receipt rows");
@@ -194,10 +194,10 @@ module.exports = [
       await page.fill("#rcQuery", "ramen");
       await waitRows(page, 1);
       await page.click("#rc .rc-row");
-      await until(() => page.evaluate(() => { const s = document.getElementById("line"); return s.classList.contains("is-open") && Math.abs(s.getBoundingClientRect().bottom - innerHeight) < 1; }), "the line sheet opens");
+      await atRest(page, "#line", { message: "the line sheet opens" });
       assert.match(await text(page, "#lineBody"), /Ramen/);
       await page.click("#lnDone");
-      await until(() => page.evaluate(() => !document.getElementById("line").classList.contains("is-open")), "the line sheet closes");
+      await atRest(page, "#line", { open: false, message: "the line sheet closes" });
       assert.equal(await page.inputValue("#rcQuery"), "ramen");
       assert.equal(await rows(page), 1);
     },

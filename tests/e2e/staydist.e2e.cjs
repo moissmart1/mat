@@ -4,7 +4,7 @@
 
 const assert = require("node:assert/strict");
 const fs = require("fs");
-const { WITH_PLAN, open, advance, until, text } = require("./helpers.cjs");
+const { WITH_PLAN, open, advance, until, atRest, text } = require("./helpers.cjs");
 const { geoStub, leaks, HERE } = require("./geostub.cjs");
 
 const SHOTS = require("./shots.cjs")("loc");
@@ -27,7 +27,7 @@ async function ready(page, { where = "on", geo = {}, at = true, over = {}, ...op
 }
 async function openCard(page) {
   await page.dispatchEvent(D12 + " .tk-stay", "click");
-  await until(() => page.evaluate(() => document.getElementById("stay").classList.contains("is-open")), "the card opens");
+  await atRest(page, "#stay", { message: "the card opens" });
   await until(() => page.evaluate(() => getComputedStyle(document.getElementById("stay")).transform === "none"), "the card has risen");
 }
 const dist = (page) => page.evaluate(() => {

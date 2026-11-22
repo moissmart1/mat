@@ -4,7 +4,7 @@
 
 const fs = require("fs");
 const assert = require("node:assert/strict");
-const { WITH_PLAN, NOON12, open, until } = require("./helpers.cjs");
+const { WITH_PLAN, NOON12, open, until, atRest } = require("./helpers.cjs");
 
 const SHOTS = process.env.MAT_TAB_SHOTS || "";
 const INSET = 47;
@@ -68,7 +68,7 @@ module.exports = [
     async run({ page }) {
       await ready(page);
       await page.click('#rail .pg[data-date="2026-12-12"] .tk-stay');
-      await until(() => page.evaluate(() => document.getElementById("stay").classList.contains("is-open")), "the card opens");
+      await atRest(page, "#stay", { message: "the card opens" });
       await page.waitForTimeout(700);
       const z = await page.evaluate(() => {
         const zi = (s) => +getComputedStyle(document.querySelector(s)).zIndex;
@@ -77,7 +77,7 @@ module.exports = [
       assert.ok(z.scrim > z.strip && z.card > z.strip && z.net > z.strip, "sheets, scrim and the no-signal strip stack above it: " + JSON.stringify(z));
       assert.ok(/scrim/.test(z.el), "the scrim is what is at the top while the card is open: " + z.el);
       await page.click("#stayDone");
-      await until(() => page.evaluate(() => !document.getElementById("stay").classList.contains("is-open")), "the card closes");
+      await atRest(page, "#stay", { open: false, message: "the card closes" });
       // The stamp book (opened by a button that shows only with stamps; its own test opens it) stacks above the strip too.
       const more = await page.evaluate(() => ({ strip: +getComputedStyle(document.querySelector(".phone"), "::before").zIndex, book: +getComputedStyle(document.getElementById("book")).zIndex, hist: +getComputedStyle(document.getElementById("hist")).zIndex }));
       assert.ok(more.book > more.strip && more.hist > more.strip, "the stamp book and History stack above the strip: " + JSON.stringify(more));

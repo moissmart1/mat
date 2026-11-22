@@ -6,7 +6,7 @@
 
 const assert = require("node:assert/strict");
 const fs = require("fs");
-const { SEED, NOON12, open, until, text, expectText, visible } = require("./helpers.cjs");
+const { SEED, NOON12, open, until, atRest, text, expectText, visible } = require("./helpers.cjs");
 
 const SHOTS = require("./shots.cjs")("money-trio");
 const shot = async (page, name) => {
@@ -49,16 +49,7 @@ async function ready(page, opts = {}) {
 // Open, and risen all the way (the sheet slides up over 500 ms of real time).
 async function ringOpen(page) {
   await page.click("#ring");
-  await until(async () => {
-    const at = () => page.evaluate(() => {
-      const reg = document.getElementById("reg");
-      return reg.classList.contains("is-open") ? reg.getBoundingClientRect().top : null;
-    });
-    const a = await at();
-    await page.waitForTimeout(80);
-    const b = await at();
-    return a !== null && Math.abs(a - b) < 0.5;
-  }, "the register opens and stands still");
+  await atRest(page, "#reg", { message: "the register opens and stands still" });
 }
 
 const heads = (page) => page.$$eval("#xWhy .ws-r", (rows) => rows.map((r) => r.querySelector(".ws-n").textContent));

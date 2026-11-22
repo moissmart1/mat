@@ -9,7 +9,7 @@
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
-const { SEED, PLAN, makeBackend, open, advance, until, text, expectText, visible } = require("./helpers.cjs");
+const { SEED, PLAN, makeBackend, open, advance, until, atRest, text, expectText, visible } = require("./helpers.cjs");
 const { png, pngBytes, pdfBytes } = require("./pictures.cjs");
 
 const SHOTS = process.env.MAT_TAB_SHOTS || "";
@@ -54,12 +54,13 @@ async function ready(page, opts = {}) {
 }
 async function openCard(page, date = D10) {
   await page.click(tk(date) + " .tk-stay");
-  await until(() => isOpen(page, "stay"), "the hotel card opens");
+  await atRest(page, "#stay", { message: "the hotel card opens" });
 }
 async function openEdit(page) {
   await page.evaluate(() => document.querySelector("#stay .r-edit").scrollIntoView({ block: "center" }));
   await page.click("#stay .r-edit");
-  await until(async () => (await isOpen(page, "staySheet")) && !(await isOpen(page, "stay")), "Edit stay opens in the card's place");
+  await atRest(page, "#staySheet", { message: "Edit stay opens in the card's place" });
+  await atRest(page, "#stay", { open: false, message: "the card makes way for Edit stay" });
 }
 async function goTickets(page) {
   await until(() => visible(page, "#ticketsBtn"), "the Tickets key is in the bar");
@@ -125,7 +126,8 @@ cases.push({
     // Save: the four fields through saveStay (merge, only the patch), then the pictures with stay.
     const before = backend.requests.length;
     await page.click("#sySave");
-    await until(async () => !(await isOpen(page, "staySheet")) && (await isOpen(page, "stay")), "Save closes Edit stay and the card is back", 20000);
+    await atRest(page, "#staySheet", { open: false, timeout: 20000, message: "Save closes Edit stay" });
+    await atRest(page, "#stay", { message: "the card is back" });
     const sent = backend.requests.slice(before);
     const save = sent.findIndex((b) => b.action === "saveStay");
     assert.ok(save >= 0, "saveStay was sent");
@@ -188,7 +190,7 @@ cases.push({
 
     // The 宿泊 line: 券, the booking, and that ticket's night in plain type.
     await page.click("#stayDone");
-    await until(async () => !(await isOpen(page, "stay")), "the card closes");
+    await atRest(page, "#stay", { open: false, message: "the card closes" });
     const line = tk(D10) + " .tk-stay";
     await until(() => page.evaluate((sel) => !!document.querySelector(sel + ".has-bk .tk-stay-nt"), line), "the night on the 宿泊 line");
     assert.equal(await page.getAttribute(line, "aria-label"), "Tonight: Tsubame-so Guest House. Booking, night 1 of 3.");
@@ -278,7 +280,8 @@ cases.push({
     await advance(page, backend, 20000);
     await until(() => page.evaluate(() => !document.getElementById("sySave").disabled), "Save comes on with signal");
     await page.click("#sySave");
-    await until(async () => !(await isOpen(page, "staySheet")) && (await isOpen(page, "stay")), "Edit stay closes; the card is back");
+    await atRest(page, "#staySheet", { open: false, message: "Edit stay closes" });
+    await atRest(page, "#stay", { message: "the card is back" });
     assert.equal(backend.fake.tables.Tickets.length, 0);
     assert.equal(calls(backend, "saveStay").length, 0, "nothing typed: no saveStay");
     await until(() => page.evaluate(() => (globalThis.__matTest.store.state.tickets || []).some((t) => t.stay === "planstay0001")), "the picture is on the phone, on the stay");
@@ -302,7 +305,7 @@ cases.push({
     await page.fill("#syTkRoom", "half typed");
     await backend.handle({ key: KEY, actor: "Ajen", action: "deleteStay", args: { id: INN } });
     await advance(page, backend, 21000);
-    await until(async () => !(await isOpen(page, "staySheet")), "Edit stay closes");
+    await atRest(page, "#staySheet", { open: false, message: "Edit stay closes" });
     assert.equal(await isOpen(page, "stay"), false, "the card does not come back for a removed stay");
     assert.equal(calls(backend, "saveStay").length, 0);
     await backend.handle({ key: KEY, actor: "Ajen", action: "restoreStay", args: { id: INN } });
@@ -332,11 +335,11 @@ const LIST = [HEAD,
 
 async function openBulk(page) {
   await page.dispatchEvent("#youBtn", "click");
-  await until(() => isOpen(page, "you"), "You opens");
+  await atRest(page, "#you", { message: "You opens" });
   await until(() => page.evaluate(() => !document.getElementById("setBulk").hidden), "the Add tickets row shows");
   await page.evaluate(() => document.getElementById("setBulk").scrollIntoView({ block: "center" }));
   await page.dispatchEvent("#setBulk", "click");
-  await until(() => isOpen(page, "bulk"), "Add tickets opens");
+  await atRest(page, "#bulk", { message: "Add tickets opens" });
 }
 
 cases.push({
@@ -441,7 +444,7 @@ cases.push({
     await openEdit(page);
     assert.equal(await inPane("staySheet"), true, "Edit stay is in the Days pane");
     await page.click("#syDone");
-    await until(() => isOpen(page, "stay"), "Done opens the card again");
+    await atRest(page, "#stay", { message: "Done opens the card again" });
     await page.click("#stayDone");
     await goTickets(page);
     await until(() => page.evaluate(() => !!document.querySelector("#vTickets .pc-stay")), "the stay");
@@ -480,7 +483,9 @@ cases.push({
     };
     await page.evaluate(() => { globalThis.__slowBytes = 800; });
     await page.click("#sySave");
+    // class wait: the close follows the page's own timers, so the clock moves on while it waits; atRest follows.
     await until(async () => { await advance(page, backend, 500); return !(await isOpen(page, "staySheet")); }, "Edit stay closes", 15000);
+    await atRest(page, "#staySheet", { open: false, message: "Edit stay closes" });
     assert.ok((await page.evaluate(() => localStorage.getItem("mat.queue"))).includes("planstay0001"), "waiting in mat.queue");
     assert.equal(backend.fake.tables.Tickets.length, 0);
     // MAT closed at once (a reload), then signal back.
