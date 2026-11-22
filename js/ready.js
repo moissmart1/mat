@@ -220,3 +220,32 @@ export function sheetFor(m) {
   const key = !m.key ? "" : m.kind === "failed" ? "Try again" : m.big ? m.big.key : "Fetch now";
   return { verdict: ready ? "Ready for no signal." : "Not ready for no signal yet.", rows, notes, key };
 }
+
+// ---- asking the worker to keep the offline copy again (fix round C1, roaming) ----
+// After a refill that failed (a file did not come), the next try waits 1, 2,
+// 4, 8, 16, then 30 minutes (and 30 from then on); a refill that worked sets
+// it back. The phone's storage full: no more tries until the next launch.
+// refillAfter(state, result) -> the next state { failures, wait, stopped };
+// result: true (kept), "full" (storage full), false (failed); null leaves it
+// as it was (a newer worker installing fills its own copy). wait: the minutes
+// to let pass before the next try.
+export const REFILL_MAX_MIN = 30;
+export const refillWait = (failures) => Math.min(REFILL_MAX_MIN, 2 ** Math.max(0, failures - 1));
+export const REFILL_START = { failures: 0, wait: 0, stopped: false };
+export function refillAfter(state, result) {
+  const s = state || REFILL_START;
+  if (result === true) return { ...REFILL_START };
+  if (result === "full") return { failures: s.failures + 1, wait: 0, stopped: true };
+  if (result === false) {
+    const failures = s.failures + 1;
+    return { failures, wait: refillWait(failures), stopped: false };
+  }
+  return s;
+}
+// One minute has passed: { state, go } — go says to try now.
+export function refillTick(state) {
+  const s = state || REFILL_START;
+  if (s.stopped) return { state: s, go: false };
+  if (s.wait > 1) return { state: { ...s, wait: s.wait - 1 }, go: false };
+  return { state: { ...s, wait: 0 }, go: true };
+}

@@ -791,7 +791,7 @@ function start() {
   });
   // Click-through tests reach the register and the store here; only when the
   // fake backend is in the page, never in the real app.
-  if (typeof globalThis.MAT_FAKE_API === "function") globalThis.__matTest = { store, register, clock };
+  if (typeof globalThis.MAT_FAKE_API === "function") globalThis.__matTest = { store, register, clock, ready };
   document.getElementById("youBtn").addEventListener("click", () => {
     register.close();
     line.close(false);
@@ -873,7 +873,8 @@ function keepShell(reg) {
   return new Promise((resolve) => {
     if (!reg || !reg.active || typeof MessageChannel !== "function") return resolve(false);
     const channel = new MessageChannel();
-    channel.port1.onmessage = (ev) => resolve(ev.data === true);
+    // true (kept), false (a file did not come), "full" (the phone's storage is full).
+    channel.port1.onmessage = (ev) => resolve(ev.data === true || ev.data === "full" ? ev.data : false);
     try {
       reg.active.postMessage({ type: "mat-keep-shell" }, [channel.port2]);
     } catch {
@@ -893,19 +894,23 @@ function refillShell() {
   if (!sw || typeof sw.getRegistration !== "function") return Promise.resolve(false);
   refilling = Promise.resolve(sw.getRegistration())
     .then(async (reg) => {
-      if (!reg) return false;
+      if (!reg) return null;
       try {
         await reg.update();
       } catch {
         // no signal or no answer: the copy is asked for anyway
       }
-      if (reg.installing || reg.waiting) return false;
+      if (reg.installing || reg.waiting) return null;
       return keepShell(reg);
     })
     .catch(() => false)
-    .finally(() => {
+    .then((result) => {
       refilling = null;
-      if (readyView) readyView.checkShell();
+      if (readyView) {
+        readyView.refillDone(result);
+        readyView.checkShell();
+      }
+      return result;
     });
   return refilling;
 }

@@ -29,7 +29,7 @@
 //   for starts ("Fetching 9 ticket pictures") and how it ended.
 // Every word is set with textContent.
 
-import { phoneReady, sheetFor, track, isAmber, KEY_JP } from "../ready.js";
+import { phoneReady, sheetFor, track, isAmber, KEY_JP, refillAfter, refillTick, REFILL_START } from "../ready.js";
 import { aheadPictures, fetchMode, isFetching } from "../tickets.js";
 import { standalone } from "./first.js";
 
@@ -185,6 +185,7 @@ export function mountReady(phone, store, { keep, clock, storage, durable = true,
   });
   // Rule 4's answer (shellKept), asked again on controllerchange, a worker changing state, the keep opening and the minute.
   let shell = testShell();
+  let refill = { ...REFILL_START }; // the refill's back-off (js/ready.js refillAfter)
   let shellKnown = shell; // rule 4 has been answered once: nothing is said before (no "Setting up" flash on an ordinary launch)
   let asking = false;
   let askAgain = false;
@@ -442,8 +443,13 @@ export function mountReady(phone, store, { keep, clock, storage, durable = true,
   checkShell();
   setInterval(() => {
     if (document.visibilityState === "hidden") return;
-    // The offline copy is not kept (a refill that failed on weak signal): ask the worker again, with signal.
-    if (!shell && shellKnown && refillShell && store.state.online !== false) refillShell();
+    // The offline copy is not kept (a refill that failed on weak signal): ask the worker again, with
+    // signal, backing off (1, 2, 4 … 30 minutes; roaming data costs), never after the phone said it is full.
+    if (!shell && shellKnown && refillShell && store.state.online !== false) {
+      const t = refillTick(refill);
+      refill = t.state;
+      if (t.go) refillShell();
+    }
     checkShell();
     update();
   }, MINUTE_MS);
@@ -468,6 +474,11 @@ export function mountReady(phone, store, { keep, clock, storage, durable = true,
     passStarted,
     passSettled,
     checkShell,
+    // A refill ended: true (kept), false (failed), "full" (storage full), null (a newer worker fills its own).
+    refillDone(result) {
+      refill = refillAfter(refill, result);
+    },
+    refillState: () => ({ ...refill }),
     open,
     close,
     isOpen: () => opened,

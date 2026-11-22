@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { phoneReady, sheetFor, track, NOTE } from "../js/ready.js";
+import { phoneReady, sheetFor, track, NOTE, refillWait, refillAfter, refillTick, REFILL_START } from "../js/ready.js";
 
 // Made-up trip: Thu Dec 10 to Sun Dec 20, in Japan.
 const DAYS = Array.from({ length: 11 }, (_, i) => ({ date: "2026-12-" + String(10 + i).padStart(2, "0") }));
@@ -214,4 +214,29 @@ test("the sheet: verdict, rows, notes and key for each kind", () => {
   assert.equal(sh(WEEKS, { online: false }, { have: lacking("s1"), mode: "open" }).notes[2], "No signal now. Fetch them when it is back.");
   assert.equal(sh(TWO, {}, { have: lacking("s1", "s2", "s3") }).key, "Fetch all 3 now", "two days before, the sheet's key says what the board's does");
   assert.equal(sh(WEEKS, { online: false }, { have: lacking("s1") }).key, "", "no key with no signal");
+});
+
+test("the offline copy's refill backs off: 1, 2, 4, 8, 16, then 30 minutes between tries; a success resets it; storage full stops it", () => {
+  assert.deepEqual([1, 2, 3, 4, 5, 6, 7, 12].map(refillWait), [1, 2, 4, 8, 16, 30, 30, 30]);
+  // Minutes between tries, counted by the minute's tick, over six failures.
+  let st = { ...REFILL_START };
+  const gaps = [];
+  for (let failed = 0; failed < 6; failed++) {
+    st = refillAfter(st, false);
+    let minutes = 0;
+    for (;;) {
+      minutes++;
+      const t = refillTick(st);
+      st = t.state;
+      if (t.go) break;
+    }
+    gaps.push(minutes);
+  }
+  assert.deepEqual(gaps, [1, 2, 4, 8, 16, 30]);
+  assert.deepEqual(refillAfter(st, true), REFILL_START, "a refill that worked resets it");
+  assert.deepEqual(refillAfter(st, null), st, "a newer worker filling its own copy changes nothing");
+  const full = refillAfter(REFILL_START, "full");
+  assert.equal(full.stopped, true);
+  for (let i = 0; i < 100; i++) assert.equal(refillTick(full).go, false, "storage full: no more tries until the next launch");
+  assert.equal(refillTick(REFILL_START).go, true, "nothing failed yet: a try on the minute");
 });

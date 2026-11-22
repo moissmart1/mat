@@ -523,7 +523,9 @@ module.exports = [
       assert.equal(await page.evaluate(() => document.querySelector("#rdySay").textContent), "1 picture could not be fetched");
       // Refused again: still failed, no toast, no alert.
       await page.click("#rdyKey");
-      await until(async () => (await lineKind(page)) === "failed" && !(await page.evaluate(() => document.querySelector("#rdy.is-open"))), "failed again");
+      await waitKind(page, "failed");
+      // No sheet opened by itself (no toast, no alert either).
+      await atRest(page, "#rdy", { open: false });
       back();
       await page.click("#rdyKey");
       await waitKind(page, "ready");
@@ -675,7 +677,7 @@ module.exports = [
     },
   },
   {
-    name: "Forget this phone, then a pasted link on weak signal: a shell file does not come, so not green; the minute's retry keeps the copy, then green (fix round C1)",
+    name: "Forget this phone, then a pasted link on weak signal: a shell file does not come, so not green; retries back off (1, 2, 4 minutes); once the file comes the copy is kept, then green (fix round C1)",
     serviceWorkers: "allow",
     async run({ page, context }) {
       // One shell file cannot be fetched while the worker refills its copy.
@@ -691,15 +693,26 @@ module.exports = [
       await waitKind(page, "setup", 20000);
       // The failed refill leaves no empty copy behind.
       await until(() => page.evaluate(async () => !(await caches.keys()).some((n) => n.startsWith("mat-shell-"))), "no empty mat-shell- cache is left", 10000);
-      await advance(page, backend, 1000);
+      const failures = () => page.evaluate(() => globalThis.__matTest.ready.refillState().failures);
+      await until(async () => (await failures()) === 1, "the failed refill is counted");
       assert.equal(await lineKind(page), "setup", "not green while the copy is not kept");
       assert.deepEqual(await page.evaluate(() => window.__greens), []);
-      // A minute later, with the file answering again, the copy is asked for again.
+      // Roaming: the tries back off. The first comes a minute later, the next two minutes after that.
+      await advance(page, backend, 60000);
+      await until(async () => aborted >= 2 && (await failures()) === 2, "the first retry, a minute later, fails too", 10000);
+      await advance(page, backend, 60000);
+      await until(() => page.evaluate(() => globalThis.__matTest.ready.refillState().wait === 1), "a minute of the two-minute wait has passed");
+      assert.equal(aborted, 2, "no try a minute later");
+      await advance(page, backend, 60000);
+      await until(async () => aborted >= 3 && (await failures()) === 3, "the next try, two minutes after the last", 10000);
+      assert.equal(await lineKind(page), "setup");
+      // The file answers again: after the four-minute wait the copy is kept, and the line turns green.
       blocked = false;
-      await until(async () => {
-        await advance(page, backend, 60000);
-        return (await lineKind(page)) === "ready";
-      }, "green after the minute's retry", 30000);
+      for (let m = 0; m < 3; m++) await advance(page, backend, 60000);
+      assert.equal(await lineKind(page), "setup", "still waiting out the back-off");
+      await advance(page, backend, 60000);
+      await until(async () => (await lineKind(page)) === "ready", "green after the back-off's try", 15000);
+      assert.deepEqual(await page.evaluate(() => globalThis.__matTest.ready.refillState()), { failures: 0, wait: 0, stopped: false }, "reset by the success");
       await until(() => page.evaluate(() => window.__greens.length > 0), "the look at green has answered");
       assert.deepEqual(await page.evaluate(() => window.__greens), [{ active: true, shell: true }]);
     },

@@ -21,7 +21,7 @@
 //   script.googleusercontent.com), and anything else not listed here.
 // - Only OK answers are ever kept.
 
-const SW_VERSION = "52d78329b3";
+const SW_VERSION = "42e9f1bba9";
 const SHELL_CACHE = "mat-shell-" + SW_VERSION;
 const FONT_CACHE = "mat-fonts";
 
@@ -232,7 +232,7 @@ async function shell(request) {
 // addAll keeps all of SHELL or nothing; when it fails (a file did not come, on
 // weak signal) a cache left incomplete is deleted, so an empty mat-shell- cache
 // never stands for a kept copy. The page asks again on the minute.
-// Answers true on the port once every shell file is kept, false if not.
+// Answers true on the port once every shell file is kept, false if not, "full" when the phone's storage is full.
 function shellComplete(cache) {
   return Promise.all(SHELL.map((url) => cache.match(new Request(url)))).then((hits) => hits.every(Boolean));
 }
@@ -245,7 +245,8 @@ self.addEventListener("message", (event) => {
       .then((cache) =>
         cache.addAll(SHELL.map((url) => new Request(url, { cache: "reload" }))).then(
           () => true,
-          () => shellComplete(cache).then((full) => (full ? true : caches.delete(SHELL_CACHE).then(() => false))),
+          // The phone's storage full: "full", so the page stops asking until its next launch.
+          (err) => shellComplete(cache).then((kept) => (kept ? true : caches.delete(SHELL_CACHE).then(() => (err && err.name === "QuotaExceededError" ? "full" : false)))),
         ),
       )
       .catch(() => false)
