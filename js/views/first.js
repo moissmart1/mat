@@ -320,7 +320,7 @@ export function mountFirst(root, store, { connected = true, storage = defaultSto
     glass.hidden = !glassOn;
     gateNote.hidden = !showNew;
     gate.classList.toggle("rdy-gate", glassOn);
-    setGlass(kept ? GLASS_KEPT : GLASS_NEW);
+    setGlass(kept || checking ? GLASS_KEPT : GLASS_NEW);
     const sayKey = showNew ? (standalone() ? "new-home" : "new-safari") : say;
     if (sayKey && sayKey !== said) {
       if (showNew) {

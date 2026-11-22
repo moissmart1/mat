@@ -76,6 +76,9 @@ module.exports = [
       await page.fill("#keyPaste", ORIGIN + "/#k=test-key");
       await page.click("#keyGo");
       await expectText(page, "#gate p", CHECKING);
+      // The glass says the link is kept while it is being checked, never "Not set up yet".
+      await expectText(page, "#gateGlass", "調整中Link keptWaiting for signal");
+      assert.equal(await visible(page, "#gateNote"), false, "the never-loaded note is only for a phone with no link");
       assert.equal(await visible(page, "#keyPaste"), false, "not the instructions with an emptied field");
       assert.equal(await visible(page, "#keyOther"), false);
       await until(() => hold.count() === 1, "the load is out");
@@ -83,6 +86,8 @@ module.exports = [
       await expectText(page, "#gate p", CHECKING);
       await advance(page, backend, 1000);
       await expectText(page, "#gate p", KEPT);
+      await expectText(page, "#gateGlass", "調整中Link keptWaiting for signal");
+      assert.equal(await visible(page, "#gateNote"), false);
       assert.ok(await visible(page, "#keyOther"));
       await shot(page, "pasteoffline-checking-then-kept.png");
       hold.release();
