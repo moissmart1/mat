@@ -683,7 +683,9 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
         r = await call("rev", {});
       }
     } catch (err) {
-      if (state.linkKept) state.linkFault = faultOf(err); // still no answer, or the sheet answering badly
+      // Still no answer, or the sheet answering badly. A late error is an
+      // earlier boot's key being refused: it says nothing about this one.
+      if (state.linkKept && !(err && err.late)) state.linkFault = faultOf(err);
       changed();
       return;
     }
@@ -783,15 +785,20 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
   // takes the trip off. No signal: dropped, nothing stored.
   async function tryCandidate(candidate) {
     const storedPersonal = base ? base.personal === true : null;
+    const bootAt = boots;
     let r;
     try {
       r = await api("load", {}, { key: candidate });
     } catch (err) {
+      if (bootAt !== boots) return; // a link pasted since: this address key is not tried any more
       if (err && err.code === "bad_key") state.notice = ADDRESS_KEY_REFUSED;
       return;
     }
     const personal = !!(r && r.data && r.data.personal === true);
     if (!(personal || storedPersonal === false) || wiped) return;
+    // A link pasted since this boot began replaced the key: the address key
+    // never overwrites it, and its trip is not opened (round 3 review, I1).
+    if (bootAt !== boots) return;
     setItem("mat.key", candidate);
     // Fix round 2: the reply it already has is the phone's trip at once, so
     // the saved trip says who this is even if the next load fails (else the
@@ -809,7 +816,7 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
   }
 
   async function boot({ candidate = null } = {}) {
-    boots += 1;
+    const mine = ++boots;
     state.keyRefused = false;
     state.linkKept = false;
     state.linkFault = null;
@@ -848,6 +855,7 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
       // a broken cache or queue: the load below replaces it
     }
     if (typeof candidate === "string" && candidate !== "" && candidate !== key) await tryCandidate(candidate);
+    if (mine !== boots) return; // a later boot (a link pasted meanwhile) carries on from here
     if (await refresh()) await flush();
   }
 

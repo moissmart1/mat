@@ -439,6 +439,56 @@ test("a new key pasted while the last one's load still waits: the old answer, re
   assert.equal(st.getItem("mat.cache"), null);
 });
 
+// Round 3 review, I1: the address key of an earlier boot never replaces a link pasted after it.
+test("an address key whose load still hangs when another link is pasted: the pasted key stays, nothing opens as the address key, the old boot stops", async () => {
+  const fake = createFakeBackend(SEED);
+  const ajen = fake.personKey("Ajen"); // in the address (#k=)
+  const trenton = fake.personKey("Trenton"); // pasted with "Use a different link"
+  const storage = memStorage({ "mat.key": KEY, "mat.me": "Mo" }); // a key kept earlier, no trip
+  const p = phone({ fake, storage });
+  const releaseAddress = p.net.hold("load");
+  const first = p.store.boot({ candidate: ajen });
+  await until(() => p.net.sent.length === 1);
+  assert.equal(p.store.state.linkChecking, true);
+  storage.setItem("mat.key", trenton);
+  await p.store.boot();
+  assert.deepEqual([p.store.state.status, p.store.state.me], ["ready", "Trenton"]);
+  releaseAddress(); // the address key's answer arrives now
+  await first;
+  await p.store.idle();
+  const s = p.store.state;
+  assert.equal(storage.getItem("mat.key"), trenton, "the pasted key stays");
+  assert.deepEqual([s.status, s.me, s.personal, s.linkKept, s.linkChecking, s.keyRefused], ["ready", "Trenton", true, false, false, false]);
+  assert.equal(JSON.parse(storage.getItem("mat.cache")).data.me, "Trenton", "the saved trip is the pasted link's");
+  assert.deepEqual(p.net.sent.filter((b) => b.action === "load").map((b) => b.key), [ajen, trenton], "the old boot sends no load of its own");
+  assert.equal(p.net.sent.filter((b) => b.action !== "load").length, 0, "nor anything else");
+  assert.equal(s.notice, null);
+});
+
+// Round 3 review, N1: a late refusal of an earlier boot's key does not say the sheet isn't answering.
+test("a late refusal from an earlier boot's key leaves a kept link's 'no signal' as it was", async () => {
+  const storage = memStorage({ "mat.me": "Mo" });
+  const p = phone({ seed: SEED, storage });
+  await p.store.boot();
+  storage.setItem("mat.key", "not-the-key");
+  const releaseRev = p.net.hold("rev");
+  p.net.offline = true;
+  await p.store.boot();
+  assert.deepEqual([p.store.state.linkKept, p.store.state.linkFault], [true, "signal"]);
+  p.net.offline = false;
+  const checking = p.store.checkRev(); // its rev goes out under the wrong key and hangs
+  await until(() => p.net.sent.some((b) => b.action === "rev"));
+  storage.setItem("mat.key", KEY);
+  p.net.offline = true;
+  await p.store.boot(); // a new link, still no signal
+  assert.deepEqual([p.store.state.linkKept, p.store.state.linkFault], [true, "signal"]);
+  releaseRev(); // the old key's refusal arrives
+  await checking;
+  const s = p.store.state;
+  assert.deepEqual([s.status, s.linkKept, s.linkFault, s.keyRefused], ["nokey", true, "signal", false]);
+  assert.equal(storage.getItem("mat.key"), KEY);
+});
+
 test("me is null when mat.me is missing or not one of the people, and setMe stores it", async () => {
   const a = phone({ storage: memStorage({ "mat.key": KEY }) });
   await a.store.boot();
