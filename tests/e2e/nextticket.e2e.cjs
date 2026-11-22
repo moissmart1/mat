@@ -7,7 +7,7 @@
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
-const { WITH_PLAN, NOON12, makeBackend, open, advance, until, text, expectText, visible } = require("./helpers.cjs");
+const { WITH_PLAN, NOON12, makeBackend, open, advance, until, atRest, text, expectText, visible } = require("./helpers.cjs");
 const { png } = require("./pictures.cjs");
 
 // Pictures are taken only when MAT_TAB_SHOTS names an output folder.
@@ -214,21 +214,23 @@ async function settle(page) {
   let last = "";
   let same = 0;
   let why = "";
-  // Generous: a busy test machine can take a while to lay out and fade.
-  const end = Date.now() + 20000;
   await page.evaluate(() => document.fonts.ready.then(() => true));
-  while (same < 3) {
-    const now = await page.evaluate(() => {
-      const sig = document.fonts.status + "|" + [...document.querySelectorAll("#nextTicket, #rail .pg, .r.is-open, #tix .tstub, #vDays, #vTickets, .sheet.is-open, #ubar")].map((e) => { const b = e.getBoundingClientRect(); return [b.top, b.height, b.width].join(","); }).join(";") + "|" + document.getElementById("vDays").scrollTop;
-      const run = document.getAnimations({ subtree: true }).filter((a) => a.playState === "running" && a.animationName !== "fan" && a.effect && a.effect.getTiming().iterations !== Infinity).map((a) => (a.animationName || a.transitionProperty || "?") + "@" + (a.effect.target ? a.effect.target.className : ""));
-      const faded = [...document.querySelectorAll(".view")].every((v) => getComputedStyle(v).opacity === (v.classList.contains("is-active") ? "1" : "0"));
-      return { sig, still: !run.length && faded && document.fonts.status === "loaded", run };
-    });
-    same = now.sig === last && now.still ? same + 1 : 0;
-    last = now.sig;
-    why = JSON.stringify(now.run);
-    if (Date.now() > end) throw new Error("the page did not settle in 20 s (still moving: " + why + ", fonts " + (await page.evaluate(() => document.fonts.status)) + ")");
-    await new Promise((r) => setTimeout(r, 50));
+  // Generous: a busy test machine can take a while to lay out and fade.
+  try {
+    await until(async () => {
+      const now = await page.evaluate(() => {
+        const sig = document.fonts.status + "|" + [...document.querySelectorAll("#nextTicket, #rail .pg, .r.is-open, #tix .tstub, #vDays, #vTickets, .sheet.is-open, #ubar")].map((e) => { const b = e.getBoundingClientRect(); return [b.top, b.height, b.width].join(","); }).join(";") + "|" + document.getElementById("vDays").scrollTop;
+        const run = document.getAnimations({ subtree: true }).filter((a) => a.playState === "running" && a.animationName !== "fan" && a.effect && a.effect.getTiming().iterations !== Infinity).map((a) => (a.animationName || a.transitionProperty || "?") + "@" + (a.effect.target ? a.effect.target.className : ""));
+        const faded = [...document.querySelectorAll(".view")].every((v) => getComputedStyle(v).opacity === (v.classList.contains("is-active") ? "1" : "0"));
+        return { sig, still: !run.length && faded && document.fonts.status === "loaded", run };
+      });
+      same = now.sig === last && now.still ? same + 1 : 0;
+      last = now.sig;
+      why = JSON.stringify(now.run);
+      return same >= 3;
+    }, "settle", 20000);
+  } catch {
+    throw new Error("the page did not settle in 20 s (still moving: " + why + ", fonts " + (await page.evaluate(() => document.fonts.status)) + ")");
   }
 }
 
@@ -502,33 +504,33 @@ cases.push({
     // The stop sheet, a field focused (the keyboard up).
     await openRow(page, SKY);
     await page.click('#rail .r[data-id="' + SKY + '"] .r-edit');
-    await until(() => page.evaluate(() => document.getElementById("stop").classList.contains("is-open")), "the stop sheet opens");
+    await atRest(page, "#stop", { message: "the stop sheet opens" });
     await page.focus("#stop input[type=text], #stop input:not([type]), #stop textarea");
     await away("the stop sheet with the keyboard up");
     await page.keyboard.press("Escape");
-    await until(() => page.evaluate(() => !document.getElementById("stop").classList.contains("is-open")), "the stop sheet closes");
+    await atRest(page, "#stop", { open: false, message: "the stop sheet closes" });
     await back("the stop sheet");
     // The stay card.
     await page.evaluate(() => document.querySelector('#rail .pg[data-date="2026-12-12"] .tk-stay').scrollIntoView({ block: "center" }));
     await page.click('#rail .pg[data-date="2026-12-12"] .tk-stay');
-    await until(() => page.evaluate(() => document.getElementById("stay").classList.contains("is-open")), "the stay card opens");
+    await atRest(page, "#stay", { message: "the stay card opens" });
     await away("the stay card");
     await page.keyboard.press("Escape");
-    await until(() => page.evaluate(() => !document.getElementById("stay").classList.contains("is-open")), "the stay card closes");
+    await atRest(page, "#stay", { open: false, message: "the stay card closes" });
     await back("the stay card");
     // You.
     await page.click("#youBtn");
-    await until(() => page.evaluate(() => document.getElementById("you").classList.contains("is-open")), "You opens");
+    await atRest(page, "#you", { message: "You opens" });
     await away("You");
     await page.keyboard.press("Escape");
-    await until(() => page.evaluate(() => !document.getElementById("you").classList.contains("is-open")), "You closes");
+    await atRest(page, "#you", { open: false, message: "You closes" });
     await back("You");
     // Ring up.
     await page.click("#ring");
-    await until(() => page.evaluate(() => document.getElementById("phone").classList.contains("reg-open")), "the register opens");
+    await atRest(page, "#reg", { message: "the register opens" });
     await away("Ring up");
     await page.keyboard.press("Escape");
-    await until(() => page.evaluate(() => !document.getElementById("phone").classList.contains("reg-open")), "the register closes");
+    await atRest(page, "#reg", { open: false, message: "the register closes" });
     await back("Ring up");
     // The stub.
     await page.click("#ntBtn");
@@ -555,13 +557,13 @@ cases.push({
       assert.ok(r.top < 120, what + ": the undo line stands at the top (" + r.top + ")");
     };
     await page.click("#youBtn");
-    await until(() => page.evaluate(() => document.getElementById("you").classList.contains("is-open")), "You opens");
+    await atRest(page, "#you", { message: "You opens" });
     await change("You", 1);
     await page.keyboard.press("Escape");
-    await until(() => page.evaluate(() => !document.getElementById("you").classList.contains("is-open")), "You closes");
+    await atRest(page, "#you", { open: false, message: "You closes" });
     await page.evaluate(() => document.querySelector('#rail .pg[data-date="2026-12-12"] .tk-stay').scrollIntoView({ block: "center" }));
     await page.click('#rail .pg[data-date="2026-12-12"] .tk-stay');
-    await until(() => page.evaluate(() => document.getElementById("stay").classList.contains("is-open")), "the stay card opens");
+    await atRest(page, "#stay", { message: "the stay card opens" });
     await change("the stay card", 2);
   },
 });
