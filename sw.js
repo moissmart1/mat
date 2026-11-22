@@ -21,7 +21,7 @@
 //   script.googleusercontent.com), and anything else not listed here.
 // - Only OK answers are ever kept.
 
-const SW_VERSION = "13581f0327";
+const SW_VERSION = "616c3ab73a";
 const SHELL_CACHE = "mat-shell-" + SW_VERSION;
 const FONT_CACHE = "mat-fonts";
 
@@ -224,6 +224,28 @@ async function shell(request) {
     return navigate ? offlinePage() : Response.error();
   }
 }
+
+// The page asks for the offline copy to be kept again (issue 84, fix round
+// C1). Forget this phone deletes it and unregisters this worker; a link pasted
+// then brings the trip back without a reload, and register() from that page
+// revives this same registration, so no install runs to fill the copy again.
+// Answers true on the port once every shell file is kept, false if not.
+self.addEventListener("message", (event) => {
+  if (!event.data || event.data.type !== "mat-keep-shell") return;
+  const port = event.ports && event.ports[0];
+  event.waitUntil(
+    caches
+      .open(SHELL_CACHE)
+      .then((cache) => cache.addAll(SHELL.map((url) => new Request(url, { cache: "reload" }))))
+      .then(
+        () => true,
+        () => false,
+      )
+      .then((ok) => {
+        if (port) port.postMessage(ok);
+      }),
+  );
+});
 
 self.addEventListener("fetch", (event) => {
   const request = event.request;

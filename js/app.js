@@ -771,6 +771,8 @@ function start() {
       try {
         if ("serviceWorker" in navigator) {
           Promise.resolve(navigator.serviceWorker.register("sw.js"))
+            .then(() => navigator.serviceWorker.ready)
+            .then((reg) => keepShell(reg))
             .then(() => ready.checkShell())
             .catch(() => {});
         }
@@ -863,6 +865,22 @@ function start() {
   nothingUnsent = () =>
     store.outbox().unsent === 0 && !store.busy() && !store.state.notice && !bulk.isBusy() && !store.state.queueStorageFailed;
   if (document.visibilityState !== "hidden") startChecking();
+}
+
+// Asks the active worker to keep the offline copy again (sw.js "mat-keep-shell"):
+// register() after Forget revives the same registration, and no install runs
+// to refill what Forget deleted. Resolves once the worker answers.
+function keepShell(reg) {
+  return new Promise((resolve) => {
+    if (!reg || !reg.active || typeof MessageChannel !== "function") return resolve(false);
+    const channel = new MessageChannel();
+    channel.port1.onmessage = (ev) => resolve(ev.data === true);
+    try {
+      reg.active.postMessage({ type: "mat-keep-shell" }, [channel.port2]);
+    } catch {
+      resolve(false);
+    }
+  });
 }
 
 // The offline shell (sw.js). Quietly does nothing where service workers are

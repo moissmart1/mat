@@ -448,7 +448,7 @@ module.exports = [
       // The 20-second store check: the refused one is backing off, nothing is asked, and the line, its focus and the strip stay as they are.
       await page.focus("#rdyKey");
       await page.evaluate(() => {
-        window.__kinds = [];
+        window.__kinds = [document.querySelector("#vDays .rdy").dataset.kind];
         window.__say = 0;
         new MutationObserver(() => {
           const k = document.querySelector("#vDays .rdy").dataset.kind;
@@ -461,7 +461,7 @@ module.exports = [
       await page.evaluate(() => globalThis.__matTest.store.checkRev());
       await advance(page, backend, 100);
       assert.equal(backend.requests.filter((b) => b.action === "ticket").length, asked, "nothing asked while it backs off");
-      assert.deepEqual(await kinds(page), [], "no fetching and back");
+      assert.deepEqual(await kinds(page), ["failed"], "no fetching and back");
       assert.equal(await page.evaluate(() => window.__say), 0, "nothing said again");
       assert.equal(await page.evaluate(() => document.activeElement.id), "rdyKey", "focus stays on Try again");
       back();
@@ -625,21 +625,14 @@ module.exports = [
     },
   },
   {
-    name: "Forget this phone, then a pasted link: Setting up until the worker is back and has its offline copy, then green (fix round C1)",
+    name: "Forget this phone, then a pasted link: green only once the worker is back and its offline copy kept again (fix round C1)",
     serviceWorkers: "allow",
-    async run({ page, context }) {
+    async run({ page }) {
       const backend = await backendAt(WEEKS);
       await twelve(backend);
       await openDays(page, { backend, nowMs: WEEKS, shell: false });
       await until(() => page.evaluate(() => !!navigator.serviceWorker.controller), "the worker takes the page", 20000);
       await waitKind(page, "ready");
-      // The worker's script is held from here, so its coming back can be watched.
-      let let_go = null;
-      const held = new Promise((r) => (let_go = r));
-      await context.route("**/sw.js", async (route) => {
-        await held;
-        await route.continue();
-      });
       await page.click("#youBtn");
       await atRest(page, "#you");
       await page.dispatchEvent("#setForget", "click");
@@ -647,19 +640,28 @@ module.exports = [
       await until(() => visible(page, "#gateGlass"), "the never-loaded screen", 10000);
       await atRest(page, "#you", { open: false, message: "Settings closed" });
       assert.deepEqual(await page.evaluate(async () => ({ regs: (await navigator.serviceWorker.getRegistrations()).length, shell: (await caches.keys()).some((n) => n.startsWith("mat-shell-")) })), { regs: 0, shell: false });
+      // From the paste on: each time the line turns green, look at once whether the worker and its offline copy are really there.
+      await page.evaluate(() => {
+        window.__greens = [];
+        const l = document.querySelector("#vDays .rdy");
+        let was = null;
+        new MutationObserver(async () => {
+          const k = !l.hidden ? l.dataset.kind : null;
+          if (k === was) return;
+          was = k;
+          if (k !== "ready") return;
+          const regs = await navigator.serviceWorker.getRegistrations();
+          const shell = (await caches.keys()).some((n) => n.startsWith("mat-shell-"));
+          window.__greens.push({ active: regs.length === 1 && !!regs[0].active, shell });
+        }).observe(l, { attributes: true, attributeFilter: ["data-kind", "hidden"] });
+      });
       await page.fill("#keyPaste", "http://localhost:" + process.env.MAT_PORT + "/#k=" + KEY);
       await page.click("#keyGo");
       await until(() => page.evaluate(() => document.querySelectorAll("#rail .tk").length > 0), "the trip is back", 10000);
-      // Every picture fetched again, but no worker and no offline copy yet: not ready.
-      await waitKind(page, "setup", 15000);
-      assert.equal(await page.evaluate(() => !!navigator.serviceWorker.controller), true, "the page still has its old controller: not proof of anything");
-      let_go();
-      await until(() => page.evaluate(async () => (await caches.keys()).some((n) => n.startsWith("mat-shell-"))), "the offline copy is kept again", 20000);
-      // Asked again when the worker changes state (or on the minute).
-      await until(async () => {
-        await advance(page, backend, 60000);
-        return (await lineKind(page)) === "ready";
-      }, "green once the worker is back", 20000);
+      assert.equal(await page.evaluate(() => !!navigator.serviceWorker.controller), true, "the page keeps its old controller all along: not proof of anything");
+      await waitKind(page, "ready", 20000);
+      await until(() => page.evaluate(() => window.__greens.length > 0), "the look at green has answered");
+      assert.deepEqual(await page.evaluate(() => window.__greens), [{ active: true, shell: true }], "green only once the worker is back and its offline copy is kept again");
     },
   },
   {
