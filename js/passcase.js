@@ -26,18 +26,20 @@
 //   the key's badge.
 // - empty: no stop has a ticket (or the tickets are not loaded yet).
 // Each ticket: { id, date, time, title, detail, seat, day, line, colour,
-//   status: { kind: "have" | "needs" | "ref", label, ref }, first, lead }
+//   status: { kind: "have" | "needs" | "ref", label, ref }, first, lead, whose }
 // - first: the first picture's id (this phone's person's first) when it is
 //   on this phone, else null.
 // - lead: the window's only: the leave line the departure board prints for
 //   today's next stop (travel minutes, or where the phone is), else null.
+// - whose: whose it is for this phone's person (js/tickets.js whoseOf):
+//   { kind: "mine" | "all" | "none" | "ref", seat, holders, count }.
 // - hook: the stay shown tonight (stayShownFor, so before 04:00 last night's)
 //   when it has a booking (stayMark), as { id, name, ref, n, total, state,
 //   mark } (nightOf), else null. It changes nothing else: a stay's pictures
 //   are never in the window, a pocket or a count.
 
 import { tripNow, stopsFor, nextStopId, isPast, minutesOf, nextLine, hereLine, header, stayShownFor, nightOf } from "./plan.js";
-import { ticketMark, ticketKinds, stayMark } from "./tickets.js";
+import { ticketMark, ticketKinds, stayMark, whoseOf, sameName } from "./tickets.js";
 import { tidyLine } from "./board.js";
 
 const str = (v) => (typeof v === "string" ? v.trim() : "");
@@ -61,7 +63,7 @@ function statusOf(mark, stop) {
 function firstPicture(pics, me, have) {
   const k = ticketKinds(pics);
   if (!k.kind) return null;
-  const sorted = k.list.slice().sort((a, b) => (a.who === me ? 0 : 1) - (b.who === me ? 0 : 1) || (Number(a.page) || 0) - (Number(b.page) || 0));
+  const sorted = k.list.slice().sort((a, b) => (sameName(a.who, me) ? 0 : 1) - (sameName(b.who, me) ? 0 : 1) || (Number(a.page) || 0) - (Number(b.page) || 0));
   const first = sorted[0];
   return first && have(first.id) ? first.id : null;
 }
@@ -74,6 +76,8 @@ export function passCase(s, nowMs, { have = () => false, here = null } = {}) {
   const days = list(s.days).filter((d) => d && typeof d.date === "string");
   const stops = list(s.stops).filter((x) => x && typeof x.id === "string" && x.id && typeof x.date === "string" && x.date && !x.deleted);
   const tickets = list(s.tickets).filter((t) => t && typeof t.id === "string" && t.id);
+  const people = list(s.people).map((p) => (p && typeof p.name === "string" ? p.name : "")).filter(Boolean);
+  const me = typeof s.me === "string" ? s.me : "";
 
   // The hook: tonight's stay, when it has a booking (before the case's own tickets, so it shows with none).
   const clock = { today: now.date, minutes: now.minutes };
@@ -95,6 +99,7 @@ export function passCase(s, nowMs, { have = () => false, here = null } = {}) {
     for (const stop of dayStops) {
       const mark = ticketMark(stop, tickets, have);
       if (!mark) continue;
+      const pics = tickets.filter((p) => p.stop === stop.id);
       const used = date < now.date || (date === now.date && isPast(stop, now.minutes, nextId));
       all.push({
         used,
@@ -111,8 +116,9 @@ export function passCase(s, nowMs, { have = () => false, here = null } = {}) {
           colour: h.colour,
           ink: h.ink,
           status: statusOf(mark, stop),
-          first: mark.kind === "ref" ? null : firstPicture(tickets.filter((p) => p.stop === stop.id), s.me, have),
+          first: mark.kind === "ref" ? null : firstPicture(pics, s.me, have),
           lead: null,
+          whose: whoseOf(stop, pics, me, people),
         },
       });
     }

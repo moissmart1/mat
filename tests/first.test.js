@@ -15,3 +15,19 @@ test("keyFromPaste refuses what cannot be a key", () => {
     assert.equal(keyFromPaste(bad), null, JSON.stringify(bad));
   }
 });
+
+test("never loaded (issue 84): the Home Screen app's paper and Safari's, the glass, the line under the field", async () => {
+  const { newPaper, GLASS_NEW, NEW_NOTE } = await import("../js/views/first.js");
+  assert.deepEqual(newPaper(true), {
+    head: "Nothing of the trip is in this app yet.",
+    text: "The Home Screen app keeps its own copy, apart from Safari. Find the email with your own MAT link, press and hold the link, tap Copy Link, then paste it here.",
+  });
+  assert.deepEqual(newPaper(false), { head: "Nothing of the trip is on this phone yet.", text: "Open your MAT link from your email again, or paste it here." });
+  assert.deepEqual(GLASS_NEW, { mark: "調整中", top: "Not set up yet", under: "Needs your link and signal, once" });
+  assert.equal(NEW_NOTE, "With signal it fetches the trip and every ticket picture, once. No signal? Paste anyway: it keeps the link and opens by itself when signal is back.");
+});
+
+test("never loaded: the “opens by itself” sentence is said now that issue 85 makes it true", async () => {
+  const { NEW_NOTE } = await import("../js/views/first.js");
+  assert.match(NEW_NOTE, /Paste anyway: it keeps the link and opens by itself when signal is back\./);
+});

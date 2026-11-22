@@ -6,7 +6,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
-import { LIMITS, sniff, shrink, createKeep, keptOrLate, readKept, fetchMissing, toBase64, fromBase64, ticketKinds, ticketMark, fetchMode, setFetchMode, fetchesAll, pruneKeep, fetchOrder } from "../js/tickets.js";
+import { LIMITS, sniff, shrink, createKeep, keptOrLate, readKept, fetchMissing, toBase64, fromBase64, ticketKinds, ticketMark, whoseOf, sameName, fetchMode, setFetchMode, fetchesAll, pruneKeep, fetchOrder, aheadPictures, isFetching } from "../js/tickets.js";
 import { createApi } from "../js/api.js";
 import { createStore } from "../js/store.js";
 import { changeText } from "../js/format.js";
@@ -354,6 +354,60 @@ test("fetchMissing does nothing before migrate, or when nothing lasts (private m
   assert.equal(calls.ids.length, 0);
 });
 
+test("aheadPictures: the stay you are in, then from today on; never past, deleted, pending or failed ones (issue 84)", () => {
+  const s = {
+    trip: { tz: "Asia/Tokyo" },
+    stops: [...STOPS, { id: "gone0001", date: "2026-12-13", time: "09:00", deleted: true }],
+    stays: [{ id: "inn00001", firstNight: "2026-12-10", lastNight: "2026-12-12" }],
+    tickets: [T("t1", "past0001"), T("t2", "late0001"), T("t3", "soon0001"), T("t4", "soon0002"), T("t5", "soon0001", { pending: true }), T("t6", "gone0001"), T("t7", "soon0001", { failed: true }), { ...T("i1", null), stop: undefined, stay: "inn00001" }],
+  };
+  assert.deepEqual(aheadPictures(s, NOW12).map((t) => t.id), ["i1", "t4", "t3", "t2"]);
+  // fetchOrder is the same groups with the past ones after them.
+  assert.deepEqual(fetchOrder(s, NOW12).map((t) => t.id), ["i1", "t4", "t3", "t2", "t1"]);
+});
+
+test("fetchMissing with force forgets the back-off first; isFetching says a pass runs", async () => {
+  const keep = createKeep({ indexedDB: fakeIndexedDB() });
+  await keep.ready;
+  let broken = true;
+  const { store, calls } = fakeStore({
+    tickets: [T("t1", "soon0001")],
+    stops: STOPS,
+    answer: (id) => (broken ? { id, mime: "image/png", data: Buffer.from("<svg/>").toString("base64") } : { id, mime: "image/png", data: pngData }),
+  });
+  assert.equal(isFetching(store), false);
+  const p = fetchMissing(store, keep, { now: () => NOW12 });
+  assert.equal(isFetching(store), true);
+  await p;
+  assert.equal(isFetching(store), false);
+  assert.equal(keep.have("t1"), false);
+  broken = false;
+  await fetchMissing(store, keep, { now: () => NOW12 + 1000 });
+  assert.equal(calls.ids.length, 1, "backing off: not asked again at once");
+  await fetchMissing(store, keep, { now: () => NOW12 + 2000, force: true });
+  assert.equal(calls.ids.length, 2, "force: asked again");
+  assert.equal(keep.have("t1"), true);
+});
+
+test("fetchMissing onFirst: called once, just before the first request; never by a pass that asks nothing (fix round I2)", async () => {
+  const keep = createKeep({ indexedDB: fakeIndexedDB() });
+  await keep.ready;
+  let broken = true;
+  const { store, calls } = fakeStore({
+    tickets: [T("t1", "soon0001"), T("t2", "soon0002")],
+    stops: STOPS,
+    answer: (id) => (broken ? { id, mime: "image/png", data: Buffer.from("<svg/>").toString("base64") } : { id, mime: "image/png", data: pngData }),
+  });
+  let first = 0;
+  await fetchMissing(store, keep, { now: () => NOW12, onFirst: () => first++ });
+  assert.equal(first, 1, "once for two requests");
+  assert.equal(calls.ids.length, 2);
+  broken = false;
+  await fetchMissing(store, keep, { now: () => NOW12 + 1000, onFirst: () => first++ });
+  assert.equal(first, 1, "both backing off: nothing asked, no call");
+  assert.equal(calls.ids.length, 2);
+});
+
 // ---------- what a stop's tickets look like ----------
 
 test("ticketKinds and ticketMark: per-person codes, one code, pages, reference only, or nothing", () => {
@@ -370,6 +424,46 @@ test("ticketKinds and ticketMark: per-person codes, one code, pages, reference o
   assert.equal(ticketKinds([T("a", "s", { gone: true })]).kind, null);
   // Only this stop's, and never a removed one.
   assert.equal(ticketMark({ id: "s" }, [T("x", "other")], has), null);
+});
+
+test("whoseOf: mine (my first picture's seat by page, else the stop's, else none), all, none, ref; holders in trip order", () => {
+  const people = ["Mo", "Ajen", "Trenton"];
+  const stop = { id: "s", tkSeat: "Car 7 · 10A–C" };
+  // Per-person, one mine: my first page's seat.
+  const pp = [T("t", "s", { who: "Trenton", seat: "Car 7 · 10C" }), T("a2", "s", { who: "Ajen", seat: "Car 9 · 1A", page: 2 }), T("a1", "s", { who: "Ajen", seat: "Car 7 · 10B", page: 1 }), T("m", "s", { who: "Mo", seat: "Car 7 · 10A" })];
+  assert.deepEqual(whoseOf(stop, pp, "Ajen", people), { kind: "mine", seat: "Car 7 · 10B", holders: ["Mo", "Ajen", "Trenton"], count: 3 });
+  // My picture has no seat: the stop's; neither: "".
+  const noSeat = [T("a", "s", { who: "Ajen" }), T("m", "s", { who: "Mo", seat: "Car 7 · 10A" })];
+  assert.equal(whoseOf(stop, noSeat, "Ajen", people).seat, "Car 7 · 10A–C");
+  assert.equal(whoseOf({ id: "s" }, noSeat, "Ajen", people).seat, "");
+  assert.equal(whoseOf({ id: "s", tkSeat: "  " }, noSeat, "Ajen", people).seat, "");
+  // Per-person, none mine, one for everyone: all, with the stop's seat.
+  const withAll = [T("m", "s", { who: "Mo" }), T("e", "s", { who: "" })];
+  assert.deepEqual(whoseOf(stop, withAll, "Ajen", people), { kind: "all", seat: "Car 7 · 10A–C", holders: ["Mo"], count: 1 });
+  // Per-person, none mine, none for everyone: none, no seat.
+  const others = [T("t", "s", { who: "Trenton" }), T("m", "s", { who: "Mo" })];
+  assert.deepEqual(whoseOf(stop, others, "Ajen", people), { kind: "none", seat: "", holders: ["Mo", "Trenton"], count: 2 });
+  // One code, or pages: all of us.
+  assert.deepEqual(whoseOf(stop, [T("o", "s")], "Ajen", people), { kind: "all", seat: "Car 7 · 10A–C", holders: [], count: 0 });
+  assert.equal(whoseOf(stop, [T("p1", "s", { page: 1 }), T("p2", "s", { page: 2 })], "Ajen", people).kind, "all");
+  // Facts only: ref; nothing at all: null.
+  assert.deepEqual(whoseOf({ id: "s", tkRef: "TEST-1", tkSeat: "Table 4" }, [], "Ajen", people), { kind: "ref", seat: "Table 4", holders: [], count: 0 });
+  assert.equal(whoseOf({ id: "s" }, [], "Ajen", people), null);
+  assert.equal(whoseOf(null, pp, "Ajen", people), null);
+  // Only this stop's live pictures count.
+  assert.equal(whoseOf(stop, [T("x", "other", { who: "Ajen" }), T("g", "s", { who: "Ajen", gone: true }), ...others], "Ajen", people).kind, "none");
+  // Nobody chosen (a shared link): nobody's.
+  assert.equal(whoseOf(stop, pp, "", people).kind, "none");
+  assert.equal(whoseOf(stop, pp, null, people).kind, "none");
+  assert.equal(whoseOf(stop, withAll, "", people).kind, "all");
+  // Names match trimmed and in any case (as the backend matches a name); a holder is counted once.
+  assert.equal(sameName(" Ajen ", "ajen"), true);
+  assert.equal(sameName("", ""), false);
+  assert.equal(sameName(null, "Ajen"), false);
+  assert.deepEqual(whoseOf(stop, [T("a", "s", { who: "ajen ", seat: "Car 7 · 10B" }), T("m", "s", { who: "Mo" })], "Ajen", people), { kind: "mine", seat: "Car 7 · 10B", holders: ["Mo", "ajen "], count: 2 });
+  assert.deepEqual(whoseOf(stop, [T("a", "s", { who: "Ajen" }), T("b", "s", { who: "AJEN", page: 2 })], "Mo", people).holders, ["Ajen"]);
+  // A holder not among the people stands after them, by name.
+  assert.deepEqual(whoseOf(stop, [T("z", "s", { who: "Zed" }), T("b", "s", { who: "Bea" }), T("t", "s", { who: "Trenton" })], "Mo", people).holders, ["Trenton", "Bea", "Zed"]);
 });
 
 // ---------- the store ----------

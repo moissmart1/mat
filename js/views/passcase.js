@@ -26,9 +26,18 @@
 //   It shows even with no stop ticket at all.
 // - A ticket's first picture, small in the window, comes from the keep (the
 //   pictures already on this phone, js/tickets.js); nothing is fetched here.
+// - Whose each ticket is (passCase's whose, js/tickets.js whoseOf; issue #83,
+//   Mo's pick B-2): the window's ticket carries a holder's line along its
+//   foot as a commuter pass does (your seal, your name 様 and seat, the other
+//   holders' seals; 全 ALL OF US; a dashed seal NONE FOR YOU YET), Show
+//   ticket's right side says Yours / All of us / Not yours, and every slot
+//   has a whose column (a seal and Yours, All of us or None yet; a reference
+//   keeps its number). Every label says it in words too.
 // Every title, detail, seat and reference goes in with textContent.
 
 import { passCase } from "../passcase.js";
+import { sealFor, photoSig } from "./nextticket.js";
+import { sameName } from "../tickets.js";
 import { dayHead } from "../format.js";
 import { nightsShort, nightsLong } from "../staywords.js";
 
@@ -67,6 +76,18 @@ function statusLine(st) {
 }
 const statusWords = (st) => (st.kind === "ref" ? "reference only" + (st.ref ? ", " + st.ref : "") : st.label + (st.kind === "have" ? ", on this phone" : ", needs signal once"));
 
+// Names in a sentence: "Mo", "Mo and Trenton", "Mo, Trenton and Ajen".
+const names = (list) => (list.length < 2 ? list.join("") : list.slice(0, -1).join(", ") + " and " + list[list.length - 1]);
+// Whose it is, for a label: ", yours, Car 7 · 10B", ", one code for all of us", ", no code for you yet, Mo and Trenton have theirs".
+function whoseWords(t) {
+  const w = t.whose;
+  if (!w || w.kind === "ref") return "";
+  if (w.kind === "mine") return ", yours" + (w.seat ? ", " + w.seat : "");
+  if (w.kind === "all") return w.count > 0 ? ", a code for all of us" : t.status.label && / pages$/.test(t.status.label) ? ", " + t.status.label + " for all of us" : ", one code for all of us";
+  const h = (w.holders || []).filter(Boolean);
+  return ", no code for you yet" + (h.length ? ", " + names(h) + (h.length === 1 ? " has theirs" : " have theirs") : "");
+}
+
 // A seat breaks only at its " · ", never inside "10A–C".
 function seatEl(seat) {
   const n = el("span", "pc-seat");
@@ -91,6 +112,48 @@ export function mountPassCase(root, store, { clock, keep, where = null, onTicket
     for (const u of urls) URL.revokeObjectURL(u);
     urls = [];
   };
+
+  const personOf = (name) => (store.state.people || []).find((p) => p && sameName(p.name, name)) || null;
+  const meName = () => (typeof store.state.me === "string" ? store.state.me : "");
+
+  // The holder's line along the foot of the window's ticket, under a rule.
+  function nameLine(t) {
+    const w = t.whose;
+    if (!w || w.kind === "ref") return null;
+    const me = meName();
+    const line = el("span", "wh-name");
+    line.dataset.whose = w.kind;
+    const others = (w.holders || []).filter((n) => n && !sameName(n, me));
+    if (w.kind === "mine") {
+      const b = el("b", "", me.toUpperCase());
+      b.append(el("i", "", "様"));
+      line.append(sealFor("me", personOf(me), me, "s30"), b);
+      if (w.seat) line.append(el("span", "wh-name-s", w.seat));
+    } else if (w.kind === "all") {
+      line.append(sealFor("all", null, "", "s30"), el("b", "", "ALL OF US"));
+      if (w.seat) line.append(el("span", "wh-name-s", w.seat));
+    } else {
+      line.append(sealFor("none", null, "", "s30"), el("b", "wh-none", "NONE FOR YOU YET"));
+    }
+    if (w.kind !== "all" && others.length) {
+      const o = el("span", "wh-oth");
+      for (const n of others) o.append(sealFor("other", personOf(n), n));
+      line.append(o);
+    }
+    return line;
+  }
+
+  // A slot's whose column: a seal and one word (a reference keeps its number instead).
+  function whoseCol(t) {
+    const w = t.whose;
+    const col = el("span", "wh-col");
+    col.dataset.whose = w.kind;
+    const me = meName();
+    if (w.kind === "mine") col.append(sealFor("me", personOf(me), me, "s28"), el("i", "", "Yours"));
+    else if (w.kind === "all") col.append(sealFor("all", null, "", "s28"), el("i", "", "All of us"));
+    else col.append(sealFor("none", null, "", "s28"), el("i", "", "None yet"));
+    return col;
+  }
 
   // A ticket's first picture, small: drawn once the keep hands it over.
   function thumb(id) {
@@ -118,7 +181,7 @@ export function mountPassCase(root, store, { clock, keep, where = null, onTicket
       b.style.setProperty("--line", t.colour);
       if (t.ink) b.style.setProperty("--line-ink", t.ink); // the same ink the Days ticket and the stub use for this colour
     }
-    b.setAttribute("aria-label", "Show ticket: " + (t.title || "the next ticket") + (t.time ? ", " + t.time : "") + ", " + statusWords(t.status));
+    b.setAttribute("aria-label", "Show ticket: " + (t.title || "the next ticket") + (t.time ? ", " + t.time : "") + ", " + statusWords(t.status) + whoseWords(t));
     const band = el("span", "pc-band");
     const name = el("span", "pc-bn");
     if (t.line && (t.line.jp || t.line.en)) {
@@ -152,10 +215,14 @@ export function mountPassCase(root, store, { clock, keep, where = null, onTicket
     } else if (t.first) {
       const side = el("span", "pc-side");
       side.append(thumb(t.first));
-      if (t.seat) side.append(seatEl(t.seat));
+      // Your own code: your seat under it (else the stop's).
+      const seat = t.whose && t.whose.kind === "mine" ? t.whose.seat : t.seat;
+      if (seat) side.append(seatEl(seat));
       body.append(side);
     }
     b.append(band, body);
+    const nl = nameLine(t);
+    if (nl) b.append(nl);
     return b;
   }
 
@@ -168,10 +235,11 @@ export function mountPassCase(root, store, { clock, keep, where = null, onTicket
     const head = dayHead(t.date, []).en; // "Tue Dec 15"
     const [wd, , dn] = head.split(" ");
     const other = t.date !== today;
-    b.setAttribute("aria-label", (pocket === "used" ? "Used: " : "Show ticket: ") + (t.title || "Ticket") + ", " + (other ? head + (t.time ? " " : "") : "") + (t.time || (other ? "" : "today")) + ", " + statusWords(t.status));
+    b.setAttribute("aria-label", (pocket === "used" ? "Used: " : "Show ticket: ") + (t.title || "Ticket") + ", " + (other ? head + (t.time ? " " : "") : "") + (t.time || (other ? "" : "today")) + ", " + statusWords(t.status) + whoseWords(t));
     const time = el("span", "pc-t");
     time.append(t.time || "—");
-    if (other && t.status.kind === "ref") time.append(el("small", "", wd + " " + dn));
+    // A later (or earlier) day's date under the time: the right is whose it is.
+    if (other) time.append(el("small", "", wd + " " + dn));
     const n = el("span", "pc-n");
     n.append(el("span", "pc-nt", t.title || "Ticket"), statusLine(t.status));
     b.append(time, n);
@@ -179,11 +247,8 @@ export function mountPassCase(root, store, { clock, keep, where = null, onTicket
       const r = el("span", "pc-refno", t.status.ref);
       r.append(deco("small", "", "予約番号"));
       b.append(r);
-    } else if (other) {
-      const d = el("span", "pc-d");
-      d.append(el("em", "", dn), wd);
-      b.append(d);
-    } else b.append(deco("span", "pc-d", "›"));
+    } else if (t.whose && t.whose.kind !== "ref") b.append(whoseCol(t));
+    else b.append(deco("span", "pc-d", "›"));
     wrap.append(b);
     return wrap;
   }
@@ -216,6 +281,15 @@ export function mountPassCase(root, store, { clock, keep, where = null, onTicket
     show.setAttribute("aria-label", "Show booking: " + k.name + (nl ? ", " + nl.toLowerCase() : ""));
     box.append(show);
     return box;
+  }
+
+  // Show ticket's right side: Yours · Car 7 · 10B, All of us · seat, Not yours; a reference its seat.
+  function showWords(t) {
+    const w = t.whose;
+    if (!w || w.kind === "ref") return t.seat;
+    if (w.kind === "mine") return w.seat ? "Yours · " + w.seat : "Yours";
+    if (w.kind === "all") return w.seat ? "All of us · " + w.seat : "All of us";
+    return "Not yours";
   }
 
   function foil(jp, en, right) {
@@ -271,8 +345,9 @@ export function mountPassCase(root, store, { clock, keep, where = null, onTicket
       const w = el("span");
       w.append(deco("b", "", "切符"), "Show ticket");
       show.append(w);
-      if (c.next.seat) show.append(el("i", "", c.next.seat));
-      show.setAttribute("aria-label", "Show ticket: " + (c.next.title || "the next ticket"));
+      const sw = showWords(c.next);
+      if (sw) show.append(el("i", "", sw));
+      show.setAttribute("aria-label", "Show ticket: " + (c.next.title || "the next ticket") + whoseWords(c.next));
       box.append(show);
     } else {
       const none = el("div", "pc-none");
@@ -332,7 +407,9 @@ export function mountPassCase(root, store, { clock, keep, where = null, onTicket
     // The "in N min" line changes every minute: that text is updated where it
     // stands, so the case, its buttons and the picture are not rebuilt (focus
     // and the picture stay). Anything else that changed redraws.
-    const next = JSON.stringify([c.next ? { ...c.next, lead: !!c.next.lead } : null, { ...c, next: null }, beforeOpen]);
+    // The seals follow the people's pictures and who is on this phone.
+    const faces = [(s.people || []).map((p) => [p && p.name, photoSig(p)]), s.me];
+    const next = JSON.stringify([c.next ? { ...c.next, lead: !!c.next.lead } : null, { ...c, next: null }, beforeOpen, faces]);
     if (next === sig) {
       const lt = section.querySelector("#pcWin .pc-lt");
       const want = c.next && c.next.lead ? c.next.lead : "";

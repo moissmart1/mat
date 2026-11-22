@@ -37,7 +37,7 @@ module.exports = [
 
       await page.reload();
       await until(() => visible(page, "#gate"), "the no-key screen after a reload");
-      assert.equal(await text(page, "#gate p"), "This phone needs the trip link. Open it from your email again, or paste it here.");
+      assert.equal(await text(page, "#gate p"), "Nothing of the trip is on this phone yet. Open your MAT link from your email again, or paste it here.");
       assert.equal(await drawsTrip(page), false);
       assert.equal(await store(page, () => globalThis.__matTest.store.state.expenses.length), 0);
       assert.deepEqual(await matKeys(page), []);
@@ -79,7 +79,7 @@ module.exports = [
       // The no-key screen (over everything) shows at once; Settings closes once
       // the pictures, the offline copy and the worker are gone, the end of Forget.
       await atRest(page, "#you", { open: false, message: "Settings closed" });
-      assert.equal(await text(page, "#gate p"), "This phone needs the trip link. Open it from your email again, or paste it here.");
+      assert.equal(await text(page, "#gate p"), "Nothing of the trip is on this phone yet. Open your MAT link from your email again, or paste it here.");
       assert.deepEqual(await matKeys(page), []);
       assert.equal(await drawsTrip(page), false);
       await page.reload();

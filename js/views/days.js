@@ -76,7 +76,12 @@ const drawn = new WeakMap();
 // line, and without its distances (they move as the phone does).
 const LEAD = /(<b class="r-lv)(?: is-late)?(">)[^<]*(<\/b>)/;
 const DIST = /(<span class="dist">)[^<]*(<\/span>)/g;
-const withoutLead = (html) => html.replace(LEAD, "$1$2$3").replace(DIST, "$1$2");
+// And without its 券 line and the words on Show ticket's right (whose it is,
+// a picture reaching this phone, a person's picture changed: issue #83), so a
+// row keeps its node, and Show ticket the focus the stub hands back to it.
+const MARK = /<div class="r-fx tk-mark[^"]*">[\s\S]*?<\/div>/;
+const TKI = /(<button class="r-tk"[^>]*>[\s\S]*?<i>)[^<]*(<\/i>)/;
+const withoutLead = (html) => html.replace(LEAD, "$1$2$3").replace(DIST, "$1$2").replace(MARK, "").replace(TKI, "$1$2");
 
 // Puts the fresh rows into `rows` in order, keeping each old row that is
 // drawn the same. A row that differs only in its leave-by line's words (the
@@ -100,6 +105,12 @@ function patchRows(rows, fresh) {
         lead.textContent = next.textContent;
         if (lead.className !== next.className) lead.className = next.className;
       }
+      const mk = keep.querySelector(".tk-mark");
+      const nmk = r.querySelector(".tk-mark");
+      if (mk && nmk && mk.outerHTML !== nmk.outerHTML) mk.replaceWith(nmk);
+      const ti = keep.querySelector(".r-tk i");
+      const nti = r.querySelector(".r-tk i");
+      if (ti && nti && ti.textContent !== nti.textContent) ti.textContent = nti.textContent;
       const from = r.querySelectorAll(".dist");
       keep.querySelectorAll(".dist").forEach((d, i) => {
         if (from[i] && d.textContent !== from[i].textContent) d.textContent = from[i].textContent;
@@ -168,7 +179,7 @@ function patchTicket(old, fresh) {
   return old;
 }
 
-export function mountDays(root, store, { clock, where = null, storage = null, onAllDays = () => {}, onStay = () => {}, onStop = () => {}, onAddStop = () => {}, onStampBook = () => {}, held = () => false, tickets = null, onTicket = () => {} } = {}) {
+export function mountDays(root, store, { clock, where = null, storage = null, ready = null, onAllDays = () => {}, onStay = () => {}, onStop = () => {}, onAddStop = () => {}, onStampBook = () => {}, held = () => false, tickets = null, onTicket = () => {} } = {}) {
   const count = el("button", "bar-t");
   count.type = "button";
   count.id = "dayCount";
@@ -202,8 +213,16 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
   demo.hidden = true;
   demoStop.addEventListener("click", () => clock.stop());
   // The departure board (js/views/board.js): between the top line and the rail.
-  const board = mountBoard({ storage });
-  root.replaceChildren(demo, bar, board.el, rail);
+  // The line "This phone" (js/views/ready.js, issue 84) right after it: the
+  // board's foot when the board shows, alone in the same glass when not.
+  const board = mountBoard({ storage, onToggle: (on) => joinFoot(on) });
+  function joinFoot(on = board.isShown()) {
+    if (!ready) return;
+    // The line's place counts while it is being decided too (js/views/ready.js is-pending).
+    board.foot(on && !ready.el.hidden);
+    ready.el.classList.toggle("is-alone", !on);
+  }
+  root.replaceChildren(demo, bar, board.el, ...(ready ? [ready.el] : []), rail);
 
   let dates = []; // the dates of the drawn tickets, in order
   let states = []; // each one's dayState
@@ -238,7 +257,7 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
 
   // The part of the Days view a row can be read in, in the same terms: below
   // the status bar and no-signal strip (the view's top padding) and the demo
-  // banner, above the tab bar.
+  // banner, above the tab bar and the next ticket's slot (js/views/nextticket.js).
   function readable() {
     const pad = parseFloat(getComputedStyle(root).paddingTop) || 0;
     const banner = demo.hidden ? 0 : demo.offsetHeight;
@@ -246,7 +265,10 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
     const box = root.getBoundingClientRect();
     // Held sideways the bar is a rail beside the view, not over its foot.
     const bar = nav && nav.offsetHeight ? nav.getBoundingClientRect() : null;
-    const under = bar && bar.left < box.right && bar.right > box.left ? Math.max(0, box.bottom - bar.top) : 0;
+    const slot = document.getElementById("nextTicket");
+    const st = slot && !slot.hidden && slot.offsetHeight ? slot.getBoundingClientRect() : null;
+    const over = (r) => (r && r.left < box.right && r.right > box.left ? Math.max(0, box.bottom - r.top) : 0);
+    const under = Math.max(over(bar), over(st));
     const top = root.scrollTop + pad + banner + 8;
     return { top, bottom: Math.max(top, root.scrollTop + root.clientHeight - under - 8) };
   }
@@ -551,6 +573,8 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
   // loading or offline is not this: those keep what is drawn.
   function wipe() {
     board.clear();
+    if (ready) ready.update(true);
+    joinFoot();
     dates = [];
     states = [];
     ahead = [];
@@ -578,9 +602,11 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
       return;
     }
     const stampToday = showStamps(s);
-    const ready = s.status === "ready" && s.trip && s.trip.start && list(s.days).length;
-    if (!ready) {
+    const ok = s.status === "ready" && s.trip && s.trip.start && list(s.days).length;
+    if (ready) ready.update(true);
+    if (!ok) {
       board.update(null);
+      joinFoot();
       if (!dates.length) {
         count.hidden = true;
         rail.replaceChildren();
@@ -605,7 +631,11 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
     // Where the phone is, when usable (js/where.js): memory only.
     const here = where ? where.current() : null;
     // Closed until the Days clock's next day; during a demo, the real one's.
-    board.update(boardFor(s, nowMs, here), clock.demoDay() ? tripNow(s, Date.now()).date : now.date);
+    // From two days before, a phone not ready for no signal takes the board's face (issue 84, section 5).
+    const rm = ready ? ready.model() : null;
+    const face = rm && rm.big ? { kind: "ready", small: "出発まで", big: String(rm.toGo), unit: "日", l1: rm.big.l1, l2: rm.big.l2, red: true, open: true } : null;
+    board.update(face || boardFor(s, nowMs, here), clock.demoDay() ? tripNow(s, Date.now()).date : now.date);
+    joinFoot();
     const left = rail.scrollLeft;
     const spot = focusSpot();
 
@@ -772,9 +802,25 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
   }
   document.addEventListener("visibilitychange", wake);
   new MutationObserver(wake).observe(root, { attributes: true, attributeFilter: ["class"] });
+  // The next ticket's slot comes up over the foot of the day (its tickets
+  // arrive after the day is drawn): today's next stop is brought clear of it.
+  const phoneEl = root.closest(".phone");
+  if (phoneEl) {
+    let slotWas = phoneEl.classList.contains("has-slot");
+    new MutationObserver(() => {
+      const on = phoneEl.classList.contains("has-slot");
+      if (on === slotWas) return;
+      slotWas = on;
+      // Never under something standing over the day (any sheet, the stub, the register, the book).
+      const covered = !!phoneEl.querySelector(".sheet.is-open") || /(^|\s)[a-z]+-open(\s|$)/.test(phoneEl.className);
+      if (on && root.classList.contains("is-active") && dates.length && settledOn === cur && !held() && !covered) revealNext();
+    }).observe(phoneEl, { attributes: true, attributeFilter: ["class"] });
+  }
 
   render(store.state);
   store.subscribe(render);
+  // What the line says changed (a picture kept, signal, a pass): the board may give or take back its face.
+  if (ready) ready.subscribe(() => render(store.state));
   if (where) where.subscribe(() => render(store.state));
   // A picture reaching this phone turns its 券 box solid.
   if (tickets && tickets.subscribe) tickets.subscribe(() => render(store.state));

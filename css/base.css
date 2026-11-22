@@ -162,6 +162,7 @@ i{font-style:normal}
 .gate-key button:active{transform:translateY(1.5px);box-shadow:var(--paper-down)}
 .gate-key-m{min-height:1.35em;color:var(--text);font-weight:700;font-size:14px}
 .gate-key-m:empty{min-height:0}
+.gate-other{min-height:44px;padding:8px 12px;border:0;background:none;color:var(--text);font-weight:700;font-size:14px;text-decoration:underline;text-underline-offset:3px}
 
 /* ---------- held sideways (a phone in landscape) ----------
    No phone drawn on the table: the app fills the screen's height as one
@@ -200,7 +201,7 @@ i{font-style:normal}
   /* BETWEEN: one square column of at most 560 px, the window's height, the bar across its foot as on a phone. */
   .phone{width:min(100%,560px);height:100%;border-radius:0;box-shadow:none}
   /* A ring in the app's ink: the print colour on paper and ticket stock, the light ink on the dark ground. */
-  :is(.tk,.slip,.rc,.ln,.ubar,.un,.how,.bw-card,.tape,.lcd,.sheet.stay,.sheet.stop) :focus-visible{outline-color:var(--print)}
+  :is(.tk,.slip,.rc,.ln,.ubar,.un,.how,.bw-card,.tape,.lcd,.sheet.stay,.sheet.stop,.ntk) :focus-visible{outline-color:var(--print)}
 }
 
 /* WIDE: a ticket counter. One block, centred, the window's height, at most

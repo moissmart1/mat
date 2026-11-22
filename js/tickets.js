@@ -28,7 +28,10 @@
 //   restart() (open again, for a new link).
 //   lasting is false when there is no IndexedDB (a private window, blocked):
 //   pictures are then kept in memory for this visit only. Nothing throws.
-// - fetchMissing(store, keep): fetches, one at a time, every picture this
+// - aheadPictures(s, nowMs): the pictures still ahead, the first two of
+//   fetchOrder's groups (the stay you are in, then from today on): what
+//   "ready for no signal" counts (js/ready.js). isFetching(store): a pass runs.
+// - fetchMissing(store, keep, { force }): fetches, one at a time, every picture this
 //   phone lacks, upcoming stops first (soonest first), then past ones; never
 //   two requests at once (a second call joins the first), never while the
 //   store is saving, never without signal (and stops when it goes), never
@@ -38,6 +41,8 @@
 //   codes, "one" code for everyone, "pages", "ref" facts only) and whether
 //   every picture is on this phone. stayMark: the same for a stay's booking
 //   ("pics" or "ref"; a picture on a stay has `stay` instead of `stop`).
+// - whoseOf(stop, pics, me, people): whose the stop's ticket is ("mine",
+//   "all", "none", "ref"), the seat to print and who holds a code of their own.
 
 import { tripNow } from "./plan.js";
 
@@ -539,12 +544,13 @@ const nextDay = (date) => {
   return new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10);
 };
 
-// The live pictures in the order they are fetched: the pictures of the stay
-// you are in first of all (from its first night to the morning after its
-// last), then upcoming stops and stays (soonest first; a stay's at its first
-// night, 15:00), then past ones (most recent first); none whose stop or stay
-// is removed or not on the plan.
-export function fetchOrder(s, nowMs) {
+// The live pictures sorted into the order's three groups: `first` the pictures
+// of the stay you are in (from its first night to the morning after its
+// last), `ahead` upcoming stops and stays (soonest first; a stay's at its
+// first night, 15:00), `past` past ones (most recent first); none whose stop
+// or stay is removed or not on the plan, and none of this phone's own still
+// waiting to be sent.
+function fetchGroups(s, nowMs) {
   // Today by the Days clock (a day in its own zone is that place's).
   const today = tripNow(s, nowMs).date;
   const stops = new Map((Array.isArray(s.stops) ? s.stops : []).filter((x) => x && !x.deleted).map((x) => [x.id, x]));
@@ -578,7 +584,22 @@ export function fetchOrder(s, nowMs) {
   first.sort(up);
   ahead.sort(up);
   past.sort((a, b) => (a[0] > b[0] ? -1 : a[0] < b[0] ? 1 : 0));
-  return [...first.map((x) => x[1]), ...ahead.map((x) => x[1]), ...past.map((x) => x[1])];
+  const only = (g) => g.map((x) => x[1]);
+  return { first: only(first), ahead: only(ahead), past: only(past) };
+}
+
+// The live pictures in the order they are fetched: the stay you are in, then
+// upcoming stops and stays, then past ones (fetchGroups).
+export function fetchOrder(s, nowMs) {
+  const g = fetchGroups(s, nowMs);
+  return [...g.first, ...g.ahead, ...g.past];
+}
+
+// The pictures still ahead (issue 84): the first two groups of fetchOrder, in
+// that order. What "every picture still ahead is on this phone" counts.
+export function aheadPictures(s, nowMs) {
+  const g = fetchGroups(s, nowMs);
+  return [...g.first, ...g.ahead];
 }
 
 // After a load: pictures the trip no longer has (removed, refused, on a stop
@@ -597,12 +618,17 @@ export const RETRY_MS = 10 * 60 * 1000;
 const failures = new WeakMap(); // store -> Map(id -> when it failed)
 
 // allowed(): asked at the top of every picture, so a change of the You setting
-// stops a pass at the next one.
-export function fetchMissing(store, keep, { now = () => Date.now(), allowed = () => true } = {}) {
+// stops a pass at the next one. force (Fetch now, issue 84): the back-off is
+// forgotten before the pass starts, so a picture refused or broken a minute
+// ago is asked for once more. A pass already running is joined, as always.
+// onFirst(): called once, just before the pass's first request (issue 84: a
+// pass that asks for nothing, all in back-off, is not shown as fetching).
+export function fetchMissing(store, keep, { now = () => Date.now(), allowed = () => true, force = false, onFirst = null } = {}) {
   const cur = running.get(store);
   if (cur) return cur;
   if (!failures.has(store)) failures.set(store, new Map());
   const failed = failures.get(store);
+  if (force) failed.clear();
   const p = (async () => {
     await keep.ready;
     if (!keep.lasting) return;
@@ -616,6 +642,13 @@ export function fetchMissing(store, keep, { now = () => Date.now(), allowed = ()
       const next = fetchOrder(s, t0).find((t) => !keep.have(t.id) && !tried.has(t.id) && !(failed.has(t.id) && t0 - failed.get(t.id) < RETRY_MS));
       if (!next) return;
       tried.add(next.id);
+      if (onFirst && tried.size === 1) {
+        try {
+          onFirst();
+        } catch {
+          // the hook's own trouble
+        }
+      }
       let got;
       try {
         got = await store.fetchTicket(next.id);
@@ -642,6 +675,9 @@ export function fetchMissing(store, keep, { now = () => Date.now(), allowed = ()
   return p;
 }
 
+// Whether a fetching pass is running for this store now.
+export const isFetching = (store) => running.has(store);
+
 // ---------- what a stop's tickets are ----------
 
 export function ticketKinds(list) {
@@ -654,6 +690,47 @@ export function ticketKinds(list) {
 }
 
 export const hasFacts = (stop) => !!stop && ["tkRef", "tkName", "tkPeople", "tkSeat"].some((k) => typeof stop[k] === "string" && stop[k].trim() !== "");
+
+// Whose a stop's ticket is, for the person on this phone (me): null when the
+// stop has no ticket at all, else { kind, seat, holders, count }.
+// - kind: "mine" (a per-person code of mine), "all" (one code, pages, or a
+//   per-person stop's picture for everyone when none is mine), "none" (per-
+//   person codes, none mine, none for everyone), "ref" (the facts alone).
+// - seat: mine, my first picture's seat by page, else the stop's; all and
+//   ref, the stop's; none, "".
+// - holders: the names that have their own code, in trip order (people, the
+//   state's names in order; a name not among them after, by name); count:
+//   how many. me "" (nobody chosen) is nobody's. Names match as the backend
+//   matches them (sameName: trimmed, in any case).
+// pics: the stop's pictures (only live ones count).
+// Two people's names are the same person when they match trimmed and in any
+// case (as the backend matches a name: Pure.js, Mcp.js).
+const nameKey = (n) => (typeof n === "string" ? n.trim().toLowerCase() : "");
+export const sameName = (a, b) => nameKey(a) !== "" && nameKey(a) === nameKey(b);
+
+export function whoseOf(stop, pics, me, people = []) {
+  if (!stop) return null;
+  const tkSeat = typeof stop.tkSeat === "string" ? stop.tkSeat.trim() : "";
+  const k = ticketKinds((Array.isArray(pics) ? pics : []).filter((t) => t && t.stop === stop.id));
+  if (!k.kind) return hasFacts(stop) ? { kind: "ref", seat: tkSeat, holders: [], count: 0 } : null;
+  const names = Array.isArray(people) ? people : [];
+  const rank = (n) => {
+    const i = names.findIndex((x) => sameName(x, n));
+    return i === -1 ? 1e6 : i;
+  };
+  const holders = [];
+  for (const t of k.list) if (t.who && !holders.some((h) => sameName(h, t.who))) holders.push(t.who);
+  holders.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+  const out = (kind, seat) => ({ kind, seat, holders, count: holders.length });
+  if (k.kind !== "pp") return out("all", tkSeat);
+  const mine = k.list.filter((t) => sameName(t.who, me)).sort((a, b) => (Number(a.page) || 0) - (Number(b.page) || 0));
+  if (mine.length) {
+    const own = typeof mine[0].seat === "string" ? mine[0].seat.trim() : "";
+    return out("mine", own || tkSeat);
+  }
+  if (k.list.some((t) => !t.who)) return out("all", tkSeat);
+  return out("none", "");
+}
 
 // The 券 mark for a stop: null (no ticket at all), or { kind, label, saved }.
 export function ticketMark(stop, tickets, have) {
