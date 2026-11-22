@@ -44,6 +44,7 @@ const put = (node, text) => {
 };
 const HOLD_MS = 300;
 const MINUTE_MS = 60000;
+const DECIDE_MS = 4000;
 
 // Rule 4: the app itself opens with no signal. A controller alone is not
 // enough: a page keeps its controller for its whole life, even after Forget
@@ -178,6 +179,8 @@ export function mountReady(phone, store, { keep, clock, storage, durable = true,
     mode: fetchMode(storage),
     shell,
     kept: durable && read("mat.key") !== null && read("mat.cache") !== null,
+    // Unsent changes this phone could not save (review round 4, R4-2): never "everything is on this phone".
+    queueFailed: store.state.queueStorageFailed === true,
     noStore: !durable || keep.none === true,
     standalone: standalone(),
     fetching: passing && isFetching(store),
@@ -236,7 +239,13 @@ export function mountReady(phone, store, { keep, clock, storage, durable = true,
     // Not decided yet, with a trip that will have a line: the line keeps its place, empty and
     // unseen, so nothing moves when it is decided (a green line is the same 30 px).
     const s0 = store.state;
-    const pending = !m && !(keepSettled && shellKnown) && s0.status === "ready" && s0.ticketsReady === true;
+    let can = false;
+    try {
+      can = !m && !(keepSettled && shellKnown) && phoneReady(s0, now(), { have: () => true, lasting: true, mode: "all", shell: true, kept: true }) !== null;
+    } catch {
+      can = false;
+    }
+    const pending = can;
     line.classList.toggle("is-pending", pending);
     line.hidden = !m && !pending;
     if (!m) return;
@@ -338,11 +347,26 @@ export function mountReady(phone, store, { keep, clock, storage, durable = true,
   }
 
   // ---- in sight ----
-  let inView = true; // what the observer says now
   let held = true; // what seen() answers: inView, 300 ms later
   let holdTimer = null;
   let view = null;
-  const sightNow = () => inView && !line.hidden && !(view && view.inert);
+  // In sight: the line's bottom is more than 44 px below the top of the screen PLUS the strip's own
+  // height while it shows (--net-h). The strip pushes Days down by that height, so judging without it
+  // would hide the strip, pull Days back up, show it again, forever, where there is no scroll
+  // anchoring (iPhone Safari; review round 4, R4-1). Measured, not the observer's fixed 44 px.
+  const STRIP_CUT = 44;
+  function sightNow() {
+    if (line.hidden || (view && view.inert)) return false;
+    let netH = 0;
+    try {
+      netH = parseFloat(getComputedStyle(phone).getPropertyValue("--net-h")) || 0;
+    } catch {
+      netH = 0;
+    }
+    const top = phone.getBoundingClientRect().top;
+    const r = line.getBoundingClientRect();
+    return r.bottom - top > STRIP_CUT + netH && r.top < innerHeight;
+  }
   function settleSight() {
     clearTimeout(holdTimer);
     holdTimer = setTimeout(() => {
@@ -354,18 +378,16 @@ export function mountReady(phone, store, { keep, clock, storage, durable = true,
   }
   if (typeof IntersectionObserver === "function") {
     // The strip at the top covers the screen's first 40 px or so: under it is out of sight.
-    new IntersectionObserver(
-      (entries) => {
-        inView = entries[entries.length - 1].isIntersecting;
-        settleSight();
-      },
-      { rootMargin: "-44px 0px 0px 0px" },
-    ).observe(line);
+    // A wake-up only: the answer is measured (sightNow); thresholds every 10% so a slow scroll past the cut is seen.
+    new IntersectionObserver(() => settleSight(), { threshold: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1] }).observe(line);
   }
   function watchView() {
     if (view || typeof MutationObserver !== "function") return;
     view = line.closest(".view");
-    if (view) new MutationObserver(settleSight).observe(view, { attributes: true, attributeFilter: ["inert"] });
+    if (view) {
+      new MutationObserver(settleSight).observe(view, { attributes: true, attributeFilter: ["inert"] });
+      view.addEventListener("scroll", settleSight, { passive: true });
+    }
   }
 
   // ---- the sheet's opening and closing ----
@@ -447,6 +469,15 @@ export function mountReady(phone, store, { keep, clock, storage, durable = true,
     // no worker here
   }
   checkShell();
+  // Decided after 4 s whatever has answered (review round 4): a stalled IndexedDB or worker check
+  // must not hold back "No signal", "1 to send" or the storage warning, nor keep the line's place
+  // empty. What has not answered reads as not kept.
+  setTimeout(() => {
+    if (keepSettled && shellKnown) return;
+    keepSettled = true;
+    shellKnown = true;
+    update();
+  }, DECIDE_MS);
   setInterval(() => {
     if (document.visibilityState === "hidden") return;
     // The offline copy is not kept (a refill that failed on weak signal): ask the worker again, with

@@ -629,6 +629,59 @@ module.exports = [
     },
   },
   {
+    name: "the line at the edge of sight, with no scroll anchoring (as iPhone Safari): the amber strip holds still, and goes only once the line is well in sight (review round 4, R4-1)",
+    async run({ page }) {
+      const backend = await backendAt(DAY12, { planner: false });
+      const ids = await twelve(backend);
+      refuse(backend, [ids[0]]);
+      await openDays(page, { backend, nowMs: DAY12 });
+      await waitKind(page, "failed");
+      await page.evaluate(() => (document.getElementById("vDays").style.overflowAnchor = "none"));
+      await page.evaluate(() => document.getElementById("vDays").scrollTo(0, 0));
+      await until(async () => {
+        await advance(page, backend, 400);
+        return !(await visible(page, "#net"));
+      }, "at the top: no strip", 4000);
+      const strip = () => page.evaluate(() => (document.getElementById("net").hidden ? "-" : "S"));
+      const bottom = () => page.evaluate(() => Math.round(document.querySelector("#vDays .rdy").getBoundingClientRect().bottom - document.getElementById("phone").getBoundingClientRect().top));
+      // The line's bottom 20 px from the top: under the strip's edge.
+      await page.evaluate(() => {
+        const v = document.getElementById("vDays");
+        v.scrollTop += document.querySelector("#vDays .rdy").getBoundingClientRect().bottom - document.getElementById("phone").getBoundingClientRect().top - 20;
+      });
+      await until(async () => {
+        await page.evaluate(() => globalThis.__matTest.ready.update(true));
+        await advance(page, backend, 400);
+        return (await strip()) === "S";
+      }, "the strip comes", 4000);
+      assert.ok((await bottom()) > 44, "the strip pushed Days down: the line's bottom is now past the old cut (" + (await bottom()) + ")");
+      const seq = [];
+      for (let i = 0; i < 8; i++) {
+        await page.evaluate(() => globalThis.__matTest.ready.update(true));
+        await advance(page, backend, 400);
+        seq.push(await strip());
+      }
+      assert.deepEqual(seq, Array(8).fill("S"), "the strip holds still");
+      // Well in sight (more than the strip's height below its edge): it goes, and stays gone.
+      await page.evaluate(() => {
+        const v = document.getElementById("vDays");
+        v.scrollTop -= 160;
+      });
+      await until(async () => {
+        await page.evaluate(() => globalThis.__matTest.ready.update(true));
+        await advance(page, backend, 400);
+        return (await strip()) === "-";
+      }, "the strip goes", 4000);
+      const after = [];
+      for (let i = 0; i < 8; i++) {
+        await page.evaluate(() => globalThis.__matTest.ready.update(true));
+        await advance(page, backend, 400);
+        after.push(await strip());
+      }
+      assert.deepEqual(after, Array(8).fill("-"), "and stays gone");
+    },
+  },
+  {
     name: "the × closes the board's lines and leaves the line, alone in the glass",
     async run({ page }) {
       const backend = await backendAt(WEEKS);

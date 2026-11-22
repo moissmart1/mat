@@ -240,3 +240,13 @@ test("the offline copy's refill backs off: 1, 2, 4, 8, 16, then 30 minutes betwe
   for (let i = 0; i < 100; i++) assert.equal(refillTick(full).go, false, "storage full: no more tries until the next launch");
   assert.equal(refillTick(REFILL_START).go, true, "nothing failed yet: a try on the minute");
 });
+
+test("unsent changes this phone could not save: never ready, the line says so, the sheet says to keep MAT open (review round 4, R4-2)", () => {
+  const m = phoneReady(state({ online: false }), WEEKS, env({ queueFailed: true }));
+  assert.equal(m.kind, "nokeep");
+  assert.equal(m.why, "queue");
+  assert.equal(m.l1, "Couldn’t save unsent changes");
+  assert.equal(m.strip, null, "the strip says what it said before issue 84");
+  assert.equal(sheetFor(m).notes[1], "Couldn’t save unsent changes on this device. Keep the app open to avoid losing them.");
+  assert.equal(phoneReady(state(), WEEKS, env({ queueFailed: true, standalone: true, noStore: true })).why, "queue");
+});

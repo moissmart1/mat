@@ -72,6 +72,8 @@ function lineWords(kind, n, mode, total, progress) {
         : { jp: "", l1: n === 1 ? "1 picture comes when signal is back" : n + " pictures come when signal is back", right: "" };
     case "setup":
       return { jp: "", l1: "Setting up for no signal", right: "A moment" };
+    case "nokeep-queue":
+      return { jp: "", l1: "Couldn’t save unsent changes", right: "" };
     case "nokeep-fails":
       return { jp: "", l1: "Pictures can’t be saved right now", right: "" };
     default:
@@ -149,7 +151,7 @@ export function phoneReady(s, nowMs, env) {
   const mode = env.mode === "open" ? "open" : "all";
   const where = env.standalone ? "home" : "safari";
   const online = s.online !== false;
-  const kept = env.kept === true && typeof s.loadedAt === "number";
+  const kept = env.kept === true && typeof s.loadedAt === "number" && env.queueFailed !== true;
   let kind;
   if (!kept || env.lasting !== true) kind = "nokeep";
   else if (env.fetching && n > 0) kind = "fetching";
@@ -161,8 +163,8 @@ export function phoneReady(s, nowMs, env) {
   else kind = "ready";
   const progress = kind === "fetching" ? env.progress || { at: 1, of: n, left: n } : null;
   // Private window only when there is no storage at all and this is not the Home Screen app.
-  const why = kind !== "nokeep" ? "" : env.noStore === true && !env.standalone ? "private" : "fails";
-  const w = lineWords(why === "fails" ? "nokeep-fails" : kind, n, mode, total, progress);
+  const why = kind !== "nokeep" ? "" : env.queueFailed === true ? "queue" : env.noStore === true && !env.standalone ? "private" : "fails";
+  const w = lineWords(why === "fails" ? "nokeep-fails" : why === "queue" ? "nokeep-queue" : kind, n, mode, total, progress);
   const big = MISSING.includes(kind) && online && (toGo === 1 || toGo === 2) ? bigFace(kind, n, mode, toGo, progress) : null;
   let strip = null;
   if (kind === "ready-off") strip = { tone: "green", jp: "圏外", text: "No signal · everything is on this phone" };
@@ -210,7 +212,9 @@ export function sheetFor(m) {
   if (m.kind === "failed") notes.push("Some pictures would not fetch. This phone may be full, or the signal dropped. Try again on Wi‑Fi.");
   if (m.kind === "nokeep")
     notes.push(
-      m.why === "private"
+      m.why === "queue"
+        ? "Couldn’t save unsent changes on this device. Keep the app open to avoid losing them."
+        : m.why === "private"
         ? "This window keeps nothing after it is closed (a private window, or storage is off). Open your link in an ordinary Safari window."
         : "Pictures can’t be saved on this phone right now. Close MAT and open it again.",
     );
