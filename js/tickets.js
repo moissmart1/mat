@@ -619,7 +619,9 @@ const failures = new WeakMap(); // store -> Map(id -> when it failed)
 // stops a pass at the next one. force (Fetch now, issue 84): the back-off is
 // forgotten before the pass starts, so a picture refused or broken a minute
 // ago is asked for once more. A pass already running is joined, as always.
-export function fetchMissing(store, keep, { now = () => Date.now(), allowed = () => true, force = false } = {}) {
+// onFirst(): called once, just before the pass's first request (issue 84: a
+// pass that asks for nothing, all in back-off, is not shown as fetching).
+export function fetchMissing(store, keep, { now = () => Date.now(), allowed = () => true, force = false, onFirst = null } = {}) {
   const cur = running.get(store);
   if (cur) return cur;
   if (!failures.has(store)) failures.set(store, new Map());
@@ -638,6 +640,13 @@ export function fetchMissing(store, keep, { now = () => Date.now(), allowed = ()
       const next = fetchOrder(s, t0).find((t) => !keep.have(t.id) && !tried.has(t.id) && !(failed.has(t.id) && t0 - failed.get(t.id) < RETRY_MS));
       if (!next) return;
       tried.add(next.id);
+      if (onFirst && tried.size === 1) {
+        try {
+          onFirst();
+        } catch {
+          // the hook's own trouble
+        }
+      }
       let got;
       try {
         got = await store.fetchTicket(next.id);

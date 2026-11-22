@@ -3,7 +3,7 @@
 // says it). What is said comes from js/ready.js; this draws it.
 //
 // mountReady(phone, store, { keep, clock, storage, durable, onFetch, beforeOpen })
-//   -> { el, update(quiet), model(), subscribe(fn), seen(), passStarted(forced), passSettled(again), open(from), close(restoreFocus), isOpen() }
+//   -> { el, update(quiet), model(), subscribe(fn), seen(), passStarted(forced), passSettled(again, started), checkShell(), open(from), close(restoreFocus), isOpen() }
 // - el: the line (div role=group "This phone"): a lamp, the words (one
 //   button, it opens the sheet) and, when it has one, the key 取込 (a second
 //   button beside it, onFetch). Days puts it right after the board
@@ -44,15 +44,25 @@ const put = (node, text) => {
 const HOLD_MS = 300;
 const MINUTE_MS = 60000;
 
-// Rule 4: the service worker controls this page. A click-through test with no
-// worker can stand in for it (MAT_TEST_SHELL, only beside the fake backend).
-function shellNow() {
+// Rule 4: the app itself opens with no signal. A controller alone is not
+// enough: a page keeps its controller for its whole life, even after Forget
+// this phone unregisters the worker and deletes the kept shell (fix round C1).
+// So: a registration with an active worker AND a mat-shell- cache. Asked
+// asynchronously; the answer is kept and the line reads it. A click-through
+// test with no worker can stand in for it (MAT_TEST_SHELL, only beside the
+// fake backend).
+const testShell = () => typeof globalThis.MAT_FAKE_API === "function" && globalThis.MAT_TEST_SHELL === true;
+async function shellKept() {
+  if (testShell()) return true;
   try {
-    if (navigator.serviceWorker && navigator.serviceWorker.controller) return true;
+    const sw = navigator.serviceWorker;
+    if (!sw || typeof sw.getRegistration !== "function" || !globalThis.caches) return false;
+    const reg = await sw.getRegistration();
+    if (!reg || !reg.active) return false;
+    return (await caches.keys()).some((n) => n.startsWith("mat-shell-"));
   } catch {
-    // no worker here
+    return false;
   }
-  return typeof globalThis.MAT_FAKE_API === "function" && globalThis.MAT_TEST_SHELL === true;
 }
 
 export function mountReady(phone, store, { keep, clock, storage, durable = true, onFetch = () => {}, beforeOpen = () => {} } = {}) {
@@ -88,7 +98,10 @@ export function mountReady(phone, store, { keep, clock, storage, durable = true,
   const keyT = el("span");
   key.append(keyJp, keyT);
   // The tall foot, from two days before.
-  const note = el("small", "rdy-note");
+  // The sentence under the glass is the way to the sheet while the face shows (fix round I4).
+  const note = el("button", "rdy-note");
+  note.type = "button";
+  note.id = "rdyNote";
   const bigKey = el("button", "rdy-bigkey");
   bigKey.type = "button";
   bigKey.id = "rdyBigKey";
@@ -144,18 +157,59 @@ export function mountReady(phone, store, { keep, clock, storage, durable = true,
   let progress = null;
   let failed = false;
   let asked = false; // the pass running was asked for by a person (Fetch now)
+  let passing = false; // a pass that has sent a request is running (fix round I2)
+  let keepSettled = false; // the keep has answered once (fix round I1): nothing is said before
   const subs = new Set();
   const env = () => ({
     have: (id) => keep.have(id),
     lasting: keep.lasting === true,
     mode: fetchMode(storage),
-    shell: shellNow(),
+    shell,
     kept: durable && read("mat.key") !== null && read("mat.cache") !== null,
+    noStore: !durable || keep.none === true,
     standalone: standalone(),
-    fetching: isFetching(store),
+    fetching: passing && isFetching(store),
     progress,
     failed,
   });
+  // Rule 4's answer (shellKept), asked again on controllerchange, a worker changing state, the keep opening and the minute.
+  let shell = testShell();
+  let shellKnown = shell; // rule 4 has been answered once: nothing is said before (no "Setting up" flash on an ordinary launch)
+  let asking = false;
+  let askAgain = false;
+  const watched = new WeakSet();
+  async function checkShell() {
+    if (asking) {
+      askAgain = true;
+      return;
+    }
+    asking = true;
+    let ok = false;
+    try {
+      ok = await shellKept();
+      // A worker still installing or waiting: ask again when it changes state.
+      const reg = navigator.serviceWorker && navigator.serviceWorker.getRegistration ? await navigator.serviceWorker.getRegistration() : null;
+      for (const w of reg ? [reg.installing, reg.waiting] : []) {
+        if (w && !watched.has(w)) {
+          watched.add(w);
+          w.addEventListener("statechange", () => checkShell());
+        }
+      }
+    } catch {
+      ok = false;
+    }
+    asking = false;
+    const first = !shellKnown;
+    shellKnown = true;
+    if (ok !== shell || first) {
+      shell = ok;
+      update();
+    }
+    if (askAgain) {
+      askAgain = false;
+      checkShell();
+    }
+  }
   const missingNow = (s, at) => {
     if (!s || s.status !== "ready" || s.ticketsReady !== true || !s.trip) return 0;
     try {
@@ -185,7 +239,7 @@ export function mountReady(phone, store, { keep, clock, storage, durable = true,
     // The key goes while a pass runs: focus that was on it goes to the words, not to the page.
     if (keyHad && key.hidden && !m.big) words.focus({ preventScroll: true });
     if (m.key) key.setAttribute("aria-label", m.keyAria);
-    const hadFocus = document.activeElement === bigKey || document.activeElement === words || keyHad;
+    const hadFocus = document.activeElement === bigKey || document.activeElement === words || document.activeElement === note || keyHad;
     words.hidden = !!m.big;
     note.hidden = !m.big;
     bigKey.hidden = !m.big;
@@ -193,6 +247,7 @@ export function mountReady(phone, store, { keep, clock, storage, durable = true,
     if (hadFocus && !line.contains(document.activeElement)) (m.big ? bigKey : m.key ? key : words).focus({ preventScroll: true });
     if (m.big) {
       put(note, m.big.note);
+      note.setAttribute("aria-label", m.big.note + " Details");
       put(bigT, m.big.key);
       bigKey.setAttribute("aria-disabled", m.big.busy ? "true" : "false");
       bigKey.setAttribute("aria-label", m.big.busy ? m.big.key + " ticket pictures" : m.kind === "failed" ? m.keyAria : "Fetch " + (m.n === 1 ? "1 ticket picture" : m.n + " ticket pictures") + " now");
@@ -232,16 +287,26 @@ export function mountReady(phone, store, { keep, clock, storage, durable = true,
   function update(quiet = false) {
     if (keep.ready !== keepOpening) {
       keepOpening = keep.ready;
-      Promise.resolve(keepOpening).then(() => update(), () => update());
+      const settle = () => {
+        keepSettled = true;
+        checkShell();
+        update();
+      };
+      Promise.resolve(keepOpening).then(settle, settle);
     }
     const s = store.state;
     const at = now();
-    progress = track(progress, missingNow(s, at), isFetching(store));
+    progress = track(progress, missingNow(s, at), passing && isFetching(store));
     let m = null;
     try {
-      m = phoneReady(s, at, env());
+      // Until IndexedDB and the worker check have answered once, nothing is said (no amber flash, no jump of the rail).
+      m = keepSettled && shellKnown ? phoneReady(s, at, env()) : null;
     } catch {
       m = null;
+    }
+    // IndexedDB is there but did not open (WebKit's hang): try it again (the keep paces its own tries).
+    if (m && m.kind === "nokeep" && m.why === "fails" && !keep.lasting && !keep.none && typeof keep.reopen === "function") {
+      Promise.resolve(keep.reopen()).then(() => keep.lasting && update(), () => {});
     }
     if (m && m.n === 0) failed = false;
     current = m;
@@ -314,6 +379,7 @@ export function mountReady(phone, store, { keep, clock, storage, durable = true,
     if (restoreFocus && back && back.isConnected && back.getClientRects().length) back.focus({ preventScroll: true });
   }
   words.addEventListener("click", () => open(words));
+  note.addEventListener("click", () => open(note));
   done.addEventListener("click", () => close());
   scrim.addEventListener("click", () => close());
   document.addEventListener("keydown", (ev) => {
@@ -329,6 +395,7 @@ export function mountReady(phone, store, { keep, clock, storage, durable = true,
 
   // ---- a pass, from app.js's helper ----
   function passStarted(forced) {
+    passing = true;
     failed = false;
     if (forced) {
       asked = true;
@@ -338,10 +405,12 @@ export function mountReady(phone, store, { keep, clock, storage, durable = true,
     update();
   }
   // again: the pass ended only because the store was saving; it is tried again when it is idle.
-  function passSettled(again = false) {
+  // started: the pass sent a request (a forced one that sent none, as with the store saving, is settled too).
+  function passSettled(again = false, started = true) {
+    passing = false;
     const s = store.state;
     const n = missingNow(s, now());
-    failed = !again && s.online !== false && n > 0 && !isFetching(store);
+    if (started || !again) failed = !again && s.online !== false && n > 0 && !isFetching(store);
     const m = update();
     if (asked && !isFetching(store) && !again) {
       asked = false;
@@ -355,12 +424,15 @@ export function mountReady(phone, store, { keep, clock, storage, durable = true,
   window.addEventListener("online", () => update());
   window.addEventListener("offline", () => update());
   try {
-    if (navigator.serviceWorker && navigator.serviceWorker.addEventListener) navigator.serviceWorker.addEventListener("controllerchange", () => update());
+    if (navigator.serviceWorker && navigator.serviceWorker.addEventListener) navigator.serviceWorker.addEventListener("controllerchange", () => checkShell());
   } catch {
     // no worker here
   }
+  checkShell();
   setInterval(() => {
-    if (document.visibilityState !== "hidden") update();
+    if (document.visibilityState === "hidden") return;
+    checkShell();
+    update();
   }, MINUTE_MS);
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState !== "hidden") update();
@@ -382,6 +454,7 @@ export function mountReady(phone, store, { keep, clock, storage, durable = true,
     seen: () => held,
     passStarted,
     passSettled,
+    checkShell,
     open,
     close,
     isOpen: () => opened,

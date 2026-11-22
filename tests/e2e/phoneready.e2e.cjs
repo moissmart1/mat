@@ -3,11 +3,12 @@
 // board's face from two days before, the strip at the top, and the
 // never-loaded screen (調整中).
 //
-// Rule 4 (the app opens with no signal) is "a service worker controls this
-// page". Every case here but one runs with workers blocked, as the runner
-// does, so the page is given a stand-in: MAT_TEST_SHELL = true, read by
-// js/views/ready.js only beside the fake backend (MAT_FAKE_API). The case
-// "a first visit sets up" lets the real worker register and take the page.
+// Rule 4 (the app opens with no signal) is "a registration with an active
+// worker and a mat-shell- cache". The runner blocks workers, so helpers.cjs
+// open() gives every page a stand-in by default: MAT_TEST_SHELL = true, read
+// by js/views/ready.js only beside the fake backend (MAT_FAKE_API). The cases
+// here that test those states pass shell: false: "no worker yet" (Setting up)
+// and the two that let the real worker register (serviceWorkers: "allow").
 //
 // Every name, place, item and picture here is made up (tests/e2e/pictures.cjs).
 // Pictures of each state go to MAT_READY_SHOTS when it is set.
@@ -125,10 +126,21 @@ function hold(backend, { refuse = () => false } = {}) {
   return { release: () => open(), asked, restore: () => (backend.handle = real) };
 }
 
-// Opens Days with the stand-in for the offline shell (see the head of this file).
+// Every kind the line has said since the page started, in order (window.__kinds).
+const recordKinds = (page) =>
+  page.addInitScript(() => {
+    window.__kinds = [];
+    new MutationObserver(() => {
+      const l = document.querySelector("#vDays .rdy");
+      const k = l && !l.hidden ? l.dataset.kind : null;
+      if (k && window.__kinds[window.__kinds.length - 1] !== k) window.__kinds.push(k);
+    }).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ["data-kind", "hidden"] });
+  });
+const kinds = (page) => page.evaluate(() => window.__kinds.slice());
+
+// Opens Days; shell: the stand-in for the offline shell (see the head of this file), false for the real answer.
 async function openDays(page, { backend, nowMs, storage = {}, shell = true }) {
-  if (shell) await page.addInitScript(() => (globalThis.MAT_TEST_SHELL = true));
-  await open(page, { backend, nowMs, tab: "days", storage });
+  await open(page, { backend, nowMs, tab: "days", storage, shell });
   await until(() => page.evaluate(() => document.querySelectorAll("#rail .tk").length > 0), "the tickets draw");
 }
 
@@ -220,8 +232,14 @@ module.exports = [
     async run({ page }) {
       const backend = await backendAt(WEEKS);
       await twelve(backend);
+      await recordKinds(page);
       await openDays(page, { backend, nowMs: WEEKS });
       await waitKind(page, "ready");
+      // A reload, every picture kept: nothing until IndexedDB has answered, then green (no amber flash, no jump).
+      await page.evaluate(() => (window.__kinds.length = 0));
+      await page.reload();
+      await waitKind(page, "ready");
+      assert.deepEqual(await kinds(page), ["ready"], "nothing said before IndexedDB answered");
       assert.equal(await text(page, "#vDays .rdy .rdy-jp"), "圏外OK");
       assert.equal(await text(page, "#vDays .rdy .rdy-t"), "Ready for no signal");
       assert.equal(await text(page, "#vDays .rdy .rdy-r"), "trip · all 12 tickets");
@@ -335,6 +353,15 @@ module.exports = [
       assert.equal(await height(page, "#rdyBigKey"), 48);
       assert.equal(await visible(page, "#rdyWords"), false, "the tall foot in place of the small line");
       await shot(page, "two-days");
+      // The sentence under the glass opens the sheet (fix round I4); Done gives focus back to it.
+      assert.equal(await page.getAttribute("#rdyNote", "aria-label"), "Each needs signal once. Fetch them now, on Wi‑Fi, and this phone works with no signal. Details");
+      await page.click("#rdyNote");
+      await sheetAtRest(page);
+      assert.equal(await text(page, "#rdyVerdict"), "Not ready for no signal yet.");
+      assert.equal(await text(page, "#rdyGo"), "取込Fetch all 12 now");
+      await page.click("#rdyDone");
+      await sheetAtRest(page, false);
+      assert.equal(await page.evaluate(() => document.activeElement.id), "rdyNote");
 
       const h = hold(backend);
       await page.click("#rdyBigKey");
@@ -418,6 +445,25 @@ module.exports = [
       assert.equal(await text(page, "#rdyKey"), "取込Try again");
       assert.equal(await page.getAttribute("#rdyKey", "aria-label"), "Try again: fetch 1 ticket picture");
       await shot(page, "line-failed");
+      // The 20-second store check: the refused one is backing off, nothing is asked, and the line, its focus and the strip stay as they are.
+      await page.focus("#rdyKey");
+      await page.evaluate(() => {
+        window.__kinds = [];
+        window.__say = 0;
+        new MutationObserver(() => {
+          const k = document.querySelector("#vDays .rdy").dataset.kind;
+          if (window.__kinds[window.__kinds.length - 1] !== k) window.__kinds.push(k);
+        }).observe(document.querySelector("#vDays .rdy"), { attributes: true, attributeFilter: ["data-kind"] });
+        new MutationObserver(() => window.__say++).observe(document.getElementById("rdySay"), { childList: true, characterData: true, subtree: true });
+      });
+      const asked = backend.requests.filter((b) => b.action === "ticket").length;
+      for (let i = 0; i < 3; i++) await advance(page, backend, 20000);
+      await page.evaluate(() => globalThis.__matTest.store.checkRev());
+      await advance(page, backend, 100);
+      assert.equal(backend.requests.filter((b) => b.action === "ticket").length, asked, "nothing asked while it backs off");
+      assert.deepEqual(await kinds(page), [], "no fetching and back");
+      assert.equal(await page.evaluate(() => window.__say), 0, "nothing said again");
+      assert.equal(await page.evaluate(() => document.activeElement.id), "rdyKey", "focus stays on Try again");
       back();
       await page.click("#rdyKey");
       await waitKind(page, "ready");
@@ -499,8 +545,11 @@ module.exports = [
       await openDays(page, { backend, nowMs: DAY12 });
       await waitKind(page, "failed");
       await page.evaluate(() => document.getElementById("vDays").scrollTo(0, 0));
-      await advance(page, backend, 1000);
-      assert.equal(await visible(page, "#net"), false, "the line is in sight: no strip");
+      // The observer reports at the next frame and its answer is held 300 ms on the page's paused clock: move it on until it settles.
+      await until(async () => {
+        await advance(page, backend, 400);
+        return !(await visible(page, "#net"));
+      }, "the line is in sight: no strip", 4000);
       await page.evaluate(() => document.getElementById("vDays").scrollTo(0, 700));
       await until(() => page.evaluate(() => document.querySelector("#vDays .rdy").getBoundingClientRect().bottom < 0), "the line is scrolled away");
       // The observer reports at the next frame, and its answer is held 300 ms (a timer, on the page's paused clock).
@@ -573,6 +622,44 @@ module.exports = [
       await openDays(page, { backend, nowMs: WEEKS, shell: false });
       await until(() => page.evaluate(() => !!navigator.serviceWorker.controller), "the worker takes the page", 20000);
       await waitKind(page, "ready");
+    },
+  },
+  {
+    name: "Forget this phone, then a pasted link: Setting up until the worker is back and has its offline copy, then green (fix round C1)",
+    serviceWorkers: "allow",
+    async run({ page, context }) {
+      const backend = await backendAt(WEEKS);
+      await twelve(backend);
+      await openDays(page, { backend, nowMs: WEEKS, shell: false });
+      await until(() => page.evaluate(() => !!navigator.serviceWorker.controller), "the worker takes the page", 20000);
+      await waitKind(page, "ready");
+      // The worker's script is held from here, so its coming back can be watched.
+      let let_go = null;
+      const held = new Promise((r) => (let_go = r));
+      await context.route("**/sw.js", async (route) => {
+        await held;
+        await route.continue();
+      });
+      await page.click("#youBtn");
+      await atRest(page, "#you");
+      await page.dispatchEvent("#setForget", "click");
+      await page.dispatchEvent("#setForget", "click");
+      await until(() => visible(page, "#gateGlass"), "the never-loaded screen", 10000);
+      await atRest(page, "#you", { open: false, message: "Settings closed" });
+      assert.deepEqual(await page.evaluate(async () => ({ regs: (await navigator.serviceWorker.getRegistrations()).length, shell: (await caches.keys()).some((n) => n.startsWith("mat-shell-")) })), { regs: 0, shell: false });
+      await page.fill("#keyPaste", "http://localhost:" + process.env.MAT_PORT + "/#k=" + KEY);
+      await page.click("#keyGo");
+      await until(() => page.evaluate(() => document.querySelectorAll("#rail .tk").length > 0), "the trip is back", 10000);
+      // Every picture fetched again, but no worker and no offline copy yet: not ready.
+      await waitKind(page, "setup", 15000);
+      assert.equal(await page.evaluate(() => !!navigator.serviceWorker.controller), true, "the page still has its old controller: not proof of anything");
+      let_go();
+      await until(() => page.evaluate(async () => (await caches.keys()).some((n) => n.startsWith("mat-shell-"))), "the offline copy is kept again", 20000);
+      // Asked again when the worker changes state (or on the minute).
+      await until(async () => {
+        await advance(page, backend, 60000);
+        return (await lineKind(page)) === "ready";
+      }, "green once the worker is back", 20000);
     },
   },
   {

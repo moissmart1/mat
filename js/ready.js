@@ -16,7 +16,12 @@
 //
 // phoneReady(state, nowMs, env) -> null (no line anywhere) or
 //   { kind, n, total, where, toGo, mode, big, strip, l1, jp, right, key, aria, keyAria, items, sheet }
-// env = { have, lasting, mode, shell, kept, standalone, online, fetching, progress, failed }
+// env = { have, lasting, mode, shell, kept, standalone, online, fetching, progress, failed, noStore }
+// noStore: this window has no lasting storage at all (no IndexedDB, or the
+// phone's storage is a stand-in in memory): a private window. Otherwise a
+// nokeep is storage that exists but did not answer (WebKit's IndexedDB hang),
+// and the words say to close MAT and open it again (never, in the Home
+// Screen app, to go to Safari).
 // kind, first match wins: nokeep, fetching, wait, failed, missing, setup,
 // ready-off, ready. big: the board's face from two days before (null
 // otherwise). strip: what the strip at the top says (null: nothing of this).
@@ -67,6 +72,8 @@ function lineWords(kind, n, mode, total, progress) {
         : { jp: "", l1: n === 1 ? "1 picture comes when signal is back" : n + " pictures come when signal is back", right: "" };
     case "setup":
       return { jp: "", l1: "Setting up for no signal", right: "A moment" };
+    case "nokeep-fails":
+      return { jp: "", l1: "Pictures can’t be saved right now", right: "" };
     default:
       return { jp: "", l1: "Nothing is kept in this window", right: "" };
   }
@@ -153,7 +160,9 @@ export function phoneReady(s, nowMs, env) {
   else if (!online) kind = "ready-off";
   else kind = "ready";
   const progress = kind === "fetching" ? env.progress || { at: 1, of: n, left: n } : null;
-  const w = lineWords(kind, n, mode, total, progress);
+  // Private window only when there is no storage at all and this is not the Home Screen app.
+  const why = kind !== "nokeep" ? "" : env.noStore === true && !env.standalone ? "private" : "fails";
+  const w = lineWords(why === "fails" ? "nokeep-fails" : kind, n, mode, total, progress);
   const big = MISSING.includes(kind) && online && (toGo === 1 || toGo === 2) ? bigFace(kind, n, mode, toGo, progress) : null;
   let strip = null;
   if (kind === "ready-off") strip = { tone: "green", jp: "圏外", text: "No signal · everything is on this phone" };
@@ -161,6 +170,7 @@ export function phoneReady(s, nowMs, env) {
   else if (MISSING.includes(kind) && online && toGo <= 2) strip = { tone: "amber", text: w.l1, right: w.right || "", key: w.key || "" };
   return {
     kind,
+    why,
     n,
     total,
     where,
@@ -198,7 +208,12 @@ export function sheetFor(m) {
   );
   if (m.mode === "open") notes.push("Ticket pictures are set to " + ONLY_OPEN + ". Change it in You, Ticket pictures.");
   if (m.kind === "failed") notes.push("Some pictures would not fetch. This phone may be full, or the signal dropped. Try again on Wi‑Fi.");
-  if (m.kind === "nokeep") notes.push("This window keeps nothing after it is closed (a private window, or storage is off). Open your link in an ordinary Safari window.");
+  if (m.kind === "nokeep")
+    notes.push(
+      m.why === "private"
+        ? "This window keeps nothing after it is closed (a private window, or storage is off). Open your link in an ordinary Safari window."
+        : "Pictures can’t be saved on this phone right now. Close MAT and open it again.",
+    );
   if (m.kind === "setup") notes.push("The app is still saving itself to this phone. It takes a moment with signal.");
   if (m.kind === "wait") notes.push(m.mode === "open" ? "No signal now. Fetch them when it is back." : "No signal now. The missing pictures come by themselves when it is back.");
   // The key: only when the line has one. Two days before it says what the board's paper key says.

@@ -116,7 +116,10 @@ test("every line string, plural and singular", () => {
   assert.deepEqual(line({ online: false }, { have: three, mode: "open" }), ["", "3 pictures need signal once", "", ""]);
   assert.deepEqual(line({ online: false }, { have: one, mode: "open" }), ["", "1 picture needs signal once", "", ""]);
   assert.deepEqual(line({}, { shell: false }), ["", "Setting up for no signal", "A moment", ""]);
-  assert.deepEqual(line({}, { kept: false }), ["", "Nothing is kept in this window", "", ""]);
+  assert.deepEqual(line({}, { kept: false, noStore: true }), ["", "Nothing is kept in this window", "", ""]);
+  // Storage that exists but did not answer, or the Home Screen app: never sent to Safari.
+  assert.deepEqual(line({}, { lasting: false }), ["", "Pictures can’t be saved right now", "", ""]);
+  assert.deepEqual(line({}, { kept: false, noStore: true, standalone: true }), ["", "Pictures can’t be saved right now", "", ""]);
 });
 
 test("what a screen reader hears", () => {
@@ -203,7 +206,9 @@ test("the sheet: verdict, rows, notes and key for each kind", () => {
 
   assert.equal(sh(WEEKS, {}, { have: lacking("s1"), failed: true }).notes[1], "Some pictures would not fetch. This phone may be full, or the signal dropped. Try again on Wi‑Fi.");
   assert.equal(sh(WEEKS, {}, { have: lacking("s1"), failed: true }).key, "Try again");
-  assert.equal(sh(WEEKS, {}, { kept: false }).notes[1], "This window keeps nothing after it is closed (a private window, or storage is off). Open your link in an ordinary Safari window.");
+  assert.equal(sh(WEEKS, {}, { kept: false, noStore: true }).notes[1], "This window keeps nothing after it is closed (a private window, or storage is off). Open your link in an ordinary Safari window.");
+  assert.equal(sh(WEEKS, {}, { lasting: false }).notes[1], "Pictures can’t be saved on this phone right now. Close MAT and open it again.");
+  assert.equal(sh(WEEKS, {}, { kept: false, noStore: true, standalone: true }).notes[1], "Pictures can’t be saved on this phone right now. Close MAT and open it again.", "never Safari in the Home Screen app");
   assert.equal(sh(WEEKS, {}, { shell: false }).notes[1], "The app is still saving itself to this phone. It takes a moment with signal.");
   assert.equal(sh(WEEKS, { online: false }, { have: lacking("s1") }).notes[1], "No signal now. The missing pictures come by themselves when it is back.");
   assert.equal(sh(WEEKS, { online: false }, { have: lacking("s1"), mode: "open" }).notes[2], "No signal now. Fetch them when it is back.");

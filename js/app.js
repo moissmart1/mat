@@ -286,15 +286,23 @@ function start() {
   let ready = null;
   let retryForced = false; // Fetch now met the store saving: once more when it is idle
   function pass(opts, forced = false) {
-    const joined = isFetching(store);
-    const p = fetchMissing(store, keep, opts);
-    if (joined || !ready) return p;
-    ready.passStarted(forced);
+    if (isFetching(store) || !ready) return fetchMissing(store, keep, opts);
+    // The line hears of a pass only once it sends a request (fix round I2): a
+    // store check every 20 s whose pictures are all backing off asks nothing,
+    // and must not flip the line to "fetching" and back.
+    let started = false;
+    const p = fetchMissing(store, keep, {
+      ...opts,
+      onFirst: () => {
+        started = true;
+        ready.passStarted(forced);
+      },
+    });
     p.finally(() => {
       // Ended only because the store was saving: not a failure; tried again when it is idle.
       const again = store.busy();
       if (again && forced) retryForced = true;
-      ready.passSettled(again);
+      if (started || forced) ready.passSettled(again, started);
     });
     return p;
   }
@@ -757,6 +765,19 @@ function start() {
         // nowhere to keep it: it works for this visit only
       }
       keep.restart();
+      // Forget this phone unregistered the worker and deleted the offline copy:
+      // the trip is back without a reload, so the worker is registered again
+      // here, and the line asks again whether the app can open with no signal (fix round C1).
+      try {
+        if ("serviceWorker" in navigator) {
+          Promise.resolve(navigator.serviceWorker.register("sw.js"))
+            .then(() => ready.checkShell())
+            .catch(() => {});
+        }
+      } catch {
+        // not allowed here
+      }
+      ready.checkShell();
       store.boot();
     },
   });

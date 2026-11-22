@@ -38,6 +38,8 @@ export function mountNet(root, store, { ready = null } = {}) {
   go.type = "button";
   go.className = "net-w";
   go.id = "netWords";
+  // The strip is a status region: the line's progress is not read out at every step (#rdySay says the start and the end).
+  go.setAttribute("aria-live", "off");
   go.hidden = true;
   const goT = document.createElement("span");
   go.append(goT);

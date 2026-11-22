@@ -79,13 +79,20 @@ function makeBackend(seed, { clock, now = Date.now() } = {}) {
 // built here starts its clock (backend.now) at nowMs too. Neither moves on
 // its own: call advance(page, backend, ms) to move both together, so the
 // backend never dates a write ahead of (or behind) what the page shows.
-async function open(page, { seed = SEED, key = "test-key", me = "Mo", how = "1", nowMs = NOON12, storage = {}, backend, hash = "", tab = "money", own = null } = {}) {
+// - shell: true (the default) tells the page it can open with no signal, as an
+//   installed phone can (MAT_TEST_SHELL, read by js/views/ready.js only beside
+//   the fake backend): the line "This phone" (issue 84) then reads as on a
+//   real phone (green when every picture is kept) instead of "Setting up",
+//   since the runner blocks the service worker. false: the real answer (no
+//   worker: Setting up), for the cases that test those states.
+async function open(page, { seed = SEED, key = "test-key", me = "Mo", how = "1", nowMs = NOON12, storage = {}, backend, hash = "", tab = "money", own = null, shell = true } = {}) {
   const be = backend || makeBackend(seed, { now: nowMs });
   if (own) {
     key = ownKey(be, own);
     me = own;
   }
 
+  if (shell) await page.addInitScript(() => (globalThis.MAT_TEST_SHELL = true));
   await page.exposeFunction("__matBridge", async (body) => {
     try {
       return { env: await be.handle(body) };

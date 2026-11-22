@@ -42,7 +42,8 @@
 /* From two days before: the board gives its whole face to it, and a paper key under the glass. */
 .rdy.is-big{display:block;min-height:0;padding:8px 10px 10px;color:#FFB04A;text-shadow:none}
 .rdy.is-big::after{display:none}
-.rdy-note{display:block;margin:0 0 8px;font-size:12.5px;font-weight:700;line-height:1.35;color:#CFC6BD}
+/* The sentence is a button: it opens the sheet "This phone" while the board's face shows. */
+.rdy-note{display:block;width:100%;margin:0 0 8px;padding:0;border:0;background:none;text-align:left;font-family:var(--f);font-size:12.5px;font-weight:700;line-height:1.35;color:#CFC6BD;text-shadow:none}
 .rdy-bigkey{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;height:48px;border:0;border-radius:6px;background:var(--paper);color:var(--print);
   font-family:var(--f);font-size:16px;font-weight:900;box-shadow:var(--paper-edge);transition:transform .12s ease-out,box-shadow .12s}
 .rdy-bigkey:active{transform:translateY(1.5px);box-shadow:var(--paper-down)}

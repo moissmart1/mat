@@ -389,6 +389,25 @@ test("fetchMissing with force forgets the back-off first; isFetching says a pass
   assert.equal(keep.have("t1"), true);
 });
 
+test("fetchMissing onFirst: called once, just before the first request; never by a pass that asks nothing (fix round I2)", async () => {
+  const keep = createKeep({ indexedDB: fakeIndexedDB() });
+  await keep.ready;
+  let broken = true;
+  const { store, calls } = fakeStore({
+    tickets: [T("t1", "soon0001"), T("t2", "soon0002")],
+    stops: STOPS,
+    answer: (id) => (broken ? { id, mime: "image/png", data: Buffer.from("<svg/>").toString("base64") } : { id, mime: "image/png", data: pngData }),
+  });
+  let first = 0;
+  await fetchMissing(store, keep, { now: () => NOW12, onFirst: () => first++ });
+  assert.equal(first, 1, "once for two requests");
+  assert.equal(calls.ids.length, 2);
+  broken = false;
+  await fetchMissing(store, keep, { now: () => NOW12 + 1000, onFirst: () => first++ });
+  assert.equal(first, 1, "both backing off: nothing asked, no call");
+  assert.equal(calls.ids.length, 2);
+});
+
 // ---------- what a stop's tickets look like ----------
 
 test("ticketKinds and ticketMark: per-person codes, one code, pages, reference only, or nothing", () => {
