@@ -8,7 +8,11 @@ const { SEED, NOON12, open, advance, until, atRest, text, expectText, visible } 
 // ---- small tools for this file ----
 
 const POLL_MS = 20000;
-const NO_SIGNAL = "No signal. Showing what this phone last saw.";
+// With no signal, a phone that keeps the trip, every picture still ahead and the
+// offline copy (helpers.cjs open() stands in for the worker) shows issue 84's
+// green strip in place of "No signal. Showing what this phone last saw.", which
+// stays for a phone not ready for no signal (tests/e2e/phoneready.e2e.cjs).
+const NO_SIGNAL = "圏外No signal · everything is on this phone";
 
 const waitOpen = (page) => atRest(page, "#reg", { message: "the register opens" });
 const waitClosed = (page) => atRest(page, "#reg", { open: false, message: "the register closes" });
@@ -69,7 +73,7 @@ const MEMORY_ONLY = "Unsent changes are only in this app’s memory: don’t clo
 async function refusedWithOneUnsent(page, backend) {
   backend.failWith = "network";
   await advance(page, backend, POLL_MS);
-  await expectText(page, "#net", /^No signal\./);
+  await expectText(page, "#net", /No signal/);
   await ringUp(page, "Onigiri", "4 5 0");
   await page.click("#regDone");
   await waitClosed(page);
@@ -222,7 +226,7 @@ module.exports = [
       await ringUp(page, "Onigiri", "4 5 0");
       await page.click("#regDone");
       await waitClosed(page);
-      await expectText(page, "#net", "No signal. Couldn’t save unsent changes on this device. Keep the app open to avoid losing them. 1 to send.");
+      await expectText(page, "#net", NO_SIGNAL + " Couldn’t save unsent changes on this device. Keep the app open to avoid losing them. 1 to send.");
 
       backend.failWith = null;
       await signalBack(page);

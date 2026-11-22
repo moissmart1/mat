@@ -13,6 +13,8 @@
 .rdy{position:relative;display:flex;align-items:center;gap:8px;min-height:30px;margin:0 var(--gr) 6px var(--gl);padding:0 10px;border-radius:0 0 6px 6px;
   background:#090807;box-shadow:inset 0 1px 0 #241d19, inset 0 0 0 1px #000, inset 0 0 14px rgba(255,140,30,.05);
   font-family:var(--f);font-size:12.5px;font-weight:900;line-height:1.2;color:#6FE08A;text-shadow:0 0 5px rgba(80,220,120,.45)}
+/* Being decided (a moment at launch): its place is kept, nothing in it is seen. */
+.rdy.is-pending{visibility:hidden}
 /* No board above (no Book next, no next stop, or closed with ×): the same glass alone, every corner round. */
 .rdy.is-alone{border-radius:6px;box-shadow:inset 0 0 0 1px #000, inset 0 0 14px rgba(255,140,30,.05)}
 .rdy::after{content:"";position:absolute;inset:0;pointer-events:none;border-radius:inherit;background:radial-gradient(circle at 50% 50%, transparent 0 .9px, rgba(9,8,7,.5) 1.25px) 0 0/2.6px 2.6px}

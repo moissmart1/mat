@@ -802,7 +802,15 @@ function start() {
   });
   mountUndoBar(phone, store);
   mountNet(phone, store, {
-    ready: { model: () => ready.model(), subscribe: (fn) => ready.subscribe(fn), seen: () => ready.seen(), onFetch: () => fetchNow(), onOpen: (from) => ready.open(from) },
+    ready: {
+      model: () => ready.model(),
+      subscribe: (fn) => ready.subscribe(fn),
+      onSight: (fn) => ready.onSight(fn),
+      seen: () => ready.seen(),
+      decided: () => ready.decided(),
+      onFetch: () => fetchNow(),
+      onOpen: (from) => ready.open(from),
+    },
   });
   mountFirst(phone, store, {
     connected,

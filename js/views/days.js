@@ -218,8 +218,8 @@ export function mountDays(root, store, { clock, where = null, storage = null, re
   const board = mountBoard({ storage, onToggle: (on) => joinFoot(on) });
   function joinFoot(on = board.isShown()) {
     if (!ready) return;
-    const m = ready.model();
-    board.foot(on && !!m);
+    // The line's place counts while it is being decided too (js/views/ready.js is-pending).
+    board.foot(on && !ready.el.hidden);
     ready.el.classList.toggle("is-alone", !on);
   }
   root.replaceChildren(demo, bar, board.el, ...(ready ? [ready.el] : []), rail);

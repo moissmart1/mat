@@ -170,7 +170,8 @@ export function mountReady(phone, store, { keep, clock, storage, durable = true,
   let asked = false; // the pass running was asked for by a person (Fetch now)
   let passing = false; // a pass that has sent a request is running (fix round I2)
   let keepSettled = false; // the keep has answered once (fix round I1): nothing is said before
-  const subs = new Set();
+  const subs = new Set(); // what the line says changed (Days, the strip)
+  const sightSubs = new Set(); // the line came into or went out of sight (the strip only: Days must not redraw for it)
   const env = () => ({
     have: (id) => keep.have(id),
     lasting: keep.lasting === true,
@@ -232,7 +233,12 @@ export function mountReady(phone, store, { keep, clock, storage, durable = true,
   };
 
   function drawLine(m) {
-    line.hidden = !m;
+    // Not decided yet, with a trip that will have a line: the line keeps its place, empty and
+    // unseen, so nothing moves when it is decided (a green line is the same 30 px).
+    const s0 = store.state;
+    const pending = !m && !(keepSettled && shellKnown) && s0.status === "ready" && s0.ticketsReady === true;
+    line.classList.toggle("is-pending", pending);
+    line.hidden = !m && !pending;
     if (!m) return;
     const amber = isAmber(m.kind);
     line.dataset.kind = m.kind;
@@ -324,7 +330,7 @@ export function mountReady(phone, store, { keep, clock, storage, durable = true,
     current = m;
     drawLine(m);
     drawSheet(m);
-    const next = JSON.stringify(m);
+    const next = JSON.stringify(m) + (keepSettled && shellKnown ? "" : "?");
     if (next === sig) return m;
     sig = next;
     if (!quiet) for (const f of subs) f(m);
@@ -343,7 +349,7 @@ export function mountReady(phone, store, { keep, clock, storage, durable = true,
       const v = sightNow();
       if (v === held) return;
       held = v;
-      for (const f of subs) f(current);
+      for (const f of sightSubs) f(current);
     }, HOLD_MS);
   }
   if (typeof IntersectionObserver === "function") {
@@ -470,6 +476,12 @@ export function mountReady(phone, store, { keep, clock, storage, durable = true,
       subs.add(fn);
       return () => subs.delete(fn);
     },
+    onSight(fn) {
+      sightSubs.add(fn);
+      return () => sightSubs.delete(fn);
+    },
+    // Whether the first answers are in (IndexedDB, the worker): until then the line keeps its place and says nothing.
+    decided: () => keepSettled && shellKnown,
     seen: () => held,
     passStarted,
     passSettled,

@@ -9,8 +9,8 @@
 // sits below every sheet and the bottom bar.
 //
 // mountNet(root, store, { ready }) adds #net to root (the phone).
-// ready (issue 84, js/views/ready.js): { model(), subscribe(fn), seen(),
-// onFetch(), onOpen(button) }. Without it the strip is exactly as before.
+// ready (issue 84, js/views/ready.js): { model(), subscribe(fn), onSight(fn), seen(),
+// decided(), onFetch(), onOpen(button) }. Until decided() the strip shows nothing. Without it the strip is exactly as before.
 // With it:
 // - no signal and this phone ready (kind ready-off): the board's green line
 //   (is-led), "圏外 No signal · everything is on this phone", on every screen;
@@ -89,6 +89,16 @@ export function mountNet(root, store, { ready = null } = {}) {
     const { unsent, waiting } = store.outbox();
     const m = ready ? ready.model() : null;
     const offline = s.online === false;
+    // Until the line has decided (IndexedDB and the worker have answered, a moment at launch), the
+    // strip waits too: it then says the one thing it will keep saying, with no flash from one to the other.
+    if (ready && ready.decided && !ready.decided()) {
+      if (!strip.hidden) {
+        strip.hidden = true;
+        root.classList.remove("net-on");
+      }
+      place();
+      return;
+    }
     let look = "";
     let message = s.online ? "" : s.loadedAt === null ? NOTHING_YET : SHOWING_LAST;
     let jp = "";
@@ -129,5 +139,8 @@ export function mountNet(root, store, { ready = null } = {}) {
 
   render(store.state);
   store.subscribe(render);
-  if (ready) ready.subscribe(() => render(store.state));
+  if (ready) {
+    ready.subscribe(() => render(store.state));
+    if (ready.onSight) ready.onSight(() => render(store.state));
+  }
 }
