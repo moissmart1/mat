@@ -226,6 +226,45 @@ const boardLines = (page) => page.evaluate(() => {
   return { small: q(".led-big small"), big: q(".led-big b"), l1: q(".led-1"), l2: q(".led-2") };
 });
 
+// Opens with the real worker, waits for green, Forgets this phone, then pastes the link back
+// (beforePaste runs just before). From the paste on, each time the line turns green the page looks
+// at once whether the worker is active and its offline copy really kept (window.__greens).
+async function forgetThenPaste(page, beforePaste = () => {}) {
+  const backend = await backendAt(WEEKS);
+  await twelve(backend);
+  await openDays(page, { backend, nowMs: WEEKS, shell: false });
+  await until(() => page.evaluate(() => !!navigator.serviceWorker.controller), "the worker takes the page", 20000);
+  await waitKind(page, "ready");
+  await page.click("#youBtn");
+  await atRest(page, "#you");
+  await page.dispatchEvent("#setForget", "click");
+  await page.dispatchEvent("#setForget", "click");
+  await until(() => visible(page, "#gateGlass"), "the never-loaded screen", 10000);
+  await atRest(page, "#you", { open: false, message: "Settings closed" });
+  assert.deepEqual(await page.evaluate(async () => ({ regs: (await navigator.serviceWorker.getRegistrations()).length, shell: (await caches.keys()).some((n) => n.startsWith("mat-shell-")) })), { regs: 0, shell: false });
+  await page.evaluate(() => {
+    window.__greens = [];
+    const l = document.querySelector("#vDays .rdy");
+    let was = null;
+    new MutationObserver(async () => {
+      const k = !l.hidden ? l.dataset.kind : null;
+      if (k === was) return;
+      was = k;
+      if (k !== "ready") return;
+      const regs = await navigator.serviceWorker.getRegistrations();
+      const kept = async (f) => !!(await caches.match(new URL(f, location.href).href));
+      const shell = (await kept("./")) && (await kept("js/app.js")) && (await kept("icons/icon-512.png"));
+      window.__greens.push({ active: regs.length === 1 && !!regs[0].active, shell });
+    }).observe(l, { attributes: true, attributeFilter: ["data-kind", "hidden"] });
+  });
+  beforePaste();
+  await page.fill("#keyPaste", "http://localhost:" + process.env.MAT_PORT + "/#k=" + KEY);
+  await page.click("#keyGo");
+  await until(() => page.evaluate(() => document.querySelectorAll("#rail .tk").length > 0), "the trip is back", 10000);
+  assert.equal(await page.evaluate(() => !!navigator.serviceWorker.controller), true, "the page keeps its old controller all along: not proof of anything");
+  return backend;
+}
+
 module.exports = [
   {
     name: "every picture kept: the green line at the board's foot, no strip; the sheet opens, reads right, closes, focus back",
@@ -628,40 +667,41 @@ module.exports = [
     name: "Forget this phone, then a pasted link: green only once the worker is back and its offline copy kept again (fix round C1)",
     serviceWorkers: "allow",
     async run({ page }) {
-      const backend = await backendAt(WEEKS);
-      await twelve(backend);
-      await openDays(page, { backend, nowMs: WEEKS, shell: false });
-      await until(() => page.evaluate(() => !!navigator.serviceWorker.controller), "the worker takes the page", 20000);
-      await waitKind(page, "ready");
-      await page.click("#youBtn");
-      await atRest(page, "#you");
-      await page.dispatchEvent("#setForget", "click");
-      await page.dispatchEvent("#setForget", "click");
-      await until(() => visible(page, "#gateGlass"), "the never-loaded screen", 10000);
-      await atRest(page, "#you", { open: false, message: "Settings closed" });
-      assert.deepEqual(await page.evaluate(async () => ({ regs: (await navigator.serviceWorker.getRegistrations()).length, shell: (await caches.keys()).some((n) => n.startsWith("mat-shell-")) })), { regs: 0, shell: false });
-      // From the paste on: each time the line turns green, look at once whether the worker and its offline copy are really there.
-      await page.evaluate(() => {
-        window.__greens = [];
-        const l = document.querySelector("#vDays .rdy");
-        let was = null;
-        new MutationObserver(async () => {
-          const k = !l.hidden ? l.dataset.kind : null;
-          if (k === was) return;
-          was = k;
-          if (k !== "ready") return;
-          const regs = await navigator.serviceWorker.getRegistrations();
-          const shell = (await caches.keys()).some((n) => n.startsWith("mat-shell-"));
-          window.__greens.push({ active: regs.length === 1 && !!regs[0].active, shell });
-        }).observe(l, { attributes: true, attributeFilter: ["data-kind", "hidden"] });
-      });
-      await page.fill("#keyPaste", "http://localhost:" + process.env.MAT_PORT + "/#k=" + KEY);
-      await page.click("#keyGo");
-      await until(() => page.evaluate(() => document.querySelectorAll("#rail .tk").length > 0), "the trip is back", 10000);
-      assert.equal(await page.evaluate(() => !!navigator.serviceWorker.controller), true, "the page keeps its old controller all along: not proof of anything");
+      const backend = await forgetThenPaste(page);
       await waitKind(page, "ready", 20000);
       await until(() => page.evaluate(() => window.__greens.length > 0), "the look at green has answered");
       assert.deepEqual(await page.evaluate(() => window.__greens), [{ active: true, shell: true }], "green only once the worker is back and its offline copy is kept again");
+      void backend;
+    },
+  },
+  {
+    name: "Forget this phone, then a pasted link on weak signal: a shell file does not come, so not green; the minute's retry keeps the copy, then green (fix round C1)",
+    serviceWorkers: "allow",
+    async run({ page, context }) {
+      // One shell file cannot be fetched while the worker refills its copy.
+      let blocked = false;
+      let aborted = 0;
+      await context.route("**/icons/icon-512.png", (route) => {
+        if (!blocked) return route.continue();
+        aborted++;
+        return route.abort();
+      });
+      const backend = await forgetThenPaste(page, () => (blocked = true));
+      await until(() => aborted > 0, "the refill asked for the blocked file", 20000);
+      await waitKind(page, "setup", 20000);
+      // The failed refill leaves no empty copy behind.
+      await until(() => page.evaluate(async () => !(await caches.keys()).some((n) => n.startsWith("mat-shell-"))), "no empty mat-shell- cache is left", 10000);
+      await advance(page, backend, 1000);
+      assert.equal(await lineKind(page), "setup", "not green while the copy is not kept");
+      assert.deepEqual(await page.evaluate(() => window.__greens), []);
+      // A minute later, with the file answering again, the copy is asked for again.
+      blocked = false;
+      await until(async () => {
+        await advance(page, backend, 60000);
+        return (await lineKind(page)) === "ready";
+      }, "green after the minute's retry", 30000);
+      await until(() => page.evaluate(() => window.__greens.length > 0), "the look at green has answered");
+      assert.deepEqual(await page.evaluate(() => window.__greens), [{ active: true, shell: true }]);
     },
   },
   {

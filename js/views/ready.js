@@ -2,7 +2,8 @@
 // Is this phone ready for no signal (issue 84, look A: the departure board
 // says it). What is said comes from js/ready.js; this draws it.
 //
-// mountReady(phone, store, { keep, clock, storage, durable, onFetch, beforeOpen })
+// mountReady(phone, store, { keep, clock, storage, durable, onFetch, beforeOpen, refillShell })
+//   refillShell(): ask the worker to keep the offline copy again (app.js); called on the minute while it is not kept.
 //   -> { el, update(quiet), model(), subscribe(fn), seen(), passStarted(forced), passSettled(again, started), checkShell(), open(from), close(restoreFocus), isOpen() }
 // - el: the line (div role=group "This phone"): a lamp, the words (one
 //   button, it opens the sheet) and, when it has one, the key 取込 (a second
@@ -59,13 +60,23 @@ async function shellKept() {
     if (!sw || typeof sw.getRegistration !== "function" || !globalThis.caches) return false;
     const reg = await sw.getRegistration();
     if (!reg || !reg.active) return false;
-    return (await caches.keys()).some((n) => n.startsWith("mat-shell-"));
+    // Not a cache's name: the shell itself must be in it (a refill that failed half way
+    // leaves nothing; the worker deletes what it could not fill). The page and the app's
+    // script stand for the whole list, which the worker writes all at once (addAll).
+    const page = new URL("./", reg.scope).href;
+    const app = new URL("js/app.js", reg.scope).href;
+    for (const name of await caches.keys()) {
+      if (!name.startsWith("mat-shell-")) continue;
+      const c = await caches.open(name);
+      if ((await c.match(page)) && (await c.match(app))) return true;
+    }
+    return false;
   } catch {
     return false;
   }
 }
 
-export function mountReady(phone, store, { keep, clock, storage, durable = true, onFetch = () => {}, beforeOpen = () => {} } = {}) {
+export function mountReady(phone, store, { keep, clock, storage, durable = true, onFetch = () => {}, beforeOpen = () => {}, refillShell = null } = {}) {
   const now = () => (clock && clock.now ? clock.now() : Date.now());
   const read = (k) => {
     try {
@@ -431,6 +442,8 @@ export function mountReady(phone, store, { keep, clock, storage, durable = true,
   checkShell();
   setInterval(() => {
     if (document.visibilityState === "hidden") return;
+    // The offline copy is not kept (a refill that failed on weak signal): ask the worker again, with signal.
+    if (!shell && shellKnown && refillShell && store.state.online !== false) refillShell();
     checkShell();
     update();
   }, MINUTE_MS);

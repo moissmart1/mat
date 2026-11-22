@@ -21,7 +21,7 @@
 //   script.googleusercontent.com), and anything else not listed here.
 // - Only OK answers are ever kept.
 
-const SW_VERSION = "616c3ab73a";
+const SW_VERSION = "52d78329b3";
 const SHELL_CACHE = "mat-shell-" + SW_VERSION;
 const FONT_CACHE = "mat-fonts";
 
@@ -229,18 +229,26 @@ async function shell(request) {
 // C1). Forget this phone deletes it and unregisters this worker; a link pasted
 // then brings the trip back without a reload, and register() from that page
 // revives this same registration, so no install runs to fill the copy again.
+// addAll keeps all of SHELL or nothing; when it fails (a file did not come, on
+// weak signal) a cache left incomplete is deleted, so an empty mat-shell- cache
+// never stands for a kept copy. The page asks again on the minute.
 // Answers true on the port once every shell file is kept, false if not.
+function shellComplete(cache) {
+  return Promise.all(SHELL.map((url) => cache.match(new Request(url)))).then((hits) => hits.every(Boolean));
+}
 self.addEventListener("message", (event) => {
   if (!event.data || event.data.type !== "mat-keep-shell") return;
   const port = event.ports && event.ports[0];
   event.waitUntil(
     caches
       .open(SHELL_CACHE)
-      .then((cache) => cache.addAll(SHELL.map((url) => new Request(url, { cache: "reload" }))))
-      .then(
-        () => true,
-        () => false,
+      .then((cache) =>
+        cache.addAll(SHELL.map((url) => new Request(url, { cache: "reload" }))).then(
+          () => true,
+          () => shellComplete(cache).then((full) => (full ? true : caches.delete(SHELL_CACHE).then(() => false))),
+        ),
       )
+      .catch(() => false)
       .then((ok) => {
         if (port) port.postMessage(ok);
       }),

@@ -339,13 +339,14 @@ function start() {
   const phone = document.getElementById("phone");
   // Is this phone ready for no signal (issue 84): the line under the board on
   // Days, its sheet, and what the strip at the top says (js/views/ready.js).
-  ready = mountReady(phone, store, {
+  ready = readyView = mountReady(phone, store, {
     keep,
     clock,
     storage: raw,
     durable: durableStorage,
     onFetch: () => fetchNow(),
     beforeOpen: () => closeForDays(),
+    refillShell: () => refillShell(),
   });
   // Ring up on Days shows Money while the register is open, so each line is
   // seen printing onto the receipt, and goes back to Days when it closes.
@@ -771,9 +772,7 @@ function start() {
       try {
         if ("serviceWorker" in navigator) {
           Promise.resolve(navigator.serviceWorker.register("sw.js"))
-            .then(() => navigator.serviceWorker.ready)
-            .then((reg) => keepShell(reg))
-            .then(() => ready.checkShell())
+            .then(() => refillShell())
             .catch(() => {});
         }
       } catch {
@@ -882,6 +881,35 @@ function keepShell(reg) {
     }
   });
 }
+
+// The offline copy kept again (fix round C1): first a look for a newer worker
+// (a revived registration may be from before a release); a new one installing
+// fills its own copy, so the message goes only when none appears. One at a
+// time; the line asks again whether the copy is kept once it is done.
+let refilling = null;
+function refillShell() {
+  if (refilling) return refilling;
+  const sw = typeof navigator !== "undefined" ? navigator.serviceWorker : null;
+  if (!sw || typeof sw.getRegistration !== "function") return Promise.resolve(false);
+  refilling = Promise.resolve(sw.getRegistration())
+    .then(async (reg) => {
+      if (!reg) return false;
+      try {
+        await reg.update();
+      } catch {
+        // no signal or no answer: the copy is asked for anyway
+      }
+      if (reg.installing || reg.waiting) return false;
+      return keepShell(reg);
+    })
+    .catch(() => false)
+    .finally(() => {
+      refilling = null;
+      if (readyView) readyView.checkShell();
+    });
+  return refilling;
+}
+let readyView = null;
 
 // The offline shell (sw.js). Quietly does nothing where service workers are
 // missing or blocked. A new worker takes over at once and tells this page,
