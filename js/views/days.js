@@ -179,7 +179,7 @@ function patchTicket(old, fresh) {
   return old;
 }
 
-export function mountDays(root, store, { clock, where = null, storage = null, onAllDays = () => {}, onStay = () => {}, onStop = () => {}, onAddStop = () => {}, onStampBook = () => {}, held = () => false, tickets = null, onTicket = () => {} } = {}) {
+export function mountDays(root, store, { clock, where = null, storage = null, ready = null, onAllDays = () => {}, onStay = () => {}, onStop = () => {}, onAddStop = () => {}, onStampBook = () => {}, held = () => false, tickets = null, onTicket = () => {} } = {}) {
   const count = el("button", "bar-t");
   count.type = "button";
   count.id = "dayCount";
@@ -213,8 +213,16 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
   demo.hidden = true;
   demoStop.addEventListener("click", () => clock.stop());
   // The departure board (js/views/board.js): between the top line and the rail.
-  const board = mountBoard({ storage });
-  root.replaceChildren(demo, bar, board.el, rail);
+  // The line "This phone" (js/views/ready.js, issue 84) right after it: the
+  // board's foot when the board shows, alone in the same glass when not.
+  const board = mountBoard({ storage, onToggle: (on) => joinFoot(on) });
+  function joinFoot(on = board.isShown()) {
+    if (!ready) return;
+    const m = ready.model();
+    board.foot(on && !!m);
+    ready.el.classList.toggle("is-alone", !on);
+  }
+  root.replaceChildren(demo, bar, board.el, ...(ready ? [ready.el] : []), rail);
 
   let dates = []; // the dates of the drawn tickets, in order
   let states = []; // each one's dayState
@@ -565,6 +573,8 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
   // loading or offline is not this: those keep what is drawn.
   function wipe() {
     board.clear();
+    if (ready) ready.update(true);
+    joinFoot();
     dates = [];
     states = [];
     ahead = [];
@@ -592,9 +602,11 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
       return;
     }
     const stampToday = showStamps(s);
-    const ready = s.status === "ready" && s.trip && s.trip.start && list(s.days).length;
-    if (!ready) {
+    const ok = s.status === "ready" && s.trip && s.trip.start && list(s.days).length;
+    if (ready) ready.update(true);
+    if (!ok) {
       board.update(null);
+      joinFoot();
       if (!dates.length) {
         count.hidden = true;
         rail.replaceChildren();
@@ -619,7 +631,11 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
     // Where the phone is, when usable (js/where.js): memory only.
     const here = where ? where.current() : null;
     // Closed until the Days clock's next day; during a demo, the real one's.
-    board.update(boardFor(s, nowMs, here), clock.demoDay() ? tripNow(s, Date.now()).date : now.date);
+    // From two days before, a phone not ready for no signal takes the board's face (issue 84, section 5).
+    const rm = ready ? ready.model() : null;
+    const face = rm && rm.big ? { kind: "ready", small: "出発まで", big: String(rm.toGo), unit: "日", l1: rm.big.l1, l2: rm.big.l2, red: true, open: true } : null;
+    board.update(face || boardFor(s, nowMs, here), clock.demoDay() ? tripNow(s, Date.now()).date : now.date);
+    joinFoot();
     const left = rail.scrollLeft;
     const spot = focusSpot();
 
@@ -803,6 +819,8 @@ export function mountDays(root, store, { clock, where = null, storage = null, on
 
   render(store.state);
   store.subscribe(render);
+  // What the line says changed (a picture kept, signal, a pass): the board may give or take back its face.
+  if (ready) ready.subscribe(() => render(store.state));
   if (where) where.subscribe(() => render(store.state));
   // A picture reaching this phone turns its 券 box solid.
   if (tickets && tickets.subscribe) tickets.subscribe(() => render(store.state));

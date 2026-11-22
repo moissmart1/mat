@@ -29,8 +29,9 @@ import { createUpdater, otherVersionIn } from "./update.js";
 import { APP_VERSION } from "./config.js";
 import { isWide, onWide } from "./shape.js";
 import { createWhere } from "./where.js";
-import { createKeep, fetchMissing, ticketMark, stayMark, whoseOf, sameName, fetchesAll, pruneKeep, readKept } from "./tickets.js";
+import { createKeep, fetchMissing, isFetching, ticketMark, stayMark, whoseOf, sameName, fetchesAll, pruneKeep, readKept } from "./tickets.js";
 import { isPicture } from "./picture.js";
+import { mountReady } from "./views/ready.js";
 import { mountStub } from "./views/stub.js";
 import { mountStaySheet } from "./views/staysheet.js";
 import { tripNow, zoneOf, daySpan } from "./plan.js";
@@ -277,12 +278,51 @@ function start() {
     ticketData: readKept(keep),
     afterLoad: () => {
       pruneKeep(store, keep);
-      if (fetchesAll(raw)) fetchMissing(store, keep, { allowed: () => fetchesAll(raw) });
+      if (fetchesAll(raw)) background();
     },
   });
+
+  // Every fetching pass goes through here, so the line "This phone" (issue 84,
+  // js/views/ready.js) knows when one starts and when it settles. A call
+  // while one runs joins it (js/tickets.js) and tells nobody.
+  let ready = null;
+  let retryForced = false; // Fetch now met the store saving: once more when it is idle
+  function pass(opts, forced = false) {
+    if (isFetching(store) || !ready) return fetchMissing(store, keep, opts);
+    // The line hears of a pass only once it sends a request (fix round I2): a
+    // store check every 20 s whose pictures are all backing off asks nothing,
+    // and must not flip the line to "fetching" and back.
+    let started = false;
+    const p = fetchMissing(store, keep, {
+      ...opts,
+      onFirst: () => {
+        started = true;
+        ready.passStarted(forced);
+      },
+    });
+    p.finally(() => {
+      // Ended only because the store was saving: not a failure; tried again when it is idle.
+      const again = store.busy();
+      if (again && forced) retryForced = true;
+      if (started || forced) ready.passSettled(again, started);
+    });
+    return p;
+  }
+  const background = () => pass({ allowed: () => fetchesAll(raw) });
+  // Fetch now (the line's key, the board's paper key, the strip's key, the
+  // sheet's key): every missing picture once, soonest first, whatever the You
+  // setting says. The setting is not changed. A second tap while a pass runs does nothing.
+  function fetchNow() {
+    if (isFetching(store) || store.state.online === false || !store.state.ticketsReady) return;
+    pass({ force: true, allowed: () => true }, true);
+  }
   // A picture just kept may unblock the next one once saving ends: look again then.
   store.subscribe(() => {
-    if (!store.busy() && store.state.ticketsReady && fetchesAll(raw)) fetchMissing(store, keep, { allowed: () => fetchesAll(raw) });
+    if (store.busy() || !store.state.ticketsReady) return;
+    if (retryForced) {
+      retryForced = false;
+      pass({ force: true, allowed: () => true }, true);
+    } else if (fetchesAll(raw)) background();
   });
 
   // Where the phone is: kept in memory only, never sent or stored (js/where.js).
@@ -299,6 +339,17 @@ function start() {
   const tabs = mountTabs(store, raw);
 
   const phone = document.getElementById("phone");
+  // Is this phone ready for no signal (issue 84): the line under the board on
+  // Days, its sheet, and what the strip at the top says (js/views/ready.js).
+  ready = readyView = mountReady(phone, store, {
+    keep,
+    clock,
+    storage: raw,
+    durable: durableStorage,
+    onFetch: () => fetchNow(),
+    beforeOpen: () => closeForDays(),
+    refillShell: () => refillShell(),
+  });
   // Ring up on Days shows Money while the register is open, so each line is
   // seen printing onto the receipt, and goes back to Days when it closes.
   // Borrowed: mat.tab is left as it was.
@@ -344,6 +395,7 @@ function start() {
     stopSheet.close(false);
     staySheet.close(false);
     book.close(false);
+    ready.close(false);
   };
   // A tab switch closes them (they belong to Days).
   document.getElementById("nav").addEventListener("click", (ev) => {
@@ -420,7 +472,8 @@ function start() {
     },
     // Ticket pictures: back to every one, the fetching starts at once.
     onTixMode: (mode) => {
-      if (mode === "all" && store.state.ticketsReady) fetchMissing(store, keep, { allowed: () => fetchesAll(raw) });
+      if (mode === "all" && store.state.ticketsReady) background();
+      ready.update();
     },
     // Forget this phone: the trip, the key and every setting, the offline
     // copy and the worker, then the no-key screen.
@@ -686,6 +739,7 @@ function start() {
     clock,
     where,
     storage: raw,
+    ready,
     onStay: (id) => {
       closeForDays();
       stayCard.open(id);
@@ -747,7 +801,9 @@ function start() {
     },
   });
   mountUndoBar(phone, store);
-  mountNet(phone, store);
+  mountNet(phone, store, {
+    ready: { model: () => ready.model(), subscribe: (fn) => ready.subscribe(fn), seen: () => ready.seen(), onFetch: () => fetchNow(), onOpen: (from) => ready.open(from) },
+  });
   mountFirst(phone, store, {
     connected,
     storage,
@@ -760,6 +816,19 @@ function start() {
         // nowhere to keep it: it works for this visit only
       }
       keep.restart();
+      // Forget this phone unregistered the worker and deleted the offline copy:
+      // the trip is back without a reload, so the worker is registered again
+      // here, and the line asks again whether the app can open with no signal (fix round C1).
+      try {
+        if ("serviceWorker" in navigator) {
+          Promise.resolve(navigator.serviceWorker.register("sw.js"))
+            .then(() => refillShell())
+            .catch(() => {});
+        }
+      } catch {
+        // not allowed here
+      }
+      ready.checkShell();
       store.boot();
     },
   });
@@ -772,7 +841,7 @@ function start() {
   });
   // Click-through tests reach the register and the store here; only when the
   // fake backend is in the page, never in the real app.
-  if (typeof globalThis.MAT_FAKE_API === "function") globalThis.__matTest = { store, register, clock };
+  if (typeof globalThis.MAT_FAKE_API === "function") globalThis.__matTest = { store, register, clock, ready };
   document.getElementById("youBtn").addEventListener("click", () => {
     register.close();
     line.close(false);
@@ -851,6 +920,56 @@ function start() {
     store.outbox().unsent === 0 && !store.busy() && !store.state.notice && !bulk.isBusy() && !store.state.queueStorageFailed;
   if (document.visibilityState !== "hidden") startChecking();
 }
+
+// Asks the active worker to keep the offline copy again (sw.js "mat-keep-shell"):
+// register() after Forget revives the same registration, and no install runs
+// to refill what Forget deleted. Resolves once the worker answers.
+function keepShell(reg) {
+  return new Promise((resolve) => {
+    if (!reg || !reg.active || typeof MessageChannel !== "function") return resolve(false);
+    const channel = new MessageChannel();
+    // true (kept), false (a file did not come), "full" (the phone's storage is full).
+    channel.port1.onmessage = (ev) => resolve(ev.data === true || ev.data === "full" ? ev.data : false);
+    try {
+      reg.active.postMessage({ type: "mat-keep-shell" }, [channel.port2]);
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+// The offline copy kept again (fix round C1): first a look for a newer worker
+// (a revived registration may be from before a release); a new one installing
+// fills its own copy, so the message goes only when none appears. One at a
+// time; the line asks again whether the copy is kept once it is done.
+let refilling = null;
+function refillShell() {
+  if (refilling) return refilling;
+  const sw = typeof navigator !== "undefined" ? navigator.serviceWorker : null;
+  if (!sw || typeof sw.getRegistration !== "function") return Promise.resolve(false);
+  refilling = Promise.resolve(sw.getRegistration())
+    .then(async (reg) => {
+      if (!reg) return null;
+      try {
+        await reg.update();
+      } catch {
+        // no signal or no answer: the copy is asked for anyway
+      }
+      if (reg.installing || reg.waiting) return null;
+      return keepShell(reg);
+    })
+    .catch(() => false)
+    .then((result) => {
+      refilling = null;
+      if (readyView) {
+        readyView.refillDone(result);
+        readyView.checkShell();
+      }
+      return result;
+    });
+  return refilling;
+}
+let readyView = null;
 
 // The offline shell (sw.js). Quietly does nothing where service workers are
 // missing or blocked. A new worker takes over at once and tells this page,

@@ -21,7 +21,7 @@
 //   script.googleusercontent.com), and anything else not listed here.
 // - Only OK answers are ever kept.
 
-const SW_VERSION = "69159092d3";
+const SW_VERSION = "b5a97a25eb";
 const SHELL_CACHE = "mat-shell-" + SW_VERSION;
 const FONT_CACHE = "mat-fonts";
 
@@ -41,6 +41,7 @@ const SHELL = [
   "css/money.css",
   "css/nextticket.css",
   "css/passcase.css",
+  "css/ready.css",
   "css/register.css",
   "css/sheet.css",
   "css/stampbook.css",
@@ -65,6 +66,7 @@ const SHELL = [
   "js/passcase.js",
   "js/picture.js",
   "js/plan.js",
+  "js/ready.js",
   "js/shape.js",
   "js/sound.js",
   "js/stamp.js",
@@ -89,6 +91,7 @@ const SHELL = [
   "js/views/net.js",
   "js/views/nextticket.js",
   "js/views/passcase.js",
+  "js/views/ready.js",
   "js/views/register.js",
   "js/views/slip.js",
   "js/views/stampbook.js",
@@ -224,6 +227,37 @@ async function shell(request) {
     return navigate ? offlinePage() : Response.error();
   }
 }
+
+// The page asks for the offline copy to be kept again (issue 84, fix round
+// C1). Forget this phone deletes it and unregisters this worker; a link pasted
+// then brings the trip back without a reload, and register() from that page
+// revives this same registration, so no install runs to fill the copy again.
+// addAll keeps all of SHELL or nothing; when it fails (a file did not come, on
+// weak signal) a cache left incomplete is deleted, so an empty mat-shell- cache
+// never stands for a kept copy. The page asks again on the minute.
+// Answers true on the port once every shell file is kept, false if not, "full" when the phone's storage is full.
+function shellComplete(cache) {
+  return Promise.all(SHELL.map((url) => cache.match(new Request(url)))).then((hits) => hits.every(Boolean));
+}
+self.addEventListener("message", (event) => {
+  if (!event.data || event.data.type !== "mat-keep-shell") return;
+  const port = event.ports && event.ports[0];
+  event.waitUntil(
+    caches
+      .open(SHELL_CACHE)
+      .then((cache) =>
+        cache.addAll(SHELL.map((url) => new Request(url, { cache: "reload" }))).then(
+          () => true,
+          // The phone's storage full: "full", so the page stops asking until its next launch.
+          (err) => shellComplete(cache).then((kept) => (kept ? true : caches.delete(SHELL_CACHE).then(() => (err && err.name === "QuotaExceededError" ? "full" : false)))),
+        ),
+      )
+      .catch(() => false)
+      .then((ok) => {
+        if (port) port.postMessage(ok);
+      }),
+  );
+});
 
 self.addEventListener("fetch", (event) => {
   const request = event.request;

@@ -1,0 +1,110 @@
+/* Copyright (c) 2026 moissmart1. All rights reserved. No licence is granted: do not copy, adapt or reuse this code or design, and do not use it to train or prompt an AI system to reproduce it. See LICENSE. */
+/* Is this phone ready for no signal (issue 84, look A: the departure board
+   says it). The line at the foot of the board (js/views/ready.js): green when
+   ready, amber when not, in the board's own glass, glow and dot screen. From
+   two days before it is the tall foot with a paper key under the board's
+   face. The strip at the top (js/views/net.js) can be the same line. The
+   sheet "This phone" is the app's ordinary dark sheet. The never-loaded
+   screen (js/views/first.js) has the board's glass reading 調整中. */
+
+/* ---------- the line ---------- */
+.brd.has-foot{margin-bottom:0;border-radius:6px 6px 0 0}
+/* The hairline between board and line is drawn inside the line (a shadow, not a border), so the row is 30 px. */
+.rdy{position:relative;display:flex;align-items:center;gap:8px;min-height:30px;margin:0 var(--gr) 6px var(--gl);padding:0 10px;border-radius:0 0 6px 6px;
+  background:#090807;box-shadow:inset 0 1px 0 #241d19, inset 0 0 0 1px #000, inset 0 0 14px rgba(255,140,30,.05);
+  font-family:var(--f);font-size:12.5px;font-weight:900;line-height:1.2;color:#6FE08A;text-shadow:0 0 5px rgba(80,220,120,.45)}
+/* No board above (no Book next, no next stop, or closed with ×): the same glass alone, every corner round. */
+.rdy.is-alone{border-radius:6px;box-shadow:inset 0 0 0 1px #000, inset 0 0 14px rgba(255,140,30,.05)}
+.rdy::after{content:"";position:absolute;inset:0;pointer-events:none;border-radius:inherit;background:radial-gradient(circle at 50% 50%, transparent 0 .9px, rgba(9,8,7,.5) 1.25px) 0 0/2.6px 2.6px}
+.rdy.is-amber{min-height:44px;color:#FFB04A;text-shadow:0 0 6px rgba(255,140,30,.55)}
+/* The words: one button (it opens the sheet), the whole row but the key. */
+.rdy-w{position:relative;flex:1 1 auto;min-width:0;align-self:stretch;display:flex;align-items:center;gap:8px;padding:0;border:0;background:none;color:inherit;font:inherit;text-shadow:inherit;text-align:left;line-height:inherit}
+/* 44 px to touch on the 30 px row: 7 px above (clear of the board's ×) and 7 px below. */
+.rdy-w::before,.rdy-w::after{content:"";position:absolute;left:0;height:7px}
+.rdy-w::before{top:-7px;right:48px}
+.rdy-w::after{bottom:-7px;right:0}
+/* Alone, the bar's pager is 6 px above: the touch area stops short of it and reaches further down instead. */
+.rdy.is-alone .rdy-w::before{top:-6px;height:6px}
+.rdy.is-alone .rdy-w::after{bottom:-8px;height:8px}
+.rdy.is-amber .rdy-w::before,.rdy.is-amber .rdy-w::after{display:none}
+.rdy-lamp{flex:none;width:7px;height:7px;border-radius:50%;background:currentColor;box-shadow:0 0 6px currentColor}
+.rdy.is-busy .rdy-lamp{animation:rdy-breathe 1.2s ease-in-out infinite}
+@keyframes rdy-breathe{50%{opacity:.35}}
+.rdy-jp{flex:none;font-family:var(--dot);font-weight:400;font-size:12px}
+.rdy-t{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:clip}
+.rdy-r{margin-left:auto;flex:none;white-space:nowrap;opacity:.85}
+/* The key 取込: a second button beside the words, 30 px, 44 px to touch. */
+.rdy-key,.net-key{position:relative;z-index:1;flex:none;margin-left:auto;display:inline-flex;align-items:center;gap:5px;height:30px;padding:0 10px;border:1.5px solid #FFB04A;border-radius:4px;
+  background:none;color:#FFB04A;font:inherit;font-weight:900;text-shadow:inherit;white-space:nowrap}
+.rdy-key::before,.net-key::before{content:"";position:absolute;left:0;right:0;top:-7px;bottom:-7px}
+.rdy-key i,.net-key i{font-family:var(--dot);font-style:normal;font-weight:400;font-size:12px}
+.rdy :focus-visible{outline:2px solid var(--text);outline-offset:2px;border-radius:4px}
+/* From two days before: the board gives its whole face to it, and a paper key under the glass. */
+.rdy.is-big{display:block;min-height:0;padding:8px 10px 10px;color:#FFB04A;text-shadow:none}
+.rdy.is-big::after{display:none}
+/* The sentence is a button: it opens the sheet "This phone" while the board's face shows. */
+.rdy-note{display:block;width:100%;margin:0 0 8px;padding:0;border:0;background:none;text-align:left;font-family:var(--f);font-size:12.5px;font-weight:700;line-height:1.35;color:#CFC6BD;text-shadow:none}
+.rdy-bigkey{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;height:48px;border:0;border-radius:6px;background:var(--paper);color:var(--print);
+  font-family:var(--f);font-size:16px;font-weight:900;box-shadow:var(--paper-edge);transition:transform .12s ease-out,box-shadow .12s}
+.rdy-bigkey:active{transform:translateY(1.5px);box-shadow:var(--paper-down)}
+.rdy-bigkey[aria-disabled="true"]{transform:none;box-shadow:var(--paper-edge);cursor:default}
+.rdy-bigkey i{font-style:normal;font-family:var(--seal);font-weight:400;font-size:17px;letter-spacing:.08em}
+.rdy-bigkey:focus-visible{outline-color:var(--text)}
+/* The board's second line in red, from two days before. */
+.led-2.is-red{color:#FF6A4D;text-shadow:0 0 6px rgba(255,80,50,.55)}
+@media (max-width:350px){
+  .rdy-t{white-space:normal}
+  .rdy-jp{display:none}
+  .rdy-key{padding:0 8px}
+  .rdy-w{padding-block:4px}
+}
+/* Sideways: one row, 30 px, the key 30 px high and 44 px to touch. */
+@media (orientation:landscape) and (max-height:520px){
+  .rdy.is-amber{min-height:30px}
+  .rdy.is-amber .rdy-w::before,.rdy.is-amber .rdy-w::after{display:block}
+}
+@media (prefers-reduced-motion: reduce){
+  .rdy.is-busy .rdy-lamp{animation:none}
+}
+
+/* ---------- the strip at the top, as the board's line ---------- */
+.net.is-led{background:#090807;border-bottom:1px solid #241d19;color:#6FE08A;font-weight:900;font-size:13px;text-shadow:0 0 5px rgba(80,220,120,.45)}
+.net.is-led::before{width:7px;height:7px;border:0;background:currentColor;box-shadow:0 0 6px currentColor}
+.net.is-led span i{font-style:normal;font-family:var(--dot);font-weight:400;margin-right:6px}
+.net.is-amber{color:#FFB04A;text-shadow:0 0 6px rgba(255,140,30,.55)}
+.net.is-fetching::before{animation:rdy-breathe 1.2s ease-in-out infinite}
+.net-w{flex:1 1 auto;min-width:0;align-self:stretch;min-height:30px;padding:0;border:0;background:none;color:inherit;font:inherit;text-shadow:inherit;text-align:left;line-height:inherit}
+.net :focus-visible{outline:2px solid var(--text);outline-offset:2px;border-radius:4px}
+@media (prefers-reduced-motion: reduce){
+  .net.is-fetching::before{animation:none}
+}
+
+/* ---------- the sheet "This phone" ---------- */
+.sheet-top .rdy-tjp{margin:0 8px 0 0}
+.rdy-v{margin:2px 0 4px;font-weight:900;font-size:17px;line-height:1.3}
+.rdy-rows{display:grid;gap:6px}
+.rdy-row>span{display:grid;gap:2px}
+.rdy-row .rdy-l{font-weight:700}
+.rdy-row b{white-space:normal;text-align:right}
+p.rdy-note-r{display:block;margin:0;min-height:0;font-size:14px;font-weight:500;line-height:1.4;color:var(--text)}
+.rdy-go i{font-family:var(--seal);font-weight:400;margin-right:8px;letter-spacing:.08em}
+.rdy-say{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap}
+/* While it is open the undo bar sits at the top, clear of the sheet. */
+.phone.rdy-open .ubar{top:calc(12px + env(safe-area-inset-top, 0px));bottom:auto}
+#rdy.is-open{z-index:26}
+@media (min-width:1000px) and (min-height:521px){
+  #rdy,#rdyScrim{left:0;right:calc(50% + var(--rail) / 2)}
+}
+
+/* ---------- the never-loaded screen: the board reads 調整中 ---------- */
+.gate.rdy-gate{align-content:center;gap:12px}
+.gate.rdy-gate>*{max-width:none;width:100%;box-sizing:border-box}
+.gate.rdy-gate p{text-align:left;font-size:15.5px;line-height:1.42}
+.gate.rdy-gate p b{display:block;margin-bottom:6px;font-size:18px;font-weight:900;line-height:1.25}
+.gate.rdy-gate .gate-key{max-width:none}
+.rdy-g-note{color:var(--dim);font-size:13px;font-weight:700;line-height:1.4}
+.rdy-gboard{display:flex;align-items:center;gap:12px;height:60px;padding:0 12px;border-radius:6px;position:relative;overflow:hidden}
+.rdy-gboard b{font-family:var(--dot);font-weight:400;font-size:26px;letter-spacing:.12em;color:#FFB04A;text-shadow:0 0 6px rgba(255,140,30,.6)}
+.rdy-gboard span{display:grid;gap:1px;font-size:13px;font-weight:900;color:#FFB04A;text-shadow:0 0 6px rgba(255,140,30,.5);line-height:1.2}
+.rdy-gboard span i{font-style:normal;color:#6FE08A;text-shadow:0 0 5px rgba(80,220,120,.45);font-size:12.5px}
+.rdy-gboard::after{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(circle at 50% 50%, transparent 0 .9px, rgba(9,8,7,.5) 1.25px) 0 0/2.6px 2.6px}
