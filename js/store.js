@@ -227,9 +227,11 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
     status: "boot", online: true, rev: null, me: null,
     trip: null, people: [], days: [], eves: [], stops: [], stays: [], expenses: [], payments: [], rateToday: null, rateSource: null, sheetUrl: "", plannerLinked: false, todos: [], todosPulledAt: "", paymentsPulledAt: "", stampDefs: [], stamps: [], paymentProblems: { at: "", list: [], more: 0 }, todoProblems: { at: "", list: [], more: 0 }, tickets: [], ticketsReady: false, ticketList: false,
     loadedAt: null, seenAt: null, lastChange: null, notice: null, setAside: [], keyRefused: false,
-    // linkKept: a link pasted on the no-key screen could not reach the trip (no
-    // signal, or no answer): the key is kept, status stays "nokey" until a load
-    // lands, and the app's checks keep trying (issue #85). Never after a refusal.
+    // linkKept: a key is stored but no trip has loaded in this storage yet, and
+    // the load got no answer (a link pasted with no signal, or a relaunch still
+    // without it): status is "nokey" until a load lands, the no-key screen says
+    // the link is kept, and the app's checks keep trying (issue #85). Never
+    // after a refusal.
     linkKept: false,
     // personal: this phone opened its own person's link (load said so); me is then theirs.
     // cleared: the trip was taken off this phone after its key was refused ({ kept: own unsent lines kept }).
@@ -589,10 +591,15 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
     try {
       r = await call("load", {});
     } catch (err) {
-      if (state.status !== "nokey") state.status = base ? "ready" : "error";
-      // A pasted key whose first load got no answer: kept, and tried again by
-      // the app's checks (issue #85). A refusal took the trip off (call): not kept.
-      else state.linkKept = !wiped && !state.keyRefused && !(err && err.code === "bad_key") && !!getItem("mat.key");
+      // A key with no trip yet whose load got no answer (a link pasted with no
+      // signal, or the app opened again still without it): the key is kept,
+      // the no-key screen says so, and the app's checks try again (issue #85).
+      // Never after a refusal: call() took the trip and the key off.
+      const refused = wiped || state.keyRefused || (err && err.code === "bad_key");
+      if (!base && !refused && getItem("mat.key")) {
+        state.status = "nokey";
+        state.linkKept = true;
+      } else if (state.status !== "nokey") state.status = base ? "ready" : "error";
       changed();
       return false;
     }

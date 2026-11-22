@@ -1,7 +1,8 @@
 // Issue #85: a link pasted on the no-key screen with no signal. The screen
 // says the link is kept and the field goes; when signal is back the trip
 // opens by itself (the 20-second check, the return of signal, or a relaunch),
-// with no further tap. A wrong link is still refused once the trip answers.
+// with no further tap; a relaunch still without signal shows the kept screen
+// again. A wrong link is still refused once the trip answers, and never kept.
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -33,6 +34,7 @@ async function pasteWithNoSignal(page, backend, link, before) {
   await page.fill("#keyPaste", link);
   await page.click("#keyGo");
   await expectText(page, "#gate p", KEPT);
+  assert.equal(await page.getAttribute("#gate p", "role"), "status", "read out when it replaces the instructions");
   assert.ok(await visible(page, "#gate"));
   assert.equal(await visible(page, "#keyPaste"), false, "nothing more to paste: the field goes");
   assert.equal(await visible(page, "#keyGo"), false);
@@ -88,6 +90,46 @@ module.exports = [
       assert.equal(await visible(page, "#gate"), false);
     },
   },
+  ...[
+    ["Safari", NO_KEY_SAFARI, false],
+    ["Home Screen", NO_KEY_HOME, true],
+  ].map(([form, before, home]) => ({
+    name: "#85 " + form + ": pasted with no signal, closed and opened again still without signal: the kept screen, then it opens by itself",
+    async run({ page }) {
+      if (home) await homeScreen(page);
+      const backend = await open(page, { seed: SEED, nowMs: NOON12, key: null });
+      await pasteWithNoSignal(page, backend, ORIGIN + "/#k=test-key", before);
+      // Relaunch, still no signal: not an empty app, the same kept screen.
+      await page.reload();
+      await expectText(page, "#gate p", KEPT);
+      assert.ok(await visible(page, "#gate"));
+      assert.equal(await visible(page, "#keyPaste"), false);
+      assert.equal(await page.evaluate(() => globalThis.__matTest.store.state.linkKept), true);
+      assert.equal(await page.evaluate(() => localStorage.getItem("mat.cache")), null, "no trip has loaded here");
+      assert.equal(await rowCount(page), 0);
+      await shot(page, "pasteoffline-" + (home ? "home" : "safari") + "-relaunch-kept.png");
+      // A check still without signal: unchanged.
+      await advance(page, backend, CHECK_MS);
+      await expectText(page, "#gate p", KEPT);
+      // Signal back: the next check opens it, no tap.
+      backend.failWith = null;
+      await advance(page, backend, CHECK_MS);
+      await waitRows(page, 8);
+      assert.equal(await visible(page, "#gate"), false);
+    },
+  })),
+  {
+    name: "#85: a phone that loaded the trip before still opens on it with no signal (never the kept screen)",
+    async run({ page }) {
+      const backend = await open(page, { seed: SEED, nowMs: NOON12 });
+      await waitRows(page, 8);
+      backend.failWith = "network";
+      await page.reload();
+      await waitRows(page, 8);
+      assert.equal(await visible(page, "#gate"), false);
+      assert.equal(await page.evaluate(() => globalThis.__matTest.store.state.linkKept), false);
+    },
+  },
   {
     name: "#85 Safari: a wrong link pasted with no signal is refused when signal returns, and the field is back",
     async run({ page }) {
@@ -99,6 +141,13 @@ module.exports = [
       assert.ok(await visible(page, "#keyPaste"), "the field is back for the right link");
       assert.equal(await page.evaluate(() => localStorage.getItem("mat.key")), null, "the refused key comes off");
       assert.equal(await rowCount(page), 0);
+      // Opened again with no signal after the refusal: the plain no-key screen, never kept.
+      backend.failWith = "network";
+      await page.reload();
+      await expectText(page, "#gate p", NO_KEY_SAFARI);
+      assert.ok(await visible(page, "#keyPaste"));
+      assert.equal(await page.evaluate(() => globalThis.__matTest.store.state.linkKept), false);
+      backend.failWith = null;
       // And the right link, with signal, opens at once.
       await page.fill("#keyPaste", ORIGIN + "/#k=test-key");
       await page.click("#keyGo");

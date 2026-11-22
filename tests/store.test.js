@@ -309,14 +309,49 @@ test("a kept link: a relaunch with signal opens; Forget this phone and a new pas
   assert.deepEqual([p.store.state.status, p.store.state.linkKept], ["ready", false]);
 });
 
-test("a cold start with a stored key and no saved trip is unchanged by linkKept (error, then the check loads)", async () => {
-  const p = phone({ seed: SEED });
+test("a relaunch still without signal, key stored and no trip ever loaded: still kept; the next check opens it", async () => {
+  const storage = memStorage({ "mat.me": "Mo" });
+  const p = phone({ seed: SEED, storage });
+  await p.store.boot();
+  storage.setItem("mat.key", KEY);
   p.net.offline = true;
   await p.store.boot();
-  assert.deepEqual([p.store.state.status, p.store.state.linkKept], ["error", false]);
-  p.net.offline = false;
-  await p.store.checkRev();
-  assert.deepEqual([p.store.state.status, p.store.state.linkKept], ["ready", false]);
+  assert.equal(p.store.state.linkKept, true);
+  // The app closed and opened again, still with no signal.
+  const again = phone({ seed: SEED, fake: p.fake, storage });
+  again.net.offline = true;
+  await again.store.boot();
+  const s = again.store.state;
+  assert.deepEqual([s.status, s.linkKept, s.keyRefused, s.loadedAt], ["nokey", true, false, null]);
+  await again.store.checkRev();
+  assert.deepEqual([s.status, s.linkKept], ["nokey", true], "a check with no signal leaves it kept");
+  again.net.offline = false;
+  await again.store.checkRev();
+  await again.store.idle();
+  assert.deepEqual([s.status, s.linkKept, s.expenses.length], ["ready", false, 9]);
+});
+
+test("a relaunch with no signal and a saved trip is unchanged: the trip shows, nothing kept", async () => {
+  const storage = memStorage({ "mat.key": KEY, "mat.me": "Mo" });
+  const p = phone({ seed: SEED, storage });
+  await p.store.boot();
+  const again = phone({ seed: SEED, fake: p.fake, storage });
+  again.net.offline = true;
+  await again.store.boot();
+  assert.deepEqual([again.store.state.status, again.store.state.linkKept, again.store.state.expenses.length], ["ready", false, 9]);
+});
+
+test("a refused key is never kept, on a relaunch either", async () => {
+  const storage = memStorage({ "mat.key": "not-the-key", "mat.me": "Mo" });
+  const p = phone({ seed: SEED, storage });
+  await p.store.boot();
+  assert.deepEqual([p.store.state.status, p.store.state.keyRefused, p.store.state.linkKept], ["nokey", true, false]);
+  assert.equal(storage.getItem("mat.key"), null);
+  const again = phone({ seed: SEED, fake: p.fake, storage });
+  again.net.offline = true;
+  await again.store.boot();
+  assert.deepEqual([again.store.state.status, again.store.state.linkKept], ["nokey", false], "no key: the plain no-key screen");
+  assert.equal(again.net.sent.length, 0);
 });
 
 test("me is null when mat.me is missing or not one of the people, and setMe stores it", async () => {
@@ -448,12 +483,13 @@ test("the first check after coming back fails twice -> No signal; later failures
   assert.equal(p.waits.includes(1500), false, "only the first check after return retries");
 });
 
-test("with no cache and no signal, boot ends in error", async () => {
+test("with no cache and no signal, boot keeps the key and waits (issue #85: nokey, linkKept)", async () => {
   const p = phone({ seed: SEED });
   p.net.offline = true;
   await p.store.boot();
-  assert.equal(p.store.state.status, "error");
+  assert.deepEqual([p.store.state.status, p.store.state.linkKept, p.store.state.keyRefused], ["nokey", true, false]);
   assert.equal(p.store.state.online, false);
+  assert.equal(p.storage.getItem("mat.key"), KEY);
 });
 
 // ---------- writes ----------

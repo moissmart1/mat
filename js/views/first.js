@@ -34,9 +34,10 @@ export function clearedText(kept) {
 // to close the app rather than to keep it open (#20 review).
 const MEMORY_ONLY = "Unsent changes are only in this app’s memory: don’t close it while you copy your link.";
 const NOT_CONNECTED = "This app isn’t connected yet.";
-// A pasted link that could not reach the trip (no signal): the key is kept and
-// the app opens by itself when a check gets through (issue #85, js/store.js
-// linkKept). The field is hidden: nothing more to paste.
+// A key with no trip loaded yet that could not reach it (pasted with no signal,
+// or the app reopened still without it): the key is kept and the app opens by
+// itself when a check gets through (issue #85, js/store.js linkKept). The field
+// is hidden: nothing more to paste.
 export const LINK_KEPT = "Your link is kept. MAT opens by itself when signal is back.";
 // With issue 84's glass (調整中) on this screen, its two small lines say this.
 export const GLASS_KEPT = { mark: "調整中", top: "Link kept", under: "Waiting for signal" };
@@ -135,6 +136,9 @@ export function mountFirst(root, store, { connected = true, storage = defaultSto
   gate.id = "gate";
   gate.hidden = true;
   const gateText = el("p");
+  // Polite live region: the kept sentence after a paste (issue #85), and a
+  // refusal, are read out when they replace the instructions.
+  gateText.setAttribute("role", "status");
   // A way in when the key is missing: paste the trip link.
   // The sentence above says what the field is for; no label of its own.
   const paste = el("div", "gate-key");
