@@ -10,8 +10,8 @@ const path = require("node:path");
 const { ORIGIN, SEED, NOON12, open, advance, until, expectText, visible } = require("./helpers.cjs");
 
 const KEPT = "Your link is kept. MAT opens by itself when signal is back.";
-const NO_KEY_SAFARI = "This phone needs the trip link. Open it from your email again, or paste it here.";
-const NO_KEY_HOME = "The Home Screen app keeps its own sign-in. Find the email with your own MAT link, press and hold the link, tap Copy Link, then paste it here.";
+const NO_KEY_SAFARI = "Nothing of the trip is on this phone yet. Open your MAT link from your email again, or paste it here.";
+const NO_KEY_HOME = "Nothing of the trip is in this app yet. The Home Screen app keeps its own copy, apart from Safari. Find the email with your own MAT link, press and hold the link, tap Copy Link, then paste it here.";
 const REFUSED = "That trip link didn’t work. Ask Mo for the current one.";
 const REFUSED_HOME = "That link no longer works here. Find the email with your own MAT link, press and hold the link, tap Copy Link, then paste it here.";
 const CHECK_MS = 20000;
