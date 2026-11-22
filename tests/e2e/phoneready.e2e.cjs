@@ -726,7 +726,7 @@ module.exports = [
       assert.equal(await text(page, "#gateGlass"), "調整中Not set up yetNeeds your link and signal, once");
       assert.equal(await page.getAttribute("#gateGlass b", "aria-hidden"), "true");
       assert.equal(await text(page, "#gate p"), "Nothing of the trip is in this app yet. The Home Screen app keeps its own copy, apart from Safari. Find the email with your own MAT link, press and hold the link, tap Copy Link, then paste it here.");
-      assert.equal(await text(page, "#gateNote"), "With signal it fetches the trip and every ticket picture, once.");
+      assert.equal(await text(page, "#gateNote"), "With signal it fetches the trip and every ticket picture, once. No signal? Paste anyway: it keeps the link and opens by itself when signal is back.");
       assert.equal(await page.evaluate(() => document.body.innerText.includes("opens by itself")), false);
       assert.equal(await height(page, "#gateGlass"), 60);
       await shot(page, "gate-home");
