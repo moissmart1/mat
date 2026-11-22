@@ -5,7 +5,8 @@
 // opens. The words are js/nextticket.js slotModel; this only draws them.
 // It simply shows: no rise (Mo dislikes decorative motion). An earlier stop
 // where you have no code is said in the label's place, in vermilion:
-// "No code for you at Shibuya Sky · Sat".
+// "No code for you at Shibuya Sky · Sat 12"; held sideways, where the slot is
+// one line, "No code: Shibuya Sky · Sat 12".
 //
 // mountNextTicket(phone, store, { clock, keep, where, onTicket }) -> { update, button }
 // - The node (#nextTicket) stands just before #nav, so Tab goes day, slot, bar.
@@ -29,6 +30,8 @@ import { fillSeal } from "../picture.js";
 import { sameName } from "../tickets.js";
 
 const LOOK_MS = 30000;
+// Held sideways the slot is one line: the warning is shortened so the stop's name shows.
+const SIDEWAYS = "(orientation:landscape) and (max-height:520px)";
 
 function el(tag, cls, text) {
   const n = document.createElement(tag);
@@ -91,6 +94,7 @@ export function mountNextTicket(phone, store, { clock = null, keep = null, where
   const nav = phone.querySelector("#nav");
   phone.insertBefore(box, nav);
 
+  const sideways = typeof matchMedia === "function" ? matchMedia(SIDEWAYS) : null;
   let id = null;
   let sealSig = "";
 
@@ -126,7 +130,7 @@ export function mountNextTicket(phone, store, { clock = null, keep = null, where
     lj.hidden = warned;
     le.hidden = warned;
     warn.hidden = !warned;
-    set(w1, warned ? "No code for you at " : "");
+    set(w1, !warned ? "" : sideways && sideways.matches ? "No code: " : "No code for you at ");
     set(w2, warned ? m.warn.title : "");
     set(w3, warned ? " · " + m.warn.when : "");
     tag.hidden = !m.tag;
@@ -171,6 +175,7 @@ export function mountNextTicket(phone, store, { clock = null, keep = null, where
   };
   document.addEventListener("visibilitychange", wake);
   wake();
+  if (sideways && sideways.addEventListener) sideways.addEventListener("change", () => update());
   update();
 
   return { update, button: b };
