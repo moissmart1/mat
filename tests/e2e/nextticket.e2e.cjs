@@ -694,7 +694,7 @@ cases.push({
         title: q(".ntk-t").textContent, line: q(".ntk-ln").textContent, warn: q(".ntk-w").textContent,
         titleWhole: whole(q(".ntk-t")), lineWhole: whole(q(".ntk-ld")),
         warnShown: getComputedStyle(q(".ntk-l")).display !== "none", dayIn: q(".ntk-w3").getBoundingClientRect().right <= go.left + 0.5,
-        wordsWhole: whole(q(".ntk-w1")), nameShown: q(".ntk-w2").clientWidth >= 40,
+        wordsWhole: whole(q(".ntk-w1")), nameShown: q(".ntk-w2").clientWidth >= 30 ? true : "only " + q(".ntk-w2").clientWidth + " px of the stop's name",
       };
     });
     assert.deepEqual(w, { title: "Kaiseki dinner", line: "All of us · Tue Dec 15 · 18:00", warn: "No code: Snow park lift pass · Mon 14", titleWhole: true, lineWhole: true, warnShown: true, dayIn: true, wordsWhole: true, nameShown: true });

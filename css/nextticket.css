@@ -95,6 +95,12 @@
   .ntk-ln{flex:0 1 auto;min-width:0}
   /* With a warning, your own ticket's title and line keep their room; the warning gives way first. */
   .ntk.has-warn .ntk-t,.ntk.has-warn .ntk-ln{flex:0 0 auto;max-width:40%}
+  /* A little tighter while warned, so the warned stop's name has room to show. */
+  .ntk.has-warn .ntk-m{gap:8px}
+  .ntk.has-warn .ntk-t{font-size:15.5px}
+  .ntk.has-warn .ntk-ln{font-size:12px}
+  .ntk.has-warn .ntk-l{font-size:11px}
+  .ntk.has-warn .ntk-go{padding:0 10px 0 9px;gap:4px}
   .ntk-go{display:flex;align-items:center;gap:6px;padding:0 13px 0 12px}
   #vDays{padding-bottom:calc(24px + env(safe-area-inset-bottom, 0px) + var(--slot-h, 0px))}
   :where(.phone.has-slot:not(.reg-open):has(#vDays.is-active)) .ubar{bottom:calc(12px + env(safe-area-inset-bottom, 0px) + var(--slot-h, 0px))}
