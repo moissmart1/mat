@@ -369,8 +369,9 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
   let memoryQueue = null; // Last queue snapshot when the device could not keep it durably.
 
   // mat.queue is shared by every open copy of the app on this storage (two
-  // tabs, a tab and the Home Screen app), and each keeps its own lines in
-  // memory (#108). So a write never replaces the saved queue with this copy's
+  // tabs of one browser; on Android also an installed app and its browser's
+  // tabs, never on an iPhone, where a Home Screen app has storage of its
+  // own), and each keeps its own lines in memory (#108). So a write never replaces the saved queue with this copy's
   // lines: it reads the saved queue and changes only this copy's entries, by
   // key. queueKeys holds every key this copy has read (restoreQueue) or
   // written; an entry whose key is in it but no longer among this copy's
@@ -476,6 +477,17 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
     if (own.every((q) => there.has(entryKey(q)))) return;
     saveQueue();
     changed();
+  }
+
+  // The page's storage event, { key, newValue }. Only a write of mat.queue is
+  // looked at, never a removal: saveQueue always writes a list, so mat.queue
+  // is removed only by a wipe (Forget, or a refused key: clearTrip, which
+  // removes the keys one at a time in an order the browser picks, so at the
+  // queue's removal the key and the saved trip can still be there; review I1).
+  // A wipe that keeps lines writes them last, after the key is gone, and
+  // queueChanged's own guard leaves that alone.
+  function storageEvent(ev) {
+    if (ev && ev.key === "mat.queue" && ev.newValue !== null && ev.newValue !== undefined) queueChanged();
   }
 
   // ---- talking to the backend ----
@@ -2024,7 +2036,7 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
       subs.add(fn);
       return () => subs.delete(fn);
     },
-    boot, refresh, checkRev, flush, idle, queueChanged,
+    boot, refresh, checkRev, flush, idle, queueChanged, storageEvent,
     setMe, setPerson, markSeen, pageHidden, pageShown, forgot, unsentCount, notify, clearNotice, claudeToken, syncPayments, autoPayments,
     syncTodos, tickTodo, claimTodo,
     pressStamp,

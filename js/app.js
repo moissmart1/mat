@@ -913,9 +913,8 @@ function start() {
   });
   // Another open copy of the app (a second tab) wrote the unsent queue (#108):
   // this copy's own waiting lines are put back if that write left any out.
-  window.addEventListener("storage", (ev) => {
-    if (ev.key === "mat.queue" || ev.key === null) store.queueChanged();
-  });
+  // A removal (a wipe in the other tab) is never answered (js/store.js storageEvent).
+  window.addEventListener("storage", (ev) => store.storageEvent(ev));
 
   // Once started, the list is fetched if it is an hour old.
   if (connected) store.boot({ candidate: taken.candidate }).then(() => {

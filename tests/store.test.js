@@ -1145,6 +1145,88 @@ test("Forget in one tab: the other tab's queue event puts nothing back (#108)", 
   assert.equal(one.storage.getItem("mat.queue"), null);
 });
 
+// Two tabs as a browser holds localStorage: each tab has its own copy, and
+// each change one tab makes reaches the other later, one key at a time, with
+// its storage event ({ key, newValue }). mat.queue comes first in key order
+// (clearTrip removes keys in that order; the browser's order is not ours).
+function twoCopies() {
+  const init = { "mat.queue": "[]", "mat.key": KEY, "mat.me": "Mo" };
+  const copies = { a: memStorage(init), b: memStorage(init) };
+  const pending = { a: [], b: [] };
+  for (const [name, other] of [["a", "b"], ["b", "a"]]) {
+    const c = copies[name];
+    const set = c.setItem;
+    const remove = c.removeItem;
+    c.setItem = (k, v) => { set(k, v); pending[other].push({ key: k, newValue: String(v) }); };
+    c.removeItem = (k) => { remove(k); pending[other].push({ key: k, newValue: null }); };
+  }
+  // Hands `to` the other tab's changes, in order, each followed by its event.
+  const deliver = (to, store) => {
+    while (pending[to].length) {
+      const ev = pending[to].shift();
+      if (ev.newValue === null) copies[to].map.delete(ev.key);
+      else copies[to].map.set(ev.key, ev.newValue);
+      if (store) store.storageEvent(ev);
+    }
+  };
+  return { ...copies, deliver };
+}
+
+async function twoTabsEachWithALine() {
+  const c = twoCopies();
+  const one = phone({ storage: c.a });
+  await one.store.boot();
+  c.deliver("b", null);
+  const two = phone({ fake: one.fake, storage: c.b });
+  await two.store.boot();
+  c.deliver("a", one.store);
+  one.net.offline = true;
+  two.net.offline = true;
+  await one.store.checkRev();
+  await two.store.checkRev();
+  one.store.addExpense(draft({ title: "A" }));
+  const a = idOf(one.store);
+  await one.store.idle();
+  c.deliver("b", two.store);
+  two.store.addExpense(draft({ title: "B" }));
+  const b = idOf(two.store);
+  await two.store.idle();
+  c.deliver("a", one.store);
+  assert.deepEqual(queueOf(c.a).map((q) => q.expense.id), [a, b]);
+  assert.deepEqual(queueOf(c.b).map((q) => q.expense.id), [a, b]);
+  assert.equal([...c.a.map.keys()][0], "mat.queue");
+  return { c, one, two, a, b };
+}
+
+test("a refused key in one tab, cleared key by key with mat.queue first: the other tab writes nothing back and no line is lost (#108 review I1)", async () => {
+  const { c, one, two, a, b } = await twoTabsEachWithALine();
+  one.net.offline = false;
+  one.net.override = () => ({ ok: false, error: "bad_key", message: "That link no longer works." });
+  await one.store.checkRev();
+  await one.store.idle();
+  assert.deepEqual(one.store.state.cleared, { kept: 2 });
+  assert.deepEqual(queueOf(c.a).map((q) => q.expense.id), [a, b]);
+  // the second tab hears each removal, then the kept lines, one at a time
+  c.deliver("b", two.store);
+  await two.store.idle();
+  c.deliver("a", one.store);
+  for (const copy of [c.a, c.b]) {
+    assert.deepEqual(queueOf(copy).map((q) => q.expense.id), [a, b]);
+    assert.equal(copy.getItem("mat.key"), null);
+    assert.equal(copy.getItem("mat.cache"), null);
+  }
+});
+
+test("Forget in one tab, cleared key by key with mat.queue first: the other tab writes no line back (#108 review I1)", async () => {
+  const { c, one, two } = await twoTabsEachWithALine();
+  one.store.forgot();
+  assert.equal(c.a.getItem("mat.queue"), null);
+  c.deliver("b", two.store);
+  await two.store.idle();
+  c.deliver("a", one.store);
+  for (const copy of [c.a, c.b]) assert.deepEqual([...copy.map.keys()].filter((k) => k.startsWith("mat.")), []);
+});
+
 test("an unreadable or foreign-shaped saved queue entry from another tab is never sent, and is left out once this tab writes (#108)", async () => {
   const storage = memStorage({ "mat.key": KEY, "mat.me": "Mo" });
   const one = phone({ storage });
