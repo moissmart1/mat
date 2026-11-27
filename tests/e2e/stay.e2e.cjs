@@ -269,6 +269,31 @@ module.exports = [
     },
   },
   {
+    // The flake behind "a stay with almost nothing" (CI 2026-11-27): a square
+    // jumps with a glide, and until the strip is half way the scroll puts the
+    // day in view back on the day it left, which marks the chosen day a
+    // neighbor; a mouse click on its stay row then only selected that day.
+    // Made certain here: the first scroll of the glide, then the click, in
+    // one go before the strip has moved.
+    name: "a click on the day a square is gliding to opens its hotel card",
+    async run({ page }) {
+      await ready(page);
+      const at = await page.evaluate((sel) => {
+        const rail = document.getElementById("rail");
+        const from = rail.scrollLeft;
+        document.querySelector("#pager .sq:nth-child(4)").click();
+        rail.dispatchEvent(new Event("scroll"));
+        const pg = document.querySelector(sel);
+        const state = { moved: rail.scrollLeft !== from, neighbor: pg.classList.contains("is-neighbor") };
+        pg.querySelector(".tk-stay").dispatchEvent(new PointerEvent("click", { bubbles: true, cancelable: true, detail: 1, pointerType: "mouse" }));
+        return state;
+      }, tk("2026-12-13"));
+      assert.equal(at.neighbor, true, "the click came while Day 4 was marked a neighbor: " + JSON.stringify(at));
+      await atRest(page, "#stay", { message: "the hotel card opens" });
+      assert.equal(await text(page, "#stay .sy-name"), "Niseko lodge");
+    },
+  },
+  {
     name: "works with no signal",
     async run({ page }) {
       const backend = await ready(page);
