@@ -262,8 +262,38 @@ function start() {
   // one after each load with signal, so it opens with none (js/tickets.js),
   // unless You says only when one is opened.
   const keep = createKeep();
+  // Where the phone is: kept in memory only, never sent or stored (js/where.js);
+  // mat.where holds the choice alone. The trip taken off this phone (a refused
+  // link, Forget this phone) resets it and keeps no choice: nothing of it is
+  // written, and the phone is not asked, until a new link is pasted (as
+  // Chicago, chi#12). Started further down, as before.
+  let whereResetSinceKey = false;
+  const whereKeep = {
+    getItem: (k) => raw.getItem(k),
+    setItem: (k, v) => {
+      if (!whereResetSinceKey) raw.setItem(k, v);
+    },
+  };
+  const whereCore = createWhere({ storage: whereKeep, geolocation: navigator.geolocation, permissions: navigator.permissions });
+  // While no key is held nothing can be chosen: a tap on a screen left open
+  // behind the no-key screen neither saves a choice nor asks the phone.
+  const where = {
+    ...whereCore,
+    ask: () => {
+      if (!whereResetSinceKey) whereCore.ask();
+    },
+    turnOff: () => {
+      if (!whereResetSinceKey) whereCore.turnOff();
+    },
+  };
+  const resetWhere = () => {
+    if (whereResetSinceKey) return;
+    whereResetSinceKey = true;
+    whereCore.reset();
+  };
   // A refused key takes the trip off the phone (js/store.js): the stored
-  // keys, the key this visit came with, and every ticket picture.
+  // keys, the key this visit came with, every ticket picture and the
+  // Location choice.
   store = createStore({
     api,
     storage,
@@ -271,6 +301,7 @@ function start() {
     isHidden: () => document.visibilityState === "hidden",
     clear: (queue) => {
       keyHere = null;
+      resetWhere();
       clearTrip(raw, { queue });
       keep.wipe();
     },
@@ -325,8 +356,7 @@ function start() {
     } else if (fetchesAll(raw)) background();
   });
 
-  // Where the phone is: kept in memory only, never sent or stored (js/where.js).
-  const where = createWhere({ storage: raw, geolocation: navigator.geolocation, permissions: navigator.permissions });
+  // Where the phone is (made above, beside the store): asking starts here.
   where.start();
 
   // The one clock the Days screen reads. A demo of a day runs in that day's
@@ -479,6 +509,8 @@ function start() {
     // copy and the worker, then the no-key screen.
     onForget: async () => {
       keyHere = null;
+      // Location first: nothing asks the phone or writes mat.where back after this.
+      resetWhere();
       // The store is marked wiped first (nothing is written or sent after it),
       // then the ticket pictures: their open database would hold up its deletion.
       store.forgot();
@@ -818,6 +850,7 @@ function start() {
     // A key pasted on the no-key screen: keep it and start, without a reload.
     onKey: (key) => {
       keyHere = key;
+      whereResetSinceKey = false;
       try {
         raw.setItem("mat.key", key);
       } catch {
