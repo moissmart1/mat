@@ -388,3 +388,207 @@ test("a person who never chose: Use it, the phone says no, later allowed in Sett
   g.give(1, 35, 135);
   assert.ok(w.current());
 });
+
+// ---- the trip taken off this phone: reset() (review of mat#109, Important 1) ----
+
+test("reset(): Location on, a request pending, the trip taken off: unset, no position, late answers ignored, nothing asked or written", async () => {
+  const g = phone();
+  const d = doc();
+  const s = mem({ "mat.where": "on" });
+  let t = NOW;
+  let state = "granted";
+  const permissions = { query: () => Promise.resolve({ state }) };
+  const w = createWhere({ ...T, storage: s, geolocation: g, permissions, now: () => t, doc: d });
+  w.start();
+  await settle();
+  assert.equal(g.calls.length, 1);
+  g.give(0, 35, 135);
+  assert.ok(w.current());
+  t += ASK_GAP_MS;
+  d.fire();
+  assert.equal(g.calls.length, 2, "a second request on its way");
+  let told = 0;
+  w.subscribe(() => told++);
+  w.reset();
+  s.m.clear(); // Forget this phone empties storage after the reset
+  assert.equal(w.state(), "unset");
+  assert.equal(w.current(), null, "the last position is gone");
+  assert.equal(w.why(), null);
+  assert.equal(told, 1);
+  g.refuse(1);
+  g.give(1, 35, 135);
+  assert.equal(w.state(), "unset");
+  assert.equal(w.current(), null);
+  assert.equal(s.getItem("mat.where"), null, "nothing written back into the emptied storage");
+  t += 10 * ASK_GAP_MS;
+  for (const v of ["hidden", "visible"]) {
+    d.visibilityState = v;
+    d.fire();
+  }
+  await settle();
+  assert.equal(g.calls.length, 2, "the phone is not asked again");
+  assert.equal(w.state(), "unset", "Settings allowing it does not turn it on");
+  assert.equal(s.m.size, 0);
+  // A new link, and a tap: it works again.
+  w.ask();
+  assert.equal(w.state(), "on");
+  assert.equal(g.calls.length, 3);
+  g.give(2, 34.98, 135.75, 30, t);
+  assert.equal(w.current().lat, 34.98);
+});
+
+test("reset() while refused: a Settings read on its way cannot turn it on", async () => {
+  const g = phone();
+  let answer;
+  const permissions = { query: () => new Promise((r) => { answer = r; }) };
+  const s = mem({ "mat.where": "refused" });
+  const w = createWhere({ ...T, storage: s, geolocation: g, permissions, now: () => NOW, doc: doc() });
+  w.start();
+  w.reset();
+  s.m.clear();
+  answer({ state: "granted" });
+  await settle();
+  assert.equal(w.state(), "unset");
+  assert.equal(g.calls.length, 0);
+  assert.equal(s.getItem("mat.where"), null);
+});
+
+// ---- another open tab turns it off (review of mat#109, Important 2) ----
+
+// Two tabs of the app share one storage, each with its own module.
+function twoTabs(init = { "mat.where": "on" }) {
+  const s = mem(init);
+  const ga = phone();
+  const gb = phone();
+  const da = doc();
+  const db = doc();
+  let t = NOW;
+  let state = "granted";
+  const permissions = { query: () => Promise.resolve({ state }) };
+  const clock = { get t() { return t; }, set t(v) { t = v; }, set perm(v) { state = v; } };
+  const a = createWhere({ ...T, storage: s, geolocation: ga, permissions, now: () => t, doc: da });
+  const b = createWhere({ ...T, storage: s, geolocation: gb, permissions, now: () => t, doc: db });
+  return { s, a, b, ga, gb, da, db, clock };
+}
+const backOnScreen = (d) => {
+  d.visibilityState = "hidden";
+  d.fire();
+  d.visibilityState = "visible";
+  d.fire();
+};
+
+test("Off in one tab: the other follows when it comes back on screen, asks nothing, and its position goes", async () => {
+  const { s, a, b, ga, gb, db, clock } = twoTabs();
+  a.start();
+  b.start();
+  await settle();
+  assert.equal(gb.calls.length, 1);
+  gb.give(0, 35, 135);
+  assert.ok(b.current());
+  let told = 0;
+  b.subscribe(() => told++);
+  a.turnOff();
+  assert.equal(s.getItem("mat.where"), "off");
+  clock.t += ASK_GAP_MS;
+  backOnScreen(db);
+  await settle();
+  assert.equal(b.state(), "off");
+  assert.equal(b.current(), null);
+  assert.equal(gb.calls.length, 1, "B does not ask");
+  assert.ok(told >= 1, "B's screens are told");
+  assert.equal(s.getItem("mat.where"), "off");
+  assert.equal(ga.calls.length, 1);
+});
+
+test("Off in one tab while the other's request is on its way: its refusal does not write refused over Off, and Settings later does not turn it on", async () => {
+  const { s, a, b, gb, db, clock } = twoTabs();
+  a.start();
+  b.start();
+  await settle();
+  a.turnOff();
+  gb.calls[0].no({ code: 1, message: "User denied Geolocation" });
+  assert.equal(s.getItem("mat.where"), "off", "never overwritten with refused");
+  assert.equal(b.state(), "off");
+  assert.equal(b.why(), null);
+  clock.perm = "granted";
+  clock.t += 3 * 60000;
+  backOnScreen(db);
+  await settle();
+  assert.equal(b.state(), "off");
+  assert.equal(s.getItem("mat.where"), "off");
+  assert.equal(gb.calls.length, 1, "no second request without a tap");
+  // The next load reads off too.
+  const c = createWhere({ ...T, storage: s, geolocation: phone(), permissions: { query: () => Promise.resolve({ state: "granted" }) }, now: () => clock.t, doc: doc() });
+  c.start();
+  await settle();
+  assert.equal(c.state(), "off");
+});
+
+test("Off in one tab while the other's request is on its way: its late position is not taken", () => {
+  const { a, b, gb } = twoTabs();
+  a.start();
+  b.start();
+  a.turnOff();
+  gb.give(0, 35, 135);
+  assert.equal(b.current(), null);
+  assert.equal(b.state(), "off");
+});
+
+test("Off in one tab: the other, on screen the whole time, follows it at its two-minute ask instead of asking", () => {
+  const s = mem({ "mat.where": "on" });
+  const gb = phone();
+  let t = NOW;
+  const ticks = [];
+  const stopped = [];
+  const b = createWhere({ ...T, every: (f) => (ticks.push(f), ticks.length), stopEvery: (h) => stopped.push(h), storage: s, geolocation: gb, now: () => t, doc: doc() });
+  const a = createWhere({ ...T, storage: s, geolocation: phone(), now: () => t, doc: doc() });
+  b.start();
+  assert.equal(gb.calls.length, 1);
+  gb.give(0, 35, 135);
+  a.turnOff();
+  t += ASK_GAP_MS;
+  ticks.at(-1)(); // B's interval comes round
+  assert.equal(gb.calls.length, 1, "B does not ask");
+  assert.equal(b.state(), "off");
+  assert.equal(b.current(), null);
+  assert.ok(stopped.includes(ticks.length), "B's interval is stopped");
+  assert.equal(s.getItem("mat.where"), "off");
+});
+
+test("Off in one tab, Settings allowing it, the other tab refused: it follows Off and is not turned on", async () => {
+  const { s, a, b, gb, db, clock } = twoTabs({ "mat.where": "refused" });
+  b.start();
+  await settle();
+  // B read "refused" and Settings says granted: start() turned it on. Make it refused again first.
+  assert.equal(b.state(), "on");
+  gb.refuse(0);
+  assert.equal(b.state(), "refused");
+  a.turnOff();
+  assert.equal(s.getItem("mat.where"), "off");
+  clock.perm = "granted";
+  backOnScreen(db);
+  await settle();
+  assert.equal(b.state(), "off");
+  assert.equal(s.getItem("mat.where"), "off");
+  assert.equal(gb.calls.length, 1);
+});
+
+test("a tab whose writes fail is not turned off by an old stored Off", () => {
+  // getItem works, setItem throws (a full storage): the old "off" stays in storage.
+  const m = new Map([["mat.where", "off"]]);
+  const s = { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem() { throw new Error("full"); } };
+  const g = phone();
+  const d = doc();
+  let t = NOW;
+  const w = createWhere({ ...T, storage: s, geolocation: g, now: () => t, doc: d });
+  w.start();
+  w.ask();
+  assert.equal(w.state(), "on", "kept for this visit");
+  assert.equal(g.calls.length, 1);
+  g.give(0, 35, 135);
+  assert.ok(w.current(), "its own position is taken");
+  t += ASK_GAP_MS;
+  backOnScreen(d);
+  assert.equal(w.state(), "on");
+  assert.equal(g.calls.length, 2);
+});

@@ -7,7 +7,7 @@
 // (nothing yet: "unset").
 //
 // createWhere({ storage, geolocation, permissions, now, doc, every, stopEvery, later }) ->
-//   { state(), supported(), ask(), turnOff(), current(), subscribe(fn), start() }
+//   { state(), supported(), ask(), turnOff(), reset(), current(), subscribe(fn), why(), start() }
 // - state(): "unset", "on", "off" or "refused". A phone with no geolocation
 //   is always "off" (supported() false).
 // - ask(): only from a tap (Use it, or the You row): the phone's own prompt
@@ -32,6 +32,14 @@
 //   a refusal, what Settings says) are ignored from then on, even if Location
 //   is turned on again before they come: none of them can change the choice,
 //   keep a position or start another request (mat#109; Chicago's fix, chi#12).
+//   An Off saved by another open tab of the app counts the same: the stored
+//   choice is looked at again on coming back on screen, before each request
+//   and before an answer is taken, and a stored "off" this tab did not write
+//   is followed (never overwritten with "refused" or "on").
+// - reset(): the trip was taken off this phone (Forget this phone, a refused
+//   link): the choice goes back to "unset" in memory (nothing is written),
+//   answers still on their way are ignored, and the phone is not asked until
+//   ask() is called again (Chicago's reset(), chi#12).
 
 import { usable } from "./geo.js";
 
@@ -61,10 +69,14 @@ export function createWhere({ storage, geolocation, permissions, now = () => Dat
     }
   };
   let choice = read();
+  let seen = choice; // what storage held when this tab last read or wrote it
   const write = (v) => {
     choice = v;
     try {
-      if (storage) storage.setItem(KEY, v);
+      if (storage) {
+        storage.setItem(KEY, v);
+        seen = v;
+      }
     } catch {
       // kept for this visit only
     }
@@ -80,8 +92,31 @@ export function createWhere({ storage, geolocation, permissions, now = () => Dat
   };
   const visible = () => !doc || doc.visibilityState !== "hidden";
 
+  // Another open tab turned it off (the choice is shared through storage):
+  // that Off is the person's own, as if turnOff() had been called here, but
+  // nothing is written. True when it was followed (the caller tells).
+  function offElsewhere() {
+    const v = read();
+    if (v !== "off" || v === seen) return false;
+    seen = v;
+    if (choice === "off") return false;
+    session++;
+    asking = false;
+    choice = "off";
+    pos = null;
+    reason = null;
+    if (timer) stopEvery(timer);
+    timer = null;
+    return true;
+  }
+
   function request(force = false) {
-    if (!geo || choice !== "on" || asking || !visible()) return;
+    if (!geo) return;
+    if (offElsewhere()) {
+      tell();
+      return;
+    }
+    if (choice !== "on" || asking || !visible()) return;
     if (!force && now() - lastAsk < ASK_GAP_MS) return;
     lastAsk = now();
     asking = true;
@@ -95,6 +130,7 @@ export function createWhere({ storage, geolocation, permissions, now = () => Dat
       geo.getCurrentPosition(
         (p) => {
           done();
+          if (offElsewhere()) return tell();
           const c = p && p.coords;
           if (trip !== session || !c || choice !== "on") return;
           const t = Number(p.timestamp);
@@ -104,6 +140,7 @@ export function createWhere({ storage, geolocation, permissions, now = () => Dat
         },
         (e) => {
           done();
+          if (offElsewhere()) return tell();
           if (trip === session && choice === "on" && e && e.code === DENIED) {
             pos = null;
             reason = { code: DENIED, message: typeof e.message === "string" ? e.message.slice(0, 80) : "" };
@@ -124,6 +161,7 @@ export function createWhere({ storage, geolocation, permissions, now = () => Dat
     timer = null;
     if (choice !== "on" || !visible()) return;
     request();
+    if (choice !== "on") return; // followed another tab's Off
     timer = every(() => request(), ASK_GAP_MS);
   }
 
@@ -135,6 +173,7 @@ export function createWhere({ storage, geolocation, permissions, now = () => Dat
       const trip = session;
       Promise.resolve(permissions.query({ name: "geolocation" })).then((st) => {
         if (trip !== session) return;
+        if (offElsewhere()) return tell();
         const s = st && st.state;
         if (s === "denied" && choice === "on") {
           pos = null;
@@ -157,6 +196,7 @@ export function createWhere({ storage, geolocation, permissions, now = () => Dat
   // Only the permission is read: a "granted" turns it on; anything else
   // leaves it refused, and the phone's own prompt never comes up by itself.
   function onShown() {
+    if (visible() && offElsewhere()) tell();
     if (choice === "refused" && visible()) checkPermission();
     tick();
   }
@@ -183,6 +223,16 @@ export function createWhere({ storage, geolocation, permissions, now = () => Dat
       write("off");
       pos = null;
       reason = null;
+      tick();
+      tell();
+    },
+    reset() {
+      session++;
+      asking = false;
+      choice = "unset";
+      pos = null;
+      reason = null;
+      lastAsk = -Infinity;
       tick();
       tell();
     },
