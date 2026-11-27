@@ -909,6 +909,337 @@ test("the queue goes out on any contact: a later checkRev sends it exactly once"
   assert.deepEqual(queueOf(two.storage), []);
 });
 
+// ---------- two open tabs on one storage (#108) ----------
+
+// Lines added in the backend, by id: how many rows and how many "add" Log entries.
+async function addsOf(fake, ids) {
+  const server = (await backend(fake)).expenses;
+  const log = (await backend(fake, "history")).entries.filter((e) => e.kind === "expense" && e.action === "add");
+  return ids.map((id) => [server.filter((e) => e.id === id).length, log.filter((e) => e.ref === id || (e.after && e.after.id === id)).length]);
+}
+const sentFor = (fake, id) => fake.requests.filter((r) => r.action === "addExpense" && r.args.expense.id === id).length;
+
+test("two open tabs each queue a line with no signal: a reload has both and sends each once (#108)", async () => {
+  const one = phone();
+  await one.store.boot();
+  const two = phone({ fake: one.fake, storage: one.storage });
+  await two.store.boot();
+  one.net.offline = true;
+  two.net.offline = true;
+  await one.store.checkRev();
+  await two.store.checkRev();
+  one.store.addExpense(draft({ title: "A" }));
+  const a = idOf(one.store);
+  two.store.addExpense(draft({ title: "B" }));
+  const b = idOf(two.store);
+  await one.store.idle();
+  await two.store.idle();
+  assert.deepEqual(queueOf(one.storage).map((q) => q.expense.id), [a, b]);
+
+  // a fresh instance, still without signal, has both
+  const three = phone({ fake: one.fake, storage: one.storage });
+  three.net.offline = true;
+  await three.store.boot();
+  assert.equal(byId(three.store.state.expenses, a).pending, true);
+  assert.equal(byId(three.store.state.expenses, b).pending, true);
+
+  three.net.offline = false;
+  await three.store.flush();
+  await three.store.idle();
+  assert.equal(sentFor(one.fake, a), 1);
+  assert.equal(sentFor(one.fake, b), 1);
+  assert.deepEqual(await addsOf(one.fake, [a, b]), [[1, 1], [1, 1]]);
+  assert.deepEqual(queueOf(one.storage), []);
+
+  // and the next reload sends nothing more
+  const four = phone({ fake: one.fake, storage: one.storage });
+  await four.store.boot();
+  await four.store.idle();
+  assert.equal(sent(one.fake, "addExpense"), 2);
+});
+
+test("one tab's line is acknowledged while another tab queues a new one: the new one is kept (#108)", async () => {
+  const one = phone();
+  await one.store.boot();
+  const two = phone({ fake: one.fake, storage: one.storage });
+  await two.store.boot();
+  two.net.offline = true;
+  await two.store.checkRev();
+
+  const release = one.net.hold("addExpense");
+  one.store.addExpense(draft({ title: "A" }));
+  const a = idOf(one.store);
+  await until(() => one.net.sent.some((r) => r.action === "addExpense"));
+  // while A's reply is on its way, the other tab rings up B with no signal
+  two.store.addExpense(draft({ title: "B" }));
+  const b = idOf(two.store);
+  await two.store.idle();
+  assert.deepEqual(queueOf(one.storage).map((q) => q.expense.id), [a, b]);
+  release();
+  await one.store.idle();
+  // A is acknowledged and gone from the saved queue; B is still there
+  assert.deepEqual(queueOf(one.storage).map((q) => q.expense.id), [b]);
+  assert.equal("pending" in byId(one.store.state.expenses, a), false);
+
+  // a reload without signal still has B waiting (and A as a saved line)
+  const three = phone({ fake: one.fake, storage: one.storage });
+  three.net.offline = true;
+  await three.store.boot();
+  assert.equal(byId(three.store.state.expenses, b).pending, true);
+  assert.equal(three.store.outbox().waiting, 1);
+  three.net.offline = false;
+  await three.store.flush();
+  await three.store.idle();
+  assert.equal(sentFor(one.fake, a), 1);
+  assert.equal(sentFor(one.fake, b), 1);
+  assert.deepEqual(await addsOf(one.fake, [a, b]), [[1, 1], [1, 1]]);
+  assert.deepEqual(queueOf(one.storage), []);
+});
+
+test("a tab that removes its own line never takes another tab's line with it (#108)", async () => {
+  const one = phone();
+  await one.store.boot();
+  const two = phone({ fake: one.fake, storage: one.storage });
+  await two.store.boot();
+  one.net.offline = true;
+  two.net.offline = true;
+  await one.store.checkRev();
+  await two.store.checkRev();
+  const t = one.store.addExpense(draft({ title: "A" }));
+  const a = idOf(one.store);
+  two.store.addExpense(draft({ title: "B" }));
+  const b = idOf(two.store);
+  await one.store.idle();
+  await two.store.idle();
+  // Undo in the first tab: A provably never left, so it is forgotten; B stays.
+  await one.store.undo(t);
+  assert.deepEqual(queueOf(one.storage).map((q) => q.expense.id), [b]);
+  // The second tab writes again (a retry, say): A does not come back.
+  two.store.addExpense(draft({ title: "C" }));
+  const c = idOf(two.store);
+  await two.store.idle();
+  assert.deepEqual(queueOf(one.storage).map((q) => q.expense.id), [b, c]);
+});
+
+test("two tabs flushing at once: every line lands once, even one both tabs restored from the saved queue (#108)", async () => {
+  const zero = phone();
+  await zero.store.boot();
+  zero.net.offline = true;
+  zero.store.addExpense(draft({ title: "X" }));
+  const x = idOf(zero.store);
+  await zero.store.idle();
+
+  // two tabs open on that storage, both still without signal: both restore X
+  const one = phone({ fake: zero.fake, storage: zero.storage });
+  const two = phone({ fake: zero.fake, storage: zero.storage });
+  one.net.offline = true;
+  two.net.offline = true;
+  await one.store.boot();
+  await two.store.boot();
+  one.store.addExpense(draft({ title: "A" }));
+  const a = idOf(one.store);
+  two.store.addExpense(draft({ title: "B" }));
+  const b = idOf(two.store);
+  await one.store.idle();
+  await two.store.idle();
+  assert.deepEqual(queueOf(zero.storage).map((q) => q.expense.id).sort(), [x, a, b].sort());
+
+  one.net.offline = false;
+  two.net.offline = false;
+  await Promise.all([one.store.flush(), two.store.flush()]);
+  await Promise.all([one.store.idle(), two.store.idle()]);
+  // A and B are sent by their own tab only; X may go from both, and the
+  // backend (same id, under its lock) keeps the first one.
+  assert.equal(sentFor(zero.fake, a), 1);
+  assert.equal(sentFor(zero.fake, b), 1);
+  assert.ok(sentFor(zero.fake, x) <= 2);
+  assert.deepEqual(await addsOf(zero.fake, [x, a, b]), [[1, 1], [1, 1], [1, 1]]);
+  assert.deepEqual(queueOf(zero.storage), []);
+  for (const p of [one, two]) for (const id of [x, a, b]) assert.equal("pending" in (byId(p.store.state.expenses, id) || {}), false);
+
+  const after = sent(zero.fake, "addExpense");
+  const three = phone({ fake: zero.fake, storage: zero.storage });
+  await three.store.boot();
+  await three.store.idle();
+  assert.equal(sent(zero.fake, "addExpense"), after);
+});
+
+test("a tab whose line another tab wrote over from a stale read puts it back when told the queue changed (#108)", async () => {
+  const one = phone();
+  await one.store.boot();
+  // The second tab reads mat.queue as it was before the first tab's last write
+  // (another process's view of localStorage can lag a moment).
+  let stale = null;
+  const shared = one.storage;
+  const lagging = { ...shared, getItem: (k) => (k === "mat.queue" && stale !== null ? stale : shared.getItem(k)), setItem: (k, v) => shared.setItem(k, v) };
+  Object.defineProperty(lagging, "length", { get: () => shared.length });
+  const two = phone({ fake: one.fake, storage: lagging });
+  await two.store.boot();
+  one.net.offline = true;
+  two.net.offline = true;
+  await one.store.checkRev();
+  await two.store.checkRev();
+  stale = shared.getItem("mat.queue") || "[]";
+  one.store.addExpense(draft({ title: "A" }));
+  const a = idOf(one.store);
+  two.store.addExpense(draft({ title: "B" }));
+  const b = idOf(two.store);
+  await one.store.idle();
+  await two.store.idle();
+  stale = null;
+  assert.deepEqual(queueOf(shared).map((q) => q.expense.id), [b]); // A was written over
+  // the storage event in the first tab: A goes back, B stays
+  one.store.queueChanged();
+  assert.deepEqual(queueOf(shared).map((q) => q.expense.id), [b, a]);
+  // the second tab, told in turn, finds its own line there and writes nothing
+  let writes = 0;
+  const set = shared.setItem;
+  shared.setItem = (k, v) => { if (k === "mat.queue") writes++; set(k, v); };
+  two.store.queueChanged();
+  one.store.queueChanged();
+  assert.equal(writes, 0);
+  shared.setItem = set;
+});
+
+test("two tabs holding the same saved line in different states never answer each other's queue events (#108)", async () => {
+  const zero = phone();
+  await zero.store.boot();
+  zero.net.offline = true;
+  await zero.store.checkRev();
+  zero.store.addExpense(draft({ title: "X" }));
+  await zero.store.idle();
+  const one = phone({ fake: zero.fake, storage: zero.storage });
+  const two = phone({ fake: zero.fake, storage: zero.storage });
+  one.net.offline = true;
+  two.net.offline = true;
+  await one.store.boot();
+  await two.store.boot();
+  // another tab's copy of X differs (sent, say): present all the same
+  const q = queueOf(zero.storage);
+  q[0].sent = !q[0].sent;
+  zero.storage.setItem("mat.queue", JSON.stringify(q));
+  let writes = 0;
+  const set = zero.storage.setItem;
+  zero.storage.setItem = (k, v) => { if (k === "mat.queue") writes++; set(k, v); };
+  for (let i = 0; i < 3; i++) {
+    one.store.queueChanged();
+    two.store.queueChanged();
+  }
+  assert.equal(writes, 0);
+  zero.storage.setItem = set;
+});
+
+test("Forget in one tab: the other tab's queue event puts nothing back (#108)", async () => {
+  const one = phone();
+  await one.store.boot();
+  const two = phone({ fake: one.fake, storage: one.storage });
+  await two.store.boot();
+  two.net.offline = true;
+  await two.store.checkRev();
+  two.store.addExpense(draft());
+  await two.store.idle();
+  assert.equal(queueOf(one.storage).length, 1);
+  one.store.forgot();
+  assert.equal(one.storage.getItem("mat.queue"), null);
+  two.store.queueChanged();
+  assert.equal(one.storage.getItem("mat.queue"), null);
+});
+
+// Two tabs as a browser holds localStorage: each tab has its own copy, and
+// each change one tab makes reaches the other later, one key at a time, with
+// its storage event ({ key, newValue }). mat.queue comes first in key order
+// (clearTrip removes keys in that order; the browser's order is not ours).
+function twoCopies() {
+  const init = { "mat.queue": "[]", "mat.key": KEY, "mat.me": "Mo" };
+  const copies = { a: memStorage(init), b: memStorage(init) };
+  const pending = { a: [], b: [] };
+  for (const [name, other] of [["a", "b"], ["b", "a"]]) {
+    const c = copies[name];
+    const set = c.setItem;
+    const remove = c.removeItem;
+    c.setItem = (k, v) => { set(k, v); pending[other].push({ key: k, newValue: String(v) }); };
+    c.removeItem = (k) => { remove(k); pending[other].push({ key: k, newValue: null }); };
+  }
+  // Hands `to` the other tab's changes, in order, each followed by its event.
+  const deliver = (to, store) => {
+    while (pending[to].length) {
+      const ev = pending[to].shift();
+      if (ev.newValue === null) copies[to].map.delete(ev.key);
+      else copies[to].map.set(ev.key, ev.newValue);
+      if (store) store.storageEvent(ev);
+    }
+  };
+  return { ...copies, deliver };
+}
+
+async function twoTabsEachWithALine() {
+  const c = twoCopies();
+  const one = phone({ storage: c.a });
+  await one.store.boot();
+  c.deliver("b", null);
+  const two = phone({ fake: one.fake, storage: c.b });
+  await two.store.boot();
+  c.deliver("a", one.store);
+  one.net.offline = true;
+  two.net.offline = true;
+  await one.store.checkRev();
+  await two.store.checkRev();
+  one.store.addExpense(draft({ title: "A" }));
+  const a = idOf(one.store);
+  await one.store.idle();
+  c.deliver("b", two.store);
+  two.store.addExpense(draft({ title: "B" }));
+  const b = idOf(two.store);
+  await two.store.idle();
+  c.deliver("a", one.store);
+  assert.deepEqual(queueOf(c.a).map((q) => q.expense.id), [a, b]);
+  assert.deepEqual(queueOf(c.b).map((q) => q.expense.id), [a, b]);
+  assert.equal([...c.a.map.keys()][0], "mat.queue");
+  return { c, one, two, a, b };
+}
+
+test("a refused key in one tab, cleared key by key with mat.queue first: the other tab writes nothing back and no line is lost (#108 review I1)", async () => {
+  const { c, one, two, a, b } = await twoTabsEachWithALine();
+  one.net.offline = false;
+  one.net.override = () => ({ ok: false, error: "bad_key", message: "That link no longer works." });
+  await one.store.checkRev();
+  await one.store.idle();
+  assert.deepEqual(one.store.state.cleared, { kept: 2 });
+  assert.deepEqual(queueOf(c.a).map((q) => q.expense.id), [a, b]);
+  // the second tab hears each removal, then the kept lines, one at a time
+  c.deliver("b", two.store);
+  await two.store.idle();
+  c.deliver("a", one.store);
+  for (const copy of [c.a, c.b]) {
+    assert.deepEqual(queueOf(copy).map((q) => q.expense.id), [a, b]);
+    assert.equal(copy.getItem("mat.key"), null);
+    assert.equal(copy.getItem("mat.cache"), null);
+  }
+});
+
+test("Forget in one tab, cleared key by key with mat.queue first: the other tab writes no line back (#108 review I1)", async () => {
+  const { c, one, two } = await twoTabsEachWithALine();
+  one.store.forgot();
+  assert.equal(c.a.getItem("mat.queue"), null);
+  c.deliver("b", two.store);
+  await two.store.idle();
+  c.deliver("a", one.store);
+  for (const copy of [c.a, c.b]) assert.deepEqual([...copy.map.keys()].filter((k) => k.startsWith("mat.")), []);
+});
+
+test("an unreadable or foreign-shaped saved queue entry from another tab is never sent, and is left out once this tab writes (#108)", async () => {
+  const storage = memStorage({ "mat.key": KEY, "mat.me": "Mo" });
+  const one = phone({ storage });
+  await one.store.boot();
+  one.net.offline = true;
+  await one.store.checkRev();
+  storage.setItem("mat.queue", JSON.stringify([{ stop: { id: "s1" } }, 5, null]));
+  one.store.addExpense(draft());
+  const id = idOf(one.store);
+  await one.store.idle();
+  assert.deepEqual(queueOf(storage).map((q) => q.expense.id), [id]);
+});
+
 test("an undone add whose reply was lost is finished on the next contact: add then undo", async () => {
   const p = phone();
   await p.store.boot();

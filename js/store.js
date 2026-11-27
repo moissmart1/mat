@@ -368,8 +368,38 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
 
   let memoryQueue = null; // Last queue snapshot when the device could not keep it durably.
 
-  function saveQueue() {
-    if (wiped) return;
+  // mat.queue is shared by every open copy of the app on this storage (two
+  // tabs of one browser; on Android also an installed app and its browser's
+  // tabs, never on an iPhone, where a Home Screen app has storage of its
+  // own), and each keeps its own lines in memory (#108). So a write never replaces the saved queue with this copy's
+  // lines: it reads the saved queue and changes only this copy's entries, by
+  // key. queueKeys holds every key this copy has read (restoreQueue) or
+  // written; an entry whose key is in it but no longer among this copy's
+  // lines was sent, undone or dropped here and is taken out; any other entry
+  // is another tab's, kept as it is, in place.
+  let queueKeys = new Set();
+
+  // One entry's identity across copies: kind and id (a press also its moment,
+  // since the same stamp can be pressed again after a lift). null for anything
+  // restoreQueue would never read: left out on the next write.
+  function entryKey(q) {
+    if (!q || typeof q !== "object") return null;
+    const str = (v) => (typeof v === "string" ? v : "");
+    if (q.undo === true) {
+      const a = q.args && typeof q.args === "object" ? q.args : null;
+      if (!a || !ADD_API[q.kind]) return null;
+      if (q.kind === "stamp") return typeof a.def === "string" ? "undo:stamp:" + a.def + "|" + str(q.actor) + "|" + str(a.at) : null;
+      return a[q.kind] && typeof a[q.kind].id === "string" ? "undo:" + q.kind + ":" + a[q.kind].id : null;
+    }
+    if (q.stamp && typeof q.stamp === "object") return typeof q.stamp.def === "string" ? "stamp:" + q.stamp.def + "|" + str(q.who) + "|" + str(q.stamp.at) : null;
+    if (q.ticket && typeof q.ticket === "object") return typeof q.ticket.id === "string" ? "ticket:" + q.ticket.id : null;
+    if (q.payment && typeof q.payment === "object") return typeof q.payment.id === "string" ? "payment:" + q.payment.id : null;
+    if (q.expense && typeof q.expense === "object") return typeof q.expense.id === "string" ? "expense:" + q.expense.id : null;
+    return null;
+  }
+
+  // This copy's own entries, in the order they were made.
+  function ownQueue() {
     const live = ops.filter(isLiveAdd).map((op) =>
       op.kind === "payment"
         ? { payment: op.args.payment, stampedAt: op.after.stampedAt, stampedBy: op.after.stampedBy, sent: op.inFlight || op.lost }
@@ -387,10 +417,77 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
           },
     );
     const undos = resolving.map((op) => ({ undo: true, kind: op.kind, args: op.kind === "ticket" ? { ticket: ticketMeta(op.args.ticket) } : op.args, logId: op.logId, actor: op.actor || null }));
-    const queue = live.concat(undos);
+    return live.concat(undos);
+  }
+
+  // The saved queue with this copy's entries laid over it (see queueKeys).
+  // Read and written in one go, with nothing awaited between.
+  function mergedQueue(own) {
+    const mine = new Map();
+    for (const q of own) {
+      const k = entryKey(q);
+      if (k !== null && !mine.has(k)) mine.set(k, q);
+    }
+    const stored = getJson("mat.queue");
+    const out = [];
+    const placed = new Set();
+    for (const q of Array.isArray(stored) ? stored : []) {
+      const k = entryKey(q);
+      if (k === null || placed.has(k)) continue;
+      if (mine.has(k)) out.push(mine.get(k)); // ours, as it is now
+      else if (!queueKeys.has(k)) out.push(q); // another tab's
+      else continue; // ours, sent or taken back since
+      placed.add(k);
+    }
+    for (const [k, q] of mine) if (!placed.has(k)) out.push(q);
+    for (const k of mine.keys()) queueKeys.add(k);
+    return out;
+  }
+
+  function saveQueue() {
+    if (wiped) return;
+    const own = ownQueue();
+    const queue = mergedQueue(own);
     const saved = setItem("mat.queue", JSON.stringify(queue));
-    memoryQueue = queue.length && (!saved || !durableStorage) ? queue : null;
+    // The warning (#20) is about this copy's own lines not being kept.
+    memoryQueue = own.length && (!saved || !durableStorage) ? queue : null;
     state.queueStorageFailed = memoryQueue !== null;
+  }
+
+  // Another tab wrote mat.queue (the page's storage event). Its write may have
+  // been made from a view of the queue that did not have this copy's latest
+  // entries yet; if any of them is missing, write them again (merged, so the
+  // other tab's own stay). Only a missing key counts, never a different copy
+  // of the same entry (two tabs that both restored one line hold it in
+  // different states): so two tabs never answer each other's events back
+  // and forth.
+  function queueChanged() {
+    if (wiped || state.status === "boot") return;
+    // The trip was taken off this storage in the other tab (Forget, or its key
+    // refused): nothing is put back.
+    if (getItem("mat.key") === null || getItem("mat.cache") === null) return;
+    const own = ownQueue();
+    if (!own.length) return;
+    const stored = getJson("mat.queue");
+    const there = new Set();
+    for (const q of Array.isArray(stored) ? stored : []) {
+      const k = entryKey(q);
+      if (k !== null) there.add(k);
+    }
+    if (own.every((q) => there.has(entryKey(q)))) return;
+    saveQueue();
+    changed();
+  }
+
+  // The page's storage event, { key, newValue }. Only a write of mat.queue is
+  // looked at, never a removal: saveQueue always writes a list, so mat.queue
+  // is removed only by a wipe (Forget, or a refused key: clearTrip, which
+  // removes the keys one at a time in an order the browser picks, so at the
+  // queue's removal the key and the saved trip can still be there; review I1).
+  // A wipe that keeps lines writes them last, after the key is gone, and
+  // queueChanged's own guard leaves that alone.
+  function storageEvent(ev) {
+    if (ev && ev.key === "mat.queue" && ev.newValue !== null && ev.newValue !== undefined) queueChanged();
   }
 
   // ---- talking to the backend ----
@@ -484,6 +581,7 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
   function takeTripOff({ keep = true } = {}) {
     if (wiped && keep) return;
     const queue = keep ? memoryQueue || getJson("mat.queue") : null;
+    queueKeys = new Set();
     // With nobody known (an earlier refusal already took mat.me off), the
     // queue is already only this person's: kept as it is (fix round 1, C2).
     // Never a ticket picture: every one comes off the phone, unsent ones too.
@@ -711,6 +809,10 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
     if (!Array.isArray(queue)) return;
     for (const q of queue) {
       if (!q || typeof q !== "object") continue;
+      // Read here, so this copy's (see queueKeys): a later write keeps it while
+      // it is waiting here and takes it out once it is sent or taken back.
+      const k = entryKey(q);
+      if (k !== null) queueKeys.add(k);
       if (q.undo === true) {
         const kind = q.kind;
         // A press carries { def, at, seed }; the press is found by its definition and who made it.
@@ -1934,7 +2036,7 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
       subs.add(fn);
       return () => subs.delete(fn);
     },
-    boot, refresh, checkRev, flush, idle,
+    boot, refresh, checkRev, flush, idle, queueChanged, storageEvent,
     setMe, setPerson, markSeen, pageHidden, pageShown, forgot, unsentCount, notify, clearNotice, claudeToken, syncPayments, autoPayments,
     syncTodos, tickTodo, claimTodo,
     pressStamp,
