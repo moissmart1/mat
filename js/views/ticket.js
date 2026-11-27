@@ -475,6 +475,7 @@ function eveStrip(eve, model) {
   const judged = { state: eve.state, minutes: eve.minutes, nextId: eve.nextId, tix: model.tix, hereNext: eve.hereNext || null };
   rows.append(...eve.stops.map((stop) => row(stop, judged)));
   d.append(h, rows);
+  if (eve.stay) d.append(stayRow(eve.stay, eve.stayTag || null));
   return d;
 }
 

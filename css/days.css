@@ -160,6 +160,9 @@ button.bar-t{border:0;background:none;padding:0;min-height:36px;min-width:0;colo
 .eve-h>span+span{flex:none;white-space:nowrap}
 .eve .rows{padding:0}
 .eve .r:last-child{border-bottom:0}
+/* the strip ends with the ticket's own 宿泊 row (.tk-stay, unchanged), inside the strip. */
+.eve .tk-stay{width:100%;margin:0;border-top:1px solid rgba(21,18,15,.17)}
+.eve .rows .r:last-child{border-bottom:0}
 
 /* ＋ Add a stop: a blank line after the day's stops, in the stop's print. */
 .tk-add{display:block;width:calc(100% - 28px);min-height:44px;margin:0 14px;padding:10px 0 11px calc(3.7em + 8px);border:0;border-top:1px solid rgba(21,18,15,.17);

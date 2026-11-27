@@ -389,4 +389,112 @@ cases.push(
   },
 );
 
+// #93: the strip ends with that night's 宿泊 row.
+const INN_STAY = DEC9.stays[0];
+const withStay = (extra) => ({ ...TWELVE, stays: [{ ...INN_STAY, ...extra }] });
+const EVE_STAY = D1 + " .eve .tk-stay";
+const stayOpens = async (page) => {
+  await page.click(EVE_STAY);
+  await atRest(page, "#stay", { message: "the hotel card opens" });
+  assert.equal(await text(page, "#stay .sy-name"), "Lakeside Airport Inn");
+};
+const stayClosesToStrip = async (page) => {
+  await page.click("#stayDone");
+  await atRest(page, "#stay", { open: false, message: "the hotel card closes" });
+  assert.equal(await page.evaluate((sel) => document.activeElement === document.querySelector(sel), EVE_STAY), true, "focus is back on the strip's row");
+};
+const stayRowShape = (page) => page.evaluate((sel) => {
+  const n = document.querySelector(sel);
+  return { last: !!n && n === n.parentElement.lastElementChild, text: n ? n.textContent : null, label: n ? n.getAttribute("aria-label") : null, bk: !!n && n.classList.contains("has-bk"), stay: n ? n.dataset.stay : null };
+}, EVE_STAY);
+
+cases.push(
+  {
+    name: "the eve strip ends with that night's stay, and it opens the hotel card",
+    timezoneId: ET,
+    async run({ page }) {
+      await ready(page, et("2026-12-08T21:00"));
+      const n = await stayRowShape(page);
+      assert.equal(n.last, true, "the row ends the strip");
+      assert.equal(n.stay, "dec9stay0801");
+      assert.match(n.text, /宿泊/);
+      assert.match(n.text, /Tonight/);
+      assert.match(n.text, /Lakeside Airport Inn/);
+      assert.equal(n.bk, false);
+      assert.equal(await count(page, D1 + " .tk-stay"), 1, "one stay row on the ticket");
+      await shot(page, "eve-stay-390.png", { top: true });
+      await stayOpens(page);
+      await shot(page, "eve-stay-card-390.png");
+      await stayClosesToStrip(page);
+      // The keyboard path: Enter on the row opens the same card, Escape-free Done closes it.
+      await page.focus(EVE_STAY);
+      await page.keyboard.press("Enter");
+      await atRest(page, "#stay", { message: "Enter opens the card" });
+      await stayClosesToStrip(page);
+    },
+  },
+  {
+    name: "the eve's stay with a booking carries 券 and 1泊",
+    timezoneId: ET,
+    async run({ page }) {
+      await ready(page, et("2026-12-08T21:00"), { seed: withStay({ tkRef: "LK-20418" }) });
+      const n = await stayRowShape(page);
+      assert.equal(n.last, true);
+      assert.equal(n.bk, true);
+      assert.match(n.text, /券/);
+      assert.match(n.text, /Reference only/);
+      assert.match(n.text, /1泊/);
+      assert.equal(n.label, "Tonight: Lakeside Airport Inn. Booking, 1 night.");
+      await shot(page, "eve-stay-booked-390.png", { top: true });
+      await stayOpens(page);
+      await stayClosesToStrip(page);
+    },
+  },
+  {
+    name: "before 04:00 on Dec 9 the hotel is listed once, inside the strip",
+    timezoneId: ET,
+    async run({ page }) {
+      await ready(page, et("2026-12-09T02:00"));
+      assert.equal(await count(page, D1 + " .tk-stay"), 1);
+      assert.equal(await count(page, EVE_STAY), 1);
+    },
+  },
+  {
+    name: "an eve with no stay has no stay row",
+    timezoneId: ET,
+    async run({ page }) {
+      await ready(page, et("2026-12-08T21:00"), { seed: { ...TWELVE, stays: [] } });
+      assert.equal(await count(page, D1 + " .eve"), 1, "the strip is there");
+      assert.equal(await count(page, D1 + " .tk-stay"), 0);
+    },
+  },
+  {
+    name: "the strip's stay row survives a redraw and a sync",
+    timezoneId: ET,
+    async run({ page }) {
+      const backend = await ready(page, et("2026-12-08T17:00"));
+      assert.equal(await has(page, row(TRAIN), "is-open"), true, "the eve's next stop is open");
+      await page.evaluate((sel) => { document.querySelector(sel).__mine = true; }, EVE_STAY);
+      const w = await backend.fake({ key: "test-key", actor: "Ajen", action: "setDay", args: { date: "2026-12-15", patch: { title: "Snow" } } });
+      assert.equal(w.ok, true, JSON.stringify(w));
+      await advance(page, backend, 60000);
+      await until(() => page.evaluate(() => document.querySelectorAll("#rail .pg .tk").length === 12), "the twelve tickets draw", 8000);
+      assert.equal(await has(page, row(TRAIN), "is-open"), true, "the stop is still open");
+      assert.equal(await page.evaluate((sel) => !!document.querySelector(sel).__mine, EVE_STAY), true, "the row is the same node");
+    },
+  },
+  {
+    name: "320 wide: nothing on the ticket runs past its edge with the strip's stay row",
+    timezoneId: ET,
+    viewport: { width: 320, height: 640 },
+    async run({ page }) {
+      await ready(page, et("2026-12-08T21:00"), { seed: withStay({ tkRef: "LK-20418" }), storage: { "mat.where": "off" } });
+      const n = await noSideways(page);
+      assert.equal(n.doc, true, "the page does not scroll sideways");
+      assert.deepEqual(n.over, []);
+      await shot(page, "eve-stay-320.png", { at: EVE_STAY });
+    },
+  },
+);
+
 module.exports = cases;
