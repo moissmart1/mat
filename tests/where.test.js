@@ -254,3 +254,137 @@ test("why(): the phone's answer to a refusal, cut to 80, memory only; cleared by
   assert.equal(w.state(), "on");
   assert.equal(w.why(), null);
 });
+
+// ---- an explicit Off is the person's own (mat#109) ----
+
+const settle = () => new Promise((r) => setTimeout(r, 0));
+
+test("(mat#109) Off while a request is pending: its late refusal keeps Off, and three minutes later, allowed in Settings, nothing turns it on or asks", async () => {
+  const g = phone();
+  const d = doc();
+  const s = mem();
+  let t = NOW;
+  let state = "prompt";
+  let queries = 0;
+  const permissions = { query: () => { queries++; return Promise.resolve({ state }); } };
+  const w = createWhere({ ...T, storage: s, geolocation: g, permissions, now: () => t, doc: d });
+  let told = 0;
+  w.subscribe(() => told++);
+  w.start();
+  await settle();
+  w.ask();
+  assert.equal(g.calls.length, 1, "the tap asks the phone");
+  w.turnOff();
+  assert.equal(w.state(), "off");
+  const toldAtOff = told;
+  // The phone's prompt is answered no after the person already turned it off.
+  g.calls[0].no({ code: 1, message: "User denied Geolocation" });
+  assert.equal(w.state(), "off", "still the person's Off");
+  assert.equal(s.getItem("mat.where"), "off");
+  assert.equal(w.why(), null, "no refusal reason kept for a request the person withdrew");
+  assert.equal(told, toldAtOff, "nothing to tell anyone");
+  // Three minutes later Settings says yes and the app comes back on screen.
+  state = "granted";
+  t += 3 * 60000;
+  d.visibilityState = "hidden";
+  d.fire();
+  d.visibilityState = "visible";
+  d.fire();
+  await settle();
+  assert.equal(w.state(), "off");
+  assert.equal(s.getItem("mat.where"), "off");
+  assert.equal(g.calls.length, 1, "no second request without a tap");
+  assert.equal(queries, 1, "the permission is not even looked at again while off");
+  // A fresh start of the app (the choice read back from storage) stays off too.
+  const w2 = createWhere({ ...T, storage: s, geolocation: g, permissions, now: () => t, doc: doc() });
+  w2.start();
+  await settle();
+  assert.equal(w2.state(), "off");
+  assert.equal(g.calls.length, 1);
+});
+
+test("late success after Off: the position is neither kept nor used, nor stored, even once Location is turned on again", () => {
+  const g = phone();
+  const d = doc();
+  const s = mem();
+  let t = NOW;
+  const w = createWhere({ ...T, storage: s, geolocation: g, now: () => t, doc: d });
+  let told = 0;
+  w.subscribe(() => told++);
+  w.ask();
+  w.turnOff();
+  const toldAtOff = told;
+  g.give(0, 35.0037, 135.7788, 20);
+  assert.equal(w.current(), null);
+  assert.equal(w.state(), "off");
+  assert.equal(told, toldAtOff, "nothing to tell anyone");
+  assert.deepEqual([...s.m.entries()], [["mat.where", "off"]], "only the choice is stored");
+  // Back on: the answer to the withdrawn request is still not used.
+  w.ask();
+  assert.equal(w.state(), "on");
+  assert.equal(g.calls.length, 2, "turning it on again asks at once, not after the withdrawn one");
+  assert.equal(w.current(), null, "the late position was never kept");
+  g.give(0, 35.0037, 135.7788, 20);
+  assert.equal(w.current(), null, "a second late answer to the withdrawn request is ignored too");
+  g.give(1, 34.9858, 135.7588, 20);
+  assert.deepEqual(w.current(), { lat: 34.9858, lng: 135.7588, at: NOW, accuracy: 20 });
+});
+
+test("Off, then on again: a late refusal of the withdrawn request does not refuse the new choice", () => {
+  const g = phone();
+  const s = mem();
+  const w = createWhere({ ...T, storage: s, geolocation: g, now: () => NOW, doc: doc() });
+  w.ask();
+  w.turnOff();
+  w.ask();
+  assert.equal(g.calls.length, 2);
+  g.refuse(0);
+  assert.equal(w.state(), "on");
+  assert.equal(s.getItem("mat.where"), "on");
+  assert.equal(w.why(), null);
+  g.refuse(1);
+  assert.equal(w.state(), "refused", "the phone's answer to the live request still counts");
+});
+
+test("Off while the permission is being looked at: a 'granted' that comes after does not turn it on", async () => {
+  const g = phone();
+  const d = doc();
+  let answer;
+  const permissions = { query: () => new Promise((r) => { answer = r; }) };
+  const w = createWhere({ ...T, storage: mem({ "mat.where": "refused" }), geolocation: g, permissions, now: () => NOW, doc: d });
+  w.start();
+  w.turnOff();
+  answer({ state: "granted" });
+  await settle();
+  assert.equal(w.state(), "off");
+  assert.equal(g.calls.length, 0);
+});
+
+test("a person who never chose: Use it, the phone says no, later allowed in Settings: back on screen it is on and a position is asked for", async () => {
+  const g = phone();
+  const d = doc();
+  const s = mem();
+  let t = NOW;
+  let state = "prompt";
+  const permissions = { query: () => Promise.resolve({ state }) };
+  const w = createWhere({ ...T, storage: s, geolocation: g, permissions, now: () => t, doc: d });
+  w.start();
+  await settle();
+  assert.equal(w.state(), "unset");
+  w.ask();
+  g.refuse(0);
+  assert.equal(w.state(), "refused", "a refusal while on still refuses");
+  assert.equal(s.getItem("mat.where"), "refused");
+  state = "granted";
+  t += 3 * 60000;
+  d.visibilityState = "hidden";
+  d.fire();
+  d.visibilityState = "visible";
+  d.fire();
+  await settle();
+  assert.equal(w.state(), "on");
+  assert.equal(s.getItem("mat.where"), "on");
+  assert.equal(g.calls.length, 2, "a position is asked for");
+  g.give(1, 35, 135);
+  assert.ok(w.current());
+});

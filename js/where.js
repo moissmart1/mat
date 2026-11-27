@@ -28,6 +28,10 @@
 //   position: never stored, sent or logged. Cleared by a position that comes
 //   while on, and by turning it off. Only code 1 (permission denied) makes
 //   the choice "refused".
+// - turnOff(): the person's own Off. Answers still on their way (a position,
+//   a refusal, what Settings says) are ignored from then on, even if Location
+//   is turned on again before they come: none of them can change the choice,
+//   keep a position or start another request (mat#109; Chicago's fix, chi#12).
 
 import { usable } from "./geo.js";
 
@@ -44,6 +48,7 @@ export function createWhere({ storage, geolocation, permissions, now = () => Dat
   let lastAsk = -Infinity;
   let asking = false;
   let askNo = 0; // which request `asking` is about
+  let session = 0; // bumped by turnOff: answers to anything asked before it are ignored
   let timer = null;
   let reason = null; // { code, message } of the last refusal: memory only
 
@@ -80,6 +85,7 @@ export function createWhere({ storage, geolocation, permissions, now = () => Dat
     if (!force && now() - lastAsk < ASK_GAP_MS) return;
     lastAsk = now();
     asking = true;
+    const trip = session;
     const mine = ++askNo;
     const done = () => {
       if (askNo === mine) asking = false;
@@ -90,7 +96,7 @@ export function createWhere({ storage, geolocation, permissions, now = () => Dat
         (p) => {
           done();
           const c = p && p.coords;
-          if (!c || choice !== "on") return;
+          if (trip !== session || !c || choice !== "on") return;
           const t = Number(p.timestamp);
           pos = { lat: Number(c.latitude), lng: Number(c.longitude), at: Number.isFinite(t) ? t : now(), accuracy: Number(c.accuracy) };
           reason = null;
@@ -98,7 +104,7 @@ export function createWhere({ storage, geolocation, permissions, now = () => Dat
         },
         (e) => {
           done();
-          if (e && e.code === DENIED) {
+          if (trip === session && choice === "on" && e && e.code === DENIED) {
             pos = null;
             reason = { code: DENIED, message: typeof e.message === "string" ? e.message.slice(0, 80) : "" };
             write("refused");
@@ -126,7 +132,9 @@ export function createWhere({ storage, geolocation, permissions, now = () => Dat
   function checkPermission() {
     if (!geo || !permissions || typeof permissions.query !== "function") return;
     try {
+      const trip = session;
       Promise.resolve(permissions.query({ name: "geolocation" })).then((st) => {
+        if (trip !== session) return;
         const s = st && st.state;
         if (s === "denied" && choice === "on") {
           pos = null;
@@ -170,6 +178,8 @@ export function createWhere({ storage, geolocation, permissions, now = () => Dat
       tick();
     },
     turnOff() {
+      session++;
+      asking = false; // the withdrawn request no longer blocks a later tap
       write("off");
       pos = null;
       reason = null;
