@@ -911,6 +911,11 @@ function start() {
     if (store.state.linkKept || store.state.linkChecking) check();
     else store.flush().then(check);
   });
+  // Another open copy of the app (a second tab) wrote the unsent queue (#108):
+  // this copy's own waiting lines are put back if that write left any out.
+  window.addEventListener("storage", (ev) => {
+    if (ev.key === "mat.queue" || ev.key === null) store.queueChanged();
+  });
 
   // Once started, the list is fetched if it is an hour old.
   if (connected) store.boot({ candidate: taken.candidate }).then(() => {
