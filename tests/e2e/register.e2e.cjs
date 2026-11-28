@@ -828,7 +828,8 @@ module.exports.push(
       await noAsk(page);
       assert.equal(await page.evaluate(() => document.getElementById("xWhat").inert), false, "the title takes typing again");
       await shot(page, "after-yen-390.png");
-      // The next one asks again: the key was not pressed in it.
+      // The next one asks again: the key was not pressed in it (the pad is live again after 400 ms).
+      await advance(page, backend, 400);
       await ringUp(page, { chip: "Drinks", seq: "6 0 0" });
       await waitAsk(page);
     },
@@ -865,7 +866,8 @@ module.exports.push(
       assert.equal(await page.evaluate(() => [document.getElementById("xWhat"), document.querySelector(".who")].some((n) => n.inert)), false);
       await idle(page);
       assert.equal(adds(backend).length, 0, "nothing saved");
-      // Typing goes on: the amount can be put right before ringing up.
+      // Typing goes on (400 ms after Back): the amount can be put right before ringing up.
+      await advance(page, backend, 400);
       await keys(page, "del");
       await expectText(page, "#xAmt", "$1,200");
       await page.click("#kGo");
@@ -919,6 +921,7 @@ module.exports.push(
       await page.mouse.click(mid.x, mid.y);
       // Two clicks in one task on Ring it up: the second finds the keys put away.
       await page.click("#askBack");
+      await advance(page, backend, 400);
       await page.evaluate(() => {
         const g = document.getElementById("kGo");
         g.click();
@@ -1224,6 +1227,171 @@ module.exports.push(
       await waitRow(page, "Dinner");
       const d = await until(() => savedTitled(backend, "Dinner")[0], "saved");
       assert.deepEqual([d.amount, d.currency], [12000, "CAD"]);
+    },
+  },
+);
+
+// ---- fix round (review I1, M1, M2, M3) ----
+
+// A point inside `sel`: fx, fy are fractions of its width and height.
+const pointIn = async (page, sel, fx, fy) => {
+  const b = await page.locator(sel).boundingBox();
+  return { x: b.x + b.width * fx, y: b.y + b.height * fy };
+};
+// Two taps at one point, the second at once (no clock moves between them).
+const doubleTapAt = async (page, p) => {
+  await page.mouse.click(p.x, p.y);
+  await page.mouse.click(p.x, p.y);
+};
+// The key of the pad under a point, once the pad is back.
+const keyAt = (page, p) => page.evaluate(([x, y]) => { const k = document.elementFromPoint(x, y).closest(".key"); return k ? k.dataset.k : null; }, [p.x, p.y]);
+
+module.exports.push(
+  {
+    name: "a double tap on Yen presses nothing on the pad that comes back: not the currency key, not a digit",
+    async run({ page }) {
+      const backend = await askReady(page);
+      // Right quarter, lower half: the "$ → ¥" key is under it.
+      await dinner(page);
+      await waitAsk(page);
+      await advance(page, backend, 400);
+      const right = await pointIn(page, "#askYen", 0.88, 0.75);
+      await doubleTapAt(page, right);
+      await waitRow(page, "Dinner");
+      assert.equal(await keyAt(page, right), "cur", "the currency key is under the second tap");
+      await expectText(page, "#xAmt", "$0");
+      await expectText(page, "#kCur", "$ → ¥");
+      // Left side: the digits 7 8 9 / 4 5 6 are under it.
+      await advance(page, backend, 400);
+      await ringUp(page, { chip: "Lunch", seq: "1 2 0 0 0" });
+      await waitAsk(page);
+      await advance(page, backend, 400);
+      const left = await pointIn(page, "#askYen", 0.3, 0.75);
+      await doubleTapAt(page, left);
+      await waitRow(page, "Lunch");
+      assert.equal(await keyAt(page, left), "5", "a digit is under the second tap");
+      await expectText(page, "#xAmt", "$0");
+      await expectText(page, "#kCur", "$ → ¥");
+      await idle(page);
+      assert.deepEqual(saved(backend).filter((e) => ["Dinner", "Lunch"].includes(e.title)).map((e) => [e.title, e.amount, e.currency]), [["Dinner", 12000, "JPY"], ["Lunch", 12000, "JPY"]]);
+      // The next entry is untouched: it is in dollars and it asks; after 400 ms the pad works.
+      await advance(page, backend, 400);
+      await ringUp(page, { chip: "Drinks", seq: "6 0 0" });
+      await waitAsk(page);
+      await expectText(page, "#askCad b", "$600");
+    },
+  },
+  {
+    name: "a double tap on Dollars presses nothing on the pad that comes back",
+    async run({ page }) {
+      const backend = await askReady(page);
+      await dinner(page);
+      await waitAsk(page);
+      await advance(page, backend, 400);
+      const p = await pointIn(page, "#askCad", 0.5, 0.5);
+      await doubleTapAt(page, p);
+      await waitRow(page, "Dinner");
+      assert.equal(await keyAt(page, p), "2", "a digit is under the second tap");
+      await expectText(page, "#xAmt", "$0");
+      await expectText(page, "#kCur", "$ → ¥");
+      await idle(page);
+      assert.deepEqual(savedTitled(backend, "Dinner").map((e) => [e.amount, e.currency]), [[12000, "CAD"]]);
+      await advance(page, backend, 400);
+      await ringUp(page, { chip: "Lunch", seq: "7 0 0" });
+      await waitAsk(page);
+    },
+  },
+  {
+    name: "a double tap on Back leaves the kept amount as it was, and the keys work 400 ms later",
+    async run({ page }) {
+      const backend = await askReady(page);
+      await dinner(page);
+      await waitAsk(page);
+      await advance(page, backend, 400);
+      for (const [fx, k] of [[0.15, "0"], [0.5, "00"], [0.85, "."]]) {
+        const p = await pointIn(page, "#askBack", fx, 0.5);
+        await doubleTapAt(page, p);
+        await noAsk(page);
+        assert.equal(await keyAt(page, p), k, k + " is under the second tap");
+        await expectText(page, "#xAmt", "$12,000");
+        await expectText(page, "#kCur", "$ → ¥");
+        // Ring it up, 400 ms later, still asks (no cents were typed by the second tap).
+        await advance(page, backend, 400);
+        await page.click("#kGo");
+        await waitAsk(page);
+        await advance(page, backend, 400);
+      }
+      await page.click("#askBack");
+      await advance(page, backend, 400);
+      await keys(page, "del");
+      await expectText(page, "#xAmt", "$1,200");
+      await idle(page);
+      assert.equal(adds(backend).length, 0, "nothing saved");
+    },
+  },
+  {
+    name: "a day's own Ring up on the receipt does not change the day under the question",
+    async run({ page }) {
+      const backend = await askReady(page);
+      await ringOpen(page);
+      await page.click("#dPrev");
+      await expectText(page, "#xDay", "Fri 11");
+      await page.click('#xQuick .chip[data-q="Dinner"]');
+      await keys(page, "1 2 0 0 0");
+      await page.click("#kGo");
+      await waitAsk(page);
+      // Sat Dec 12's own "Ring up" on the receipt, above the register.
+      await page.click('[data-addday="2026-12-12"]');
+      await expectText(page, "#xDay", "Fri 11");
+      assert.equal(await asking(page), true, "still asking");
+      await advance(page, backend, 400);
+      await page.click("#askYen");
+      const d = await until(() => savedTitled(backend, "Dinner")[0], "saved");
+      assert.deepEqual([d.day, d.currency], ["2026-12-11", "JPY"]);
+    },
+  },
+  {
+    name: "a sync redraw while it asks keeps the question, with the about figures at the new rate",
+    async run({ page }) {
+      const backend = await askReady(page);
+      await dinner(page);
+      await waitAsk(page);
+      await expectText(page, "#askYen i", "about $108.11");
+      backend.fake.setRate(120, "live");
+      await page.evaluate(() => globalThis.__matTest.store.refresh());
+      await idle(page);
+      await expectText(page, "#askYen i", "about $100.00");
+      await expectText(page, "#askCad i", "about ¥1,440,000");
+      await expectText(page, "#xAmt", "?12,000");
+      await expectText(page, "#xConv", "Yen or dollars?");
+      assert.equal(await visible(page, "#pad"), false);
+      await advance(page, backend, 400);
+      await page.click("#askYen");
+      const d = await until(() => savedTitled(backend, "Dinner")[0], "saved");
+      assert.deepEqual([d.amount, d.currency, d.rate], [12000, "JPY", 120]);
+    },
+  },
+  {
+    name: "an edit answered Dollars sends only the amount",
+    async run({ page }) {
+      const seed = JSON.parse(JSON.stringify(WITH_PLAN));
+      seed.expenses.push({
+        id: "seedexp012", day: "2026-12-12", title: "Torihana", amount: 650, currency: "CAD", rate: 111, paidBy: "Ajen",
+        split: ["Mo", "Ajen", "Trenton"], splitMode: "equal", splitVals: [], note: "", kind: "food", addedBy: "Ajen", deleted: false,
+      });
+      const backend = await askReady(page, { seed, rows: 9 });
+      await page.evaluate(() => globalThis.__matTest.register.edit("seedexp012"));
+      await waitOpen(page);
+      await keys(page, "del del del 1 2 0 0 0");
+      await page.click("#kGo");
+      await waitAsk(page);
+      await advance(page, backend, 400);
+      await page.click("#askCad");
+      await waitClosed(page);
+      await idle(page);
+      assert.deepEqual(backend.requests.filter((r) => r.action === "updateExpense").map((r) => r.args.patch), [{ amount: 12000 }]);
+      const e = saved(backend).find((x) => x.id === "seedexp012");
+      assert.deepEqual([e.amount, e.currency, e.rate], [12000, "CAD", 111]);
     },
   },
 );

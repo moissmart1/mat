@@ -200,6 +200,24 @@ export function mountRegister(root, store, { now = () => Date.now(), storage = d
   let asking = false;
   let askLive = false;
   let askTimer = null;
+  // After the question closes by a tap (an answer or Back) the pad is back in
+  // the same place: its keys ignore taps for ASK_GUARD_MS, so the second tap
+  // of a double tap presses nothing (review I1).
+  let padQuiet = false;
+  let padTimer = null;
+  function quietPad() {
+    clearTimeout(padTimer);
+    padQuiet = true;
+    padTimer = setTimeout(() => {
+      padTimer = null;
+      padQuiet = false;
+    }, ASK_GUARD_MS);
+  }
+  function wakePad() {
+    clearTimeout(padTimer);
+    padTimer = null;
+    padQuiet = false;
+  }
   let peopleShown = "";
   let whyOpen = false; // the reasoning under the whose-turn line
   let turnShown = null; // signature of the last drawing of the line
@@ -425,6 +443,7 @@ export function mountRegister(root, store, { now = () => Date.now(), storage = d
   function answer(cur) {
     if (!asking || !askLive) return;
     endAsk();
+    quietPad();
     // Yen: the same whole digits, and an exact split's figures, are now yen.
     if (cur === "JPY") draft.cur = "JPY";
     if (!canGo()) {
@@ -440,6 +459,7 @@ export function mountRegister(root, store, { now = () => Date.now(), storage = d
   function askBack(force) {
     if (!asking || (!askLive && !force)) return;
     endAsk();
+    if (!force) quietPad();
     render();
     go.focus({ preventScroll: true });
   }
@@ -564,6 +584,9 @@ export function mountRegister(root, store, { now = () => Date.now(), storage = d
   }
 
   function open(day) {
+    // Already open and asking (a day's own Ring up on the receipt, the rail's
+    // key): nothing about the entry changes under the question (review M1).
+    if (asking) return;
     if (draft.editId) startFresh(day);
     else {
       if (!names().includes(draft.payer)) draft.payer = me();
@@ -597,6 +620,7 @@ export function mountRegister(root, store, { now = () => Date.now(), storage = d
 
   function close() {
     endAsk(); // the question and its timer go with the register, also when something else closes it
+    wakePad();
     if (!opened) return;
     opened = false;
     stopHold();
@@ -617,7 +641,7 @@ export function mountRegister(root, store, { now = () => Date.now(), storage = d
 
   $("pad").addEventListener("click", (ev) => {
     const b = ev.target.closest(".key");
-    if (b && !b.disabled) press(b.dataset.k);
+    if (b && !b.disabled && !padQuiet) press(b.dataset.k);
   });
   $("regDone").addEventListener("click", close);
   $("askYen").addEventListener("click", () => answer("JPY"));
