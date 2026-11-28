@@ -178,7 +178,7 @@ module.exports = [
     async run({ page }) {
       const backend = await ready(page);
       await ringOpen(page);
-      await ringUp(page, { title: "Ferry", seq: "2 0 0 0" });
+      await ringUp(page, { title: "Ferry", seq: "2 0 0" });
       const ferry = await until(() => savedTitled(backend, "Ferry")[0], "Ferry saved");
       assert.equal(ferry.kind, "");
 
@@ -187,11 +187,11 @@ module.exports = [
       assert.equal(await isOn(page, '#xQuick .chip[data-q="Taxi"]'), true);
       await page.fill("#xWhat", "Taxi to port");
       assert.equal(await isOn(page, '#xQuick .chip[data-q="Taxi"]'), false);
-      await ringUp(page, { seq: "3 0 0 0" });
+      await ringUp(page, { seq: "3 0 0" });
       const taxi = await until(() => savedTitled(backend, "Taxi to port")[0], "Taxi to port saved");
       assert.equal(taxi.kind, "");
 
-      await ringUp(page, { chip: "Onsen", seq: "1 5 0 0" });
+      await ringUp(page, { chip: "Onsen", seq: "1 5 0" });
       assert.equal((await until(() => savedTitled(backend, "Onsen")[0], "Onsen saved")).kind, "activity");
       assert.equal(await page.getAttribute("#xWhat", "maxlength"), "80");
     },
@@ -202,7 +202,7 @@ module.exports = [
       const backend = await ready(page);
       await ringOpen(page);
       await page.click('#xQuick .chip[data-q="Drinks"]');
-      await keys(page, "3 2 0 0");
+      await keys(page, "3 2 0");
       await waitGo(page, true);
       await page.dblclick("#kGo");
       await waitRow(page, "Drinks");
@@ -213,7 +213,7 @@ module.exports = [
 
       // Two clicks in the same task: the second finds the key disabled.
       await page.click('#xQuick .chip[data-q="Groceries"]');
-      await keys(page, "5 0 0");
+      await keys(page, "5 0");
       await waitGo(page, true);
       await page.evaluate(() => {
         const go = document.getElementById("kGo");
@@ -344,7 +344,7 @@ module.exports = [
       await expectText(page, "#xDay", "Fri 11");
       await page.click("#dPrev");
       await expectText(page, "#xDay", "Thu 10");
-      await ringUp(page, { title: "Locker", seq: "7 0 0" });
+      await ringUp(page, { title: "Locker", seq: "7 0" });
       const row = await waitRow(page, "Locker");
       assert.equal(row.day, "2026-12-10");
       assert.equal((await until(() => savedTitled(backend, "Locker")[0], "Locker saved")).day, "2026-12-10");
@@ -632,7 +632,7 @@ module.exports = [
       const backend = await ready(page);
       backend.failWith = "network";
       await ringOpen(page);
-      await ringUp(page, { title: "Ferry", seq: "2 0 0 0" });
+      await ringUp(page, { title: "Ferry", seq: "2 0 0" });
       const row = await waitRow(page, "Ferry", (r) => r.cls.includes("is-pending") && r.text.includes("will send when signal returns"), "pending");
       assert.ok(Number(row.opacity) < 1, "drawn at reduced opacity: " + row.opacity);
       assert.equal(savedTitled(backend, "Ferry").length, 0);
@@ -652,7 +652,7 @@ module.exports = [
       const backend = await ready(page);
       backend.failWith = "bad_input";
       await ringOpen(page);
-      await ringUp(page, { title: "Bento", seq: "1 2 0 0" });
+      await ringUp(page, { title: "Bento", seq: "1 2 0" });
       const row = await waitRow(page, "Bento", (r) => r.cls.includes("is-failed"), "failed");
       assert.ok(row.text.includes("not saved, tap to retry"));
       assert.equal(savedTitled(backend, "Bento").length, 0);
@@ -717,3 +717,681 @@ module.exports.push({
     assert.deepEqual([big.amount, big.currency], [10000000, "CAD"]);
   },
 });
+
+// ---- "Yen or dollars?" (issue #90, look A, $500) ----
+// The plan fixture at 20:40 on Sat Dec 12 in Japan, on Ajen's phone. Ring it
+// up on whole dollars of $500 or more on a day in Japan asks once first.
+// Pictures only when MAT_TAB_SHOTS names a folder.
+
+const fs = require("node:fs");
+const { WITH_PLAN, makeBackend } = require("./helpers.cjs");
+
+const SHOTS = process.env.MAT_TAB_SHOTS || "";
+const AT = Date.parse("2026-12-12T20:40:00+09:00");
+const DEC9 = JSON.parse(fs.readFileSync(require("node:path").join(__dirname, "..", "fixtures", "dec9.json"), "utf8"));
+const et = (iso) => Date.parse(iso + ":00-05:00");
+
+async function shot(page, name) {
+  if (!SHOTS) return;
+  fs.mkdirSync(SHOTS, { recursive: true });
+  await page.evaluate(() => document.fonts && document.fonts.ready);
+  const left = () => page.evaluate(() => document.getAnimations().filter((a) => a.playState === "running" && a.timeline === document.timeline && a.effect && a.effect.getComputedTiming().iterations !== Infinity).length);
+  await until(async () => (await left()) === 0, "the animations have finished", 3000);
+  await page.screenshot({ path: SHOTS + "/" + name });
+}
+
+async function askReady(page, opts = {}) {
+  const backend = await open(page, { seed: WITH_PLAN, nowMs: AT, own: "Ajen", ...opts });
+  await waitRows(page, opts.rows || 8);
+  return backend;
+}
+
+const asking = (page) => visible(page, "#xAsk");
+const waitAsk = (page) => until(() => asking(page), "the question shows");
+const noAsk = async (page) => {
+  assert.equal(await asking(page), false, "no question");
+  assert.equal(await visible(page, "#pad"), true, "the keys are there");
+};
+
+// Dinner, typed in (default $12,000), and Ring it up: the question.
+async function dinner(page, seq = "1 2 0 0 0") {
+  await ringOpen(page);
+  await page.click('#xQuick .chip[data-q="Dinner"]');
+  await keys(page, seq);
+  await waitGo(page, true);
+  await page.click("#kGo");
+}
+
+// The question's texts, as drawn.
+const askShown = (page) =>
+  page.evaluate(() => {
+    const t = (s) => (document.querySelector(s) ? document.querySelector(s).textContent : "");
+    return {
+      amt: t("#xAmt"), conv: t("#xConv"),
+      yen: [t("#askYen b"), t("#askYen span").replace(t("#askYen span i") || "", ""), document.querySelector("#askYen i") ? t("#askYen i") : null],
+      cad: [t("#askCad b"), t("#askCad span").replace(t("#askCad span i") || "", ""), document.querySelector("#askCad i") ? t("#askCad i") : null],
+      yenLabel: document.getElementById("askYen").getAttribute("aria-label"),
+      cadLabel: document.getElementById("askCad").getAttribute("aria-label"),
+      back: t("#askBack"), off: t("#askOff"),
+    };
+  });
+
+module.exports.push(
+  {
+    name: "12000 in dollars on a day in Japan asks, yen first, and saves nothing yet",
+    async run({ page }) {
+      const backend = await askReady(page);
+      const sent = backend.requests.length;
+      await dinner(page);
+      await waitAsk(page);
+      await atRest(page, "#reg", { message: "the register at rest" });
+      assert.deepEqual(await askShown(page), {
+        amt: "?12,000", conv: "Yen or dollars?",
+        yen: ["¥12,000", "yen", "about $108.11"], cad: ["$12,000", "dollars", "about ¥1,332,000"],
+        yenLabel: "Ring up 12,000 yen, about $108.11", cadLabel: "Ring up 12,000 dollars, about ¥1,332,000",
+        back: "‹ Back to the keys", off: "Ringit up",
+      });
+      assert.equal(await visible(page, "#pad"), false, "the keys are put away");
+      assert.equal(await page.evaluate(() => document.activeElement.id), "xAsk", "focus on the question, not on an answer");
+      assert.deepEqual(
+        await page.evaluate(() => [document.getElementById("xWhat"), document.querySelector(".step"), document.getElementById("xQuick"), document.querySelector(".who")].map((n) => n.inert)),
+        [true, true, true, true],
+        "the entry cannot change while it asks",
+      );
+      await expectText(page, "#xDay", "Sat 12");
+      assert.equal(await page.inputValue("#xWhat"), "Dinner");
+      await expectText(page, "#regTitle", "Ring up");
+      await idle(page);
+      assert.equal(backend.requests.length, sent, "no request to the backend");
+      assert.equal(await rowOf(page, "Dinner"), null, "nothing on the receipt");
+      await shot(page, "ask-390.png");
+    },
+  },
+  {
+    name: "the yen answer rings up ¥12,000",
+    async run({ page }) {
+      const backend = await askReady(page);
+      await dinner(page);
+      await waitAsk(page);
+      await advance(page, backend, 400);
+      await page.click("#askYen");
+      const row = await waitRow(page, "Dinner");
+      assert.equal(row.amt, "¥12,000");
+      const d = await until(() => savedTitled(backend, "Dinner")[0], "Dinner saved");
+      assert.deepEqual([d.amount, d.currency, d.rate, d.paidBy, d.day, d.kind, d.splitMode], [12000, "JPY", 111, "Ajen", "2026-12-12", "food", "equal"]);
+      assert.equal(adds(backend).length, 1);
+      await expectText(page, "#ubarT", "Rang up Dinner ¥12,000.");
+      assert.ok(await visible(page, "#ubarU"), "Undo is offered");
+      // R42: the next entry opens in dollars.
+      await expectText(page, "#xAmt", "$0");
+      await expectText(page, "#kCur", "$ → ¥");
+      await noAsk(page);
+      assert.equal(await page.evaluate(() => document.getElementById("xWhat").inert), false, "the title takes typing again");
+      await shot(page, "after-yen-390.png");
+      // The next one asks again: the key was not pressed in it (the pad is live again after 400 ms).
+      await advance(page, backend, 400);
+      await ringUp(page, { chip: "Drinks", seq: "6 0 0" });
+      await waitAsk(page);
+    },
+  },
+  {
+    name: "the dollar answer rings up $12,000",
+    async run({ page }) {
+      const backend = await askReady(page);
+      await dinner(page);
+      await waitAsk(page);
+      await advance(page, backend, 400);
+      await page.click("#askCad");
+      const row = await waitRow(page, "Dinner");
+      assert.equal(row.amt, "$12,000.00");
+      const d = await until(() => savedTitled(backend, "Dinner")[0], "Dinner saved");
+      assert.deepEqual([d.amount, d.currency, d.rate], [12000, "CAD", 111]);
+      await idle(page);
+      assert.equal(adds(backend).length, 1, "one line");
+      await expectText(page, "#xAmt", "$0");
+      await noAsk(page);
+    },
+  },
+  {
+    name: "Back returns the keys with the amount still typed, and asking again works",
+    async run({ page }) {
+      const backend = await askReady(page);
+      await dinner(page);
+      await waitAsk(page);
+      await advance(page, backend, 400);
+      await page.click("#askBack");
+      await noAsk(page);
+      await expectText(page, "#xAmt", "$12,000");
+      await expectText(page, "#xConv", "÷3 ≈ ¥1,332,000");
+      assert.equal(await page.evaluate(() => [document.getElementById("xWhat"), document.querySelector(".who")].some((n) => n.inert)), false);
+      await idle(page);
+      assert.equal(adds(backend).length, 0, "nothing saved");
+      // Typing goes on (400 ms after Back): the amount can be put right before ringing up.
+      await advance(page, backend, 400);
+      await keys(page, "del");
+      await expectText(page, "#xAmt", "$1,200");
+      await page.click("#kGo");
+      await waitAsk(page);
+      await expectText(page, "#askYen b", "¥1,200");
+      await advance(page, backend, 400);
+      await page.click("#askYen");
+      await waitRow(page, "Dinner");
+      assert.deepEqual((await until(() => savedTitled(backend, "Dinner")[0], "saved")).currency, "JPY");
+    },
+  },
+  {
+    name: "an answer tapped in the first 400 ms is ignored",
+    async run({ page }) {
+      const backend = await askReady(page);
+      await dinner(page);
+      await waitAsk(page);
+      await page.click("#askYen");
+      await page.click("#askCad");
+      await page.click("#askBack");
+      await advance(page, backend, 399);
+      await page.click("#askYen");
+      await idle(page);
+      assert.equal(adds(backend).length, 0, "nothing saved");
+      assert.equal(await asking(page), true, "still asking");
+      await advance(page, backend, 1);
+      await page.click("#askYen");
+      await waitRow(page, "Dinner");
+      await idle(page);
+      assert.equal(adds(backend).length, 1, "saved once");
+      assert.equal(savedTitled(backend, "Dinner")[0].currency, "JPY");
+    },
+  },
+  {
+    name: "a double tap on Ring it up answers nothing",
+    async run({ page }) {
+      const backend = await askReady(page);
+      await ringOpen(page);
+      await page.click('#xQuick .chip[data-q="Dinner"]');
+      await keys(page, "1 2 0 0 0");
+      await waitGo(page, true);
+      // The second tap lands where Ring it up was: on the dimmed copy.
+      const go = await page.locator("#kGo").boundingBox();
+      await page.dblclick("#kGo");
+      await waitAsk(page);
+      const off = await page.locator("#askOff").boundingBox();
+      const mid = { x: go.x + go.width / 2, y: go.y + go.height / 2 };
+      assert.ok(mid.x >= off.x && mid.x <= off.x + off.width && mid.y >= off.y && mid.y <= off.y + off.height, "the dimmed copy sits where Ring it up was");
+      assert.equal(await page.evaluate(([x, y]) => document.elementFromPoint(x, y).id, [mid.x, mid.y]), "askOff");
+      await advance(page, backend, 400);
+      await page.mouse.click(mid.x, mid.y);
+      // Two clicks in one task on Ring it up: the second finds the keys put away.
+      await page.click("#askBack");
+      await advance(page, backend, 400);
+      await page.evaluate(() => {
+        const g = document.getElementById("kGo");
+        g.click();
+        g.click();
+      });
+      await waitAsk(page);
+      await idle(page);
+      assert.equal(adds(backend).length, 0, "nothing answered, nothing saved");
+      assert.equal(await asking(page), true);
+    },
+  },
+  {
+    name: "$499 rings up without a question and $500 asks",
+    async run({ page }) {
+      const backend = await askReady(page);
+      await ringOpen(page);
+      await ringUp(page, { chip: "Dinner", seq: "4 9 9" });
+      await waitRow(page, "Dinner");
+      await noAsk(page);
+      assert.deepEqual((await until(() => savedTitled(backend, "Dinner")[0], "saved")).currency, "CAD");
+      await ringUp(page, { chip: "Lunch", seq: "5 0 0" });
+      await waitAsk(page);
+      await expectText(page, "#askYen b", "¥500");
+      await expectText(page, "#askCad b", "$500");
+    },
+  },
+  {
+    name: "cents typed: no question",
+    async run({ page }) {
+      const backend = await askReady(page);
+      await ringOpen(page);
+      await ringUp(page, { chip: "Dinner", seq: "5 0 0 . 0 0" });
+      await waitRow(page, "Dinner");
+      await noAsk(page);
+      assert.deepEqual((await until(() => savedTitled(backend, "Dinner")[0], "saved")).amount, 500);
+    },
+  },
+  {
+    name: "the currency key pressed and pressed back: no question",
+    async run({ page }) {
+      const backend = await askReady(page);
+      await ringOpen(page);
+      await page.click("#kCur");
+      await page.click("#kCur");
+      await expectText(page, "#kCur", "$ → ¥");
+      await ringUp(page, { chip: "Dinner", seq: "1 2 0 0 0" });
+      await waitRow(page, "Dinner");
+      await noAsk(page);
+      assert.deepEqual((await until(() => savedTitled(backend, "Dinner")[0], "saved")).currency, "CAD");
+      // The next entry is new: the key is untouched in it, so it asks.
+      await ringUp(page, { chip: "Lunch", seq: "1 2 0 0 0" });
+      await waitAsk(page);
+    },
+  },
+  {
+    name: "\"before the trip\" never asks",
+    async run({ page }) {
+      const backend = await askReady(page);
+      await ringOpen(page);
+      for (const d of ["Fri 11", "Thu 10", "Before"]) {
+        await page.click("#dPrev");
+        await expectText(page, "#xDay", d);
+      }
+      await ringUp(page, { title: "Rail passes top-up", seq: "1 2 0 0 0" });
+      await waitRow(page, "Rail passes top-up");
+      await noAsk(page);
+      const s = await until(() => savedTitled(backend, "Rail passes top-up")[0], "saved");
+      assert.deepEqual([s.day, s.currency], ["pre", "CAD"]);
+    },
+  },
+  {
+    name: "Dec 9 never asks",
+    timezoneId: "America/New_York",
+    async run({ page }) {
+      const backend = await open(page, { seed: { ...SEED, ...DEC9 }, nowMs: et("2026-12-09T11:45"), own: "Ajen" });
+      await ringOpen(page);
+      await expectText(page, "#xDay", "Wed 9");
+      await ringUp(page, { title: "Lakeport parking", seq: "1 2 0 0 0" });
+      await waitRow(page, "Lakeport parking");
+      await noAsk(page);
+      const s = await until(() => savedTitled(backend, "Lakeport parking")[0], "saved");
+      assert.deepEqual([s.day, s.currency, s.amount], ["2026-12-09", "CAD", 12000]);
+      // Dec 10 on the same trip is in Japan: it asks.
+      await page.click("#dNext");
+      await expectText(page, "#xDay", "Thu 10");
+      await ringUp(page, { chip: "Dinner", seq: "1 2 0 0 0" });
+      await waitAsk(page);
+    },
+  },
+  {
+    name: "an exact split in whole figures: the yen answer keeps each person's figure as yen",
+    async run({ page }) {
+      const backend = await askReady(page);
+      await ringOpen(page);
+      await page.click('#xQuick .chip[data-q="Dinner"]');
+      await keys(page, "1 2 0 0 0");
+      await page.click("#xUneven");
+      await page.click('#unMode [data-mode="exact"]');
+      await page.fill('#un .un-row[data-p="Mo"] .un-val', "6000");
+      await page.fill('#un .un-row[data-p="Ajen"] .un-val', "4000");
+      await page.fill('#un .un-row[data-p="Trenton"] .un-val', "2000");
+      await expectText(page, "#unLeft", "");
+      await page.click("#unDone");
+      await until(async () => !(await visible(page, "#un")), "#un closes");
+      await waitGo(page, true);
+      await page.click("#kGo");
+      await waitAsk(page);
+      await advance(page, backend, 400);
+      await page.click("#askYen");
+      await waitRow(page, "Dinner");
+      const d = await until(() => savedTitled(backend, "Dinner")[0], "saved");
+      assert.deepEqual([d.amount, d.currency, d.splitMode, d.split, d.splitVals], [12000, "JPY", "exact", ["Mo", "Ajen", "Trenton"], [6000, 4000, 2000]]);
+    },
+  },
+  {
+    name: "an edit asks only when the amount was changed",
+    async run({ page }) {
+      const seed = JSON.parse(JSON.stringify(WITH_PLAN));
+      seed.expenses.push({
+        id: "seedexp012", day: "2026-12-12", title: "Torihana", amount: 650, currency: "CAD", rate: 111, paidBy: "Ajen",
+        split: ["Mo", "Ajen", "Trenton"], splitMode: "equal", splitVals: [], note: "", kind: "food", addedBy: "Ajen", deleted: false,
+      });
+      const backend = await askReady(page, { seed, rows: 9 });
+      const patches = () => backend.requests.filter((r) => r.action === "updateExpense").map((r) => r.args.patch);
+
+      // Only the payer: saved at once.
+      await page.evaluate(() => globalThis.__matTest.register.edit("seedexp012"));
+      await waitOpen(page);
+      await expectText(page, "#xAmt", "$650");
+      await page.click(seal("xPayer", "Mo"));
+      await page.click("#kGo");
+      await waitClosed(page);
+      await idle(page);
+      assert.deepEqual(patches(), [{ paidBy: "Mo" }]);
+
+      // The amount changed: it asks, and says Save.
+      await page.evaluate(() => globalThis.__matTest.register.edit("seedexp012"));
+      await waitOpen(page);
+      await keys(page, "del del del 1 2 0 0 0");
+      await expectText(page, "#xAmt", "$12,000");
+      await page.click("#kGo");
+      await waitAsk(page);
+      await atRest(page, "#reg", { message: "the register at rest" });
+      const shown = await askShown(page);
+      assert.deepEqual([shown.off, shown.yenLabel, shown.cadLabel], ["Save", "Save as 12,000 yen, about $108.11", "Save as 12,000 dollars, about ¥1,332,000"]);
+      await expectText(page, "#regTitle", "Change this line");
+      await shot(page, "ask-edit-390.png");
+      await advance(page, backend, 400);
+      await page.click("#askYen");
+      await waitClosed(page);
+      await idle(page);
+      assert.deepEqual(patches()[1], { amount: 12000, currency: "JPY" }, "the currency and the amount both in the patch");
+      const e = saved(backend).find((x) => x.id === "seedexp012");
+      assert.deepEqual([e.amount, e.currency, e.rate, e.paidBy], [12000, "JPY", 111, "Mo"]);
+      await expectText(page, '.rc-row[data-id="seedexp012"] .rc-amt', "¥12,000");
+      // The next opening is a new entry, in dollars.
+      await ringOpen(page);
+      await expectText(page, "#regTitle", "Ring up");
+      await expectText(page, "#xAmt", "$0");
+      await noAsk(page);
+    },
+  },
+  {
+    name: "with no signal the question still comes and the line waits to be sent",
+    async run({ page }) {
+      const backend = await askReady(page);
+      backend.failWith = "network";
+      await dinner(page);
+      await waitAsk(page);
+      await advance(page, backend, 400);
+      await page.click("#askYen");
+      const row = await waitRow(page, "Dinner", (r) => r.cls.includes("is-pending") && r.text.includes("will send when signal returns"), "pending");
+      assert.equal(row.amt, "¥12,000");
+      await expectText(page, "#net", /1 to send\./);
+      assert.equal(savedTitled(backend, "Dinner").length, 0);
+      backend.failWith = null;
+      await page.click("#regDone");
+      await waitClosed(page);
+      await page.click("#fresh");
+      await waitRow(page, "Dinner", (r) => !r.cls.includes("is-pending"), "sent");
+      await idle(page);
+      const d = savedTitled(backend, "Dinner");
+      assert.equal(d.length, 1, "exactly one copy");
+      assert.deepEqual([d[0].amount, d[0].currency], [12000, "JPY"]);
+    },
+  },
+  {
+    name: "Done while it asks saves nothing and the question is gone on reopening",
+    async run({ page }) {
+      const backend = await askReady(page);
+      await dinner(page);
+      await waitAsk(page);
+      await page.click("#regDone");
+      await waitClosed(page);
+      await advance(page, backend, 400);
+      await idle(page);
+      assert.equal(adds(backend).length, 0, "nothing saved");
+      await ringOpen(page);
+      await noAsk(page);
+      await expectText(page, "#xAmt", "$12,000");
+      await expectText(page, "#kCur", "$ → ¥");
+      assert.equal(await page.inputValue("#xWhat"), "Dinner");
+      assert.equal(await page.evaluate(() => document.getElementById("xWhat").inert), false);
+      // Something else closing it (a Days sheet, the trip taken off) clears it the same.
+      await page.click("#kGo");
+      await waitAsk(page);
+      await page.evaluate(() => globalThis.__matTest.register.close());
+      await waitClosed(page);
+      await ringOpen(page);
+      await noAsk(page);
+    },
+  },
+  {
+    name: "Enter on a computer does not answer, Escape is Back",
+    viewport: { width: 1440, height: 900 },
+    mobile: false,
+    async run({ page }) {
+      const backend = await askReady(page);
+      await ringOpen(page);
+      await page.evaluate(() => document.activeElement && document.activeElement.blur());
+      for (const k of ["1", "2", "0", "0", "0"]) await page.keyboard.press(k);
+      await page.click('#xQuick .chip[data-q="Dinner"]');
+      await page.keyboard.press("Enter");
+      await waitAsk(page);
+      const inside = await page.evaluate(() => {
+        const r = document.getElementById("reg").getBoundingClientRect();
+        return [...document.querySelectorAll("#xAsk *")].every((n) => { const b = n.getBoundingClientRect(); return b.left >= r.left - 0.5 && b.right <= r.right + 0.5 && b.bottom <= innerHeight + 0.5; });
+      });
+      assert.equal(inside, true, "the question fits the Money pane");
+      await page.keyboard.press("Enter");
+      await advance(page, backend, 400);
+      for (const k of ["Enter", "5", "Backspace", "."]) await page.keyboard.press(k);
+      await idle(page);
+      assert.equal(adds(backend).length, 0, "Enter answered nothing");
+      assert.equal(await asking(page), true);
+      await expectText(page, "#xAmt", "?12,000");
+      await page.keyboard.press("Escape");
+      await noAsk(page);
+      assert.equal(await isOpen(page), true, "Escape is Back, the register stays");
+      await expectText(page, "#xAmt", "$12,000");
+      // Enter rings up again: it asks again.
+      await page.keyboard.press("Enter");
+      await waitAsk(page);
+      await page.keyboard.press("Escape");
+      await noAsk(page);
+      await idle(page);
+      assert.equal(adds(backend).length, 0);
+    },
+  },
+  {
+    name: "at 320 the question fits",
+    viewport: { width: 320, height: 640 },
+    async run({ page }) {
+      await askReady(page);
+      await dinner(page);
+      await waitAsk(page);
+      await atRest(page, "#reg", { message: "the register at rest" });
+      const fit = await page.evaluate(() => {
+        const reg = document.getElementById("reg");
+        const r = reg.getBoundingClientRect();
+        const over = [...reg.querySelectorAll("#xAsk *, .lcd *")].filter((n) => { const b = n.getBoundingClientRect(); return b.width && (b.left < r.left - 0.5 || b.right > r.right + 0.5); }).map((n) => n.id || n.className);
+        const ask = document.getElementById("xAsk").getBoundingClientRect();
+        return { over, sideways: reg.scrollWidth <= reg.clientWidth, bottom: ask.bottom <= innerHeight + 0.5, amt: document.getElementById("xAmt").getBoundingClientRect().right <= document.querySelector(".lcd").getBoundingClientRect().right };
+      });
+      assert.deepEqual(fit, { over: [], sideways: true, bottom: true, amt: true });
+      await shot(page, "ask-320.png");
+    },
+  },
+  {
+    name: "held sideways the question takes the keys' column",
+    viewport: { width: 844, height: 390 },
+    async run({ page }) {
+      await askReady(page);
+      await dinner(page);
+      await waitAsk(page);
+      await atRest(page, "#reg", { message: "the register at rest" });
+      const fit = await page.evaluate(() => {
+        const reg = document.getElementById("reg").getBoundingClientRect();
+        const lcd = document.querySelector(".lcd").getBoundingClientRect();
+        const ask = document.getElementById("xAsk").getBoundingClientRect();
+        const parts = [...document.querySelectorAll("#xAsk *")].every((n) => { const b = n.getBoundingClientRect(); return b.left >= ask.left - 0.5 && b.right <= ask.right + 0.5; });
+        return { right: ask.left >= lcd.right, inReg: ask.right <= reg.right + 0.5 && ask.bottom <= innerHeight + 0.5 && ask.top >= reg.top, parts };
+      });
+      assert.deepEqual(fit, { right: true, inReg: true, parts: true });
+      await shot(page, "ask-sideways.png");
+    },
+  },
+  {
+    name: "with no rate the question leaves out the about figures",
+    async run({ page }) {
+      const backend = makeBackend(WITH_PLAN, { now: AT });
+      backend.fake.setRate(null, "none");
+      await askReady(page, { backend });
+      await dinner(page);
+      await waitAsk(page);
+      await atRest(page, "#reg", { message: "the register at rest" });
+      const shown = await askShown(page);
+      assert.deepEqual([shown.yen, shown.cad, shown.yenLabel, shown.cadLabel], [["¥12,000", "yen", null], ["$12,000", "dollars", null], "Ring up 12,000 yen", "Ring up 12,000 dollars"]);
+      await shot(page, "ask-no-rate-390.png");
+      // Dollars (a yen line with no rate at all cannot be totalled on the receipt, before and after this change).
+      await advance(page, backend, 400);
+      await page.click("#askCad");
+      await waitRow(page, "Dinner");
+      const d = await until(() => savedTitled(backend, "Dinner")[0], "saved");
+      assert.deepEqual([d.amount, d.currency], [12000, "CAD"]);
+    },
+  },
+);
+
+// ---- fix round (review I1, M1, M2, M3) ----
+
+// A point inside `sel`: fx, fy are fractions of its width and height.
+const pointIn = async (page, sel, fx, fy) => {
+  const b = await page.locator(sel).boundingBox();
+  return { x: b.x + b.width * fx, y: b.y + b.height * fy };
+};
+// Two taps at one point, the second at once (no clock moves between them).
+const doubleTapAt = async (page, p) => {
+  await page.mouse.click(p.x, p.y);
+  await page.mouse.click(p.x, p.y);
+};
+// The key of the pad under a point, once the pad is back.
+const keyAt = (page, p) => page.evaluate(([x, y]) => { const k = document.elementFromPoint(x, y).closest(".key"); return k ? k.dataset.k : null; }, [p.x, p.y]);
+
+module.exports.push(
+  {
+    name: "a double tap on Yen presses nothing on the pad that comes back: not the currency key, not a digit",
+    async run({ page }) {
+      const backend = await askReady(page);
+      // Right quarter, lower half: the "$ → ¥" key is under it.
+      await dinner(page);
+      await waitAsk(page);
+      await advance(page, backend, 400);
+      const right = await pointIn(page, "#askYen", 0.88, 0.75);
+      await doubleTapAt(page, right);
+      await waitRow(page, "Dinner");
+      assert.equal(await keyAt(page, right), "cur", "the currency key is under the second tap");
+      await expectText(page, "#xAmt", "$0");
+      await expectText(page, "#kCur", "$ → ¥");
+      // Left side: the digits 7 8 9 / 4 5 6 are under it.
+      await advance(page, backend, 400);
+      await ringUp(page, { chip: "Lunch", seq: "1 2 0 0 0" });
+      await waitAsk(page);
+      await advance(page, backend, 400);
+      const left = await pointIn(page, "#askYen", 0.3, 0.75);
+      await doubleTapAt(page, left);
+      await waitRow(page, "Lunch");
+      assert.equal(await keyAt(page, left), "5", "a digit is under the second tap");
+      await expectText(page, "#xAmt", "$0");
+      await expectText(page, "#kCur", "$ → ¥");
+      await idle(page);
+      assert.deepEqual(saved(backend).filter((e) => ["Dinner", "Lunch"].includes(e.title)).map((e) => [e.title, e.amount, e.currency]), [["Dinner", 12000, "JPY"], ["Lunch", 12000, "JPY"]]);
+      // The next entry is untouched: it is in dollars and it asks; after 400 ms the pad works.
+      await advance(page, backend, 400);
+      await ringUp(page, { chip: "Drinks", seq: "6 0 0" });
+      await waitAsk(page);
+      await expectText(page, "#askCad b", "$600");
+    },
+  },
+  {
+    name: "a double tap on Dollars presses nothing on the pad that comes back",
+    async run({ page }) {
+      const backend = await askReady(page);
+      await dinner(page);
+      await waitAsk(page);
+      await advance(page, backend, 400);
+      const p = await pointIn(page, "#askCad", 0.5, 0.5);
+      await doubleTapAt(page, p);
+      await waitRow(page, "Dinner");
+      assert.equal(await keyAt(page, p), "2", "a digit is under the second tap");
+      await expectText(page, "#xAmt", "$0");
+      await expectText(page, "#kCur", "$ → ¥");
+      await idle(page);
+      assert.deepEqual(savedTitled(backend, "Dinner").map((e) => [e.amount, e.currency]), [[12000, "CAD"]]);
+      await advance(page, backend, 400);
+      await ringUp(page, { chip: "Lunch", seq: "7 0 0" });
+      await waitAsk(page);
+    },
+  },
+  {
+    name: "a double tap on Back leaves the kept amount as it was, and the keys work 400 ms later",
+    async run({ page }) {
+      const backend = await askReady(page);
+      await dinner(page);
+      await waitAsk(page);
+      await advance(page, backend, 400);
+      for (const [fx, k] of [[0.15, "0"], [0.5, "00"], [0.85, "."]]) {
+        const p = await pointIn(page, "#askBack", fx, 0.5);
+        await doubleTapAt(page, p);
+        await noAsk(page);
+        assert.equal(await keyAt(page, p), k, k + " is under the second tap");
+        await expectText(page, "#xAmt", "$12,000");
+        await expectText(page, "#kCur", "$ → ¥");
+        // Ring it up, 400 ms later, still asks (no cents were typed by the second tap).
+        await advance(page, backend, 400);
+        await page.click("#kGo");
+        await waitAsk(page);
+        await advance(page, backend, 400);
+      }
+      await page.click("#askBack");
+      await advance(page, backend, 400);
+      await keys(page, "del");
+      await expectText(page, "#xAmt", "$1,200");
+      await idle(page);
+      assert.equal(adds(backend).length, 0, "nothing saved");
+    },
+  },
+  {
+    name: "a day's own Ring up on the receipt does not change the day under the question",
+    async run({ page }) {
+      const backend = await askReady(page);
+      await ringOpen(page);
+      await page.click("#dPrev");
+      await expectText(page, "#xDay", "Fri 11");
+      await page.click('#xQuick .chip[data-q="Dinner"]');
+      await keys(page, "1 2 0 0 0");
+      await page.click("#kGo");
+      await waitAsk(page);
+      // Sat Dec 12's own "Ring up" on the receipt, above the register.
+      await page.click('[data-addday="2026-12-12"]');
+      await expectText(page, "#xDay", "Fri 11");
+      assert.equal(await asking(page), true, "still asking");
+      await advance(page, backend, 400);
+      await page.click("#askYen");
+      const d = await until(() => savedTitled(backend, "Dinner")[0], "saved");
+      assert.deepEqual([d.day, d.currency], ["2026-12-11", "JPY"]);
+    },
+  },
+  {
+    name: "a sync redraw while it asks keeps the question, with the about figures at the new rate",
+    async run({ page }) {
+      const backend = await askReady(page);
+      await dinner(page);
+      await waitAsk(page);
+      await expectText(page, "#askYen i", "about $108.11");
+      backend.fake.setRate(120, "live");
+      await page.evaluate(() => globalThis.__matTest.store.refresh());
+      await idle(page);
+      await expectText(page, "#askYen i", "about $100.00");
+      await expectText(page, "#askCad i", "about ¥1,440,000");
+      await expectText(page, "#xAmt", "?12,000");
+      await expectText(page, "#xConv", "Yen or dollars?");
+      assert.equal(await visible(page, "#pad"), false);
+      await advance(page, backend, 400);
+      await page.click("#askYen");
+      const d = await until(() => savedTitled(backend, "Dinner")[0], "saved");
+      assert.deepEqual([d.amount, d.currency, d.rate], [12000, "JPY", 120]);
+    },
+  },
+  {
+    name: "an edit answered Dollars sends only the amount",
+    async run({ page }) {
+      const seed = JSON.parse(JSON.stringify(WITH_PLAN));
+      seed.expenses.push({
+        id: "seedexp012", day: "2026-12-12", title: "Torihana", amount: 650, currency: "CAD", rate: 111, paidBy: "Ajen",
+        split: ["Mo", "Ajen", "Trenton"], splitMode: "equal", splitVals: [], note: "", kind: "food", addedBy: "Ajen", deleted: false,
+      });
+      const backend = await askReady(page, { seed, rows: 9 });
+      await page.evaluate(() => globalThis.__matTest.register.edit("seedexp012"));
+      await waitOpen(page);
+      await keys(page, "del del del 1 2 0 0 0");
+      await page.click("#kGo");
+      await waitAsk(page);
+      await advance(page, backend, 400);
+      await page.click("#askCad");
+      await waitClosed(page);
+      await idle(page);
+      assert.deepEqual(backend.requests.filter((r) => r.action === "updateExpense").map((r) => r.args.patch), [{ amount: 12000 }]);
+      const e = saved(backend).find((x) => x.id === "seedexp012");
+      assert.deepEqual([e.amount, e.currency, e.rate], [12000, "CAD", 111]);
+    },
+  },
+);

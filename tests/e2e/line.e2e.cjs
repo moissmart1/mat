@@ -288,7 +288,7 @@ module.exports = [
       await page.click("#ring");
       await waitRegOpen(page);
       await page.fill("#xWhat", "Bento");
-      await keys(page, "1 2 0 0");
+      await keys(page, "1 2 0");
       await page.click("#kGo");
       const row = await waitRow(page, "Bento", (r) => r.cls.includes("is-failed"), "failed");
       await page.click("#regDone");
@@ -317,7 +317,7 @@ module.exports = [
       await page.click("#ring");
       await waitRegOpen(page);
       await page.fill("#xWhat", "Bento");
-      await keys(page, "1 2 0 0");
+      await keys(page, "1 2 0");
       await page.click("#kGo");
       const row = await waitRow(page, "Bento", (r) => r.cls.includes("is-failed"), "failed");
       await page.click("#regDone");
@@ -342,7 +342,7 @@ module.exports = [
       await page.click("#ring");
       await waitRegOpen(page);
       await page.fill("#xWhat", "Ferry");
-      await keys(page, "9 0 0");
+      await keys(page, "9 0");
       await page.click("#kGo");
       const row = await waitRow(page, "Ferry", (r) => r.cls.includes("is-pending"), "pending");
       await page.click("#regDone");
