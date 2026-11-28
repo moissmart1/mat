@@ -832,15 +832,27 @@ function seenAfter(seen, name, day, ready, names) {
   return { seen: out, changed: changed };
 }
 
+// The day a roll-call fact is dated (issue 96, review I1): where the group
+// is. homeDay is the day in Toronto, tripDay the day in the trip's zone, both
+// "YYYY-MM-DD" at the same moment; start the trip's first day. The Toronto day
+// until the trip's first day has begun in the trip's zone, the trip-zone day
+// from then on. A trip with no start: always Toronto.
+function seenDay(homeDay, tripDay, start) {
+  return typeof start === "string" && DAY_RE_.test(start) && typeof tripDay === "string" && DAY_RE_.test(tripDay) && tripDay >= start ? tripDay : homeDay;
+}
+
 // The roll call the owner's load is answered: one entry per person, in trip
 // order. keys: PERSON_KEYS as personKeysFrom reads it (only each link's day
-// is used). -> [{ name, opened, ready, said, linkDay }]
-function rollFrom(seen, names, keys) {
+// is used). dayOf(iso) -> "YYYY-MM-DD": the day a link's ISO time is dated
+// (seenDay's rule); without it, the ISO time's own first ten characters.
+// -> [{ name, opened, ready, said, linkDay }]
+function rollFrom(seen, names, keys, dayOf) {
   var s = isObj_(seen) ? seen : {};
   var k = isObj_(keys) ? keys : {};
   return (Array.isArray(names) ? names : []).map(function (name) {
     var e = seenOwn_(s, name) ? s[name] : null;
-    var at = seenOwn_(k, name) && k[name] && typeof k[name].at === "string" ? k[name].at.slice(0, 10) : "";
+    var iso = seenOwn_(k, name) && k[name] && typeof k[name].at === "string" ? k[name].at : "";
+    var at = !iso ? "" : typeof dayOf === "function" ? String(dayOf(iso) || "") : iso.slice(0, 10);
     return {
       name: name,
       opened: e ? e.o : "",
@@ -1790,5 +1802,5 @@ function ticketSnap_(t, stopTitle) {
 }
 
 if (typeof module !== "undefined") {
-  module.exports = { TABS, KINDS, isTextColumn, sanitizeCell, unsanitizeCell, rowToObj, objToRow, validateExpense, validatePayment, validatePersonPatch, validateStop, validateStay, validateDayPatch, DAY_PATCH_KEYS, safeUrl, safeHttpsUrl, dayLabel, stopFromRow, stopToRow, stayFromRow, stayToRow, dayFromRow, dayToRow, expenseFromRow, paymentFromRow, personFromRow, cellDate_, cellStamp_, summarize, undoTarget, canUndo, entryFromRow, parseLogRow, expenseToRow, paymentToRow, setupSeedRows, shouldFetchRate, rateSource, sameKey, hexOfBytes, personKeysFrom, personKeysReadable, seenFrom, seenAfter, rollFrom, keyHolder, blankSecrets, paymentsFromRows, expenseFromPayment, paymentIdOf, todosFromRows, bookByDay, todoFromRow, isBooked, colLetter, changeLogRow, shortDay_, stampWindow, pressRefusal, stampDefFromRow, stampFromRow, stampSnap_, plannerWhat_, coordsOf_, pointFromLink, metresBetween_, TICKET_LIMITS, validateTicket, ticketChunks, joinTicketChunks, ticketFromRow, ticketSnap_, listDay, listTime, listRowsFrom, deskFilesFrom, deskFileFrom, LIST_COLS_ };
+  module.exports = { TABS, KINDS, isTextColumn, sanitizeCell, unsanitizeCell, rowToObj, objToRow, validateExpense, validatePayment, validatePersonPatch, validateStop, validateStay, validateDayPatch, DAY_PATCH_KEYS, safeUrl, safeHttpsUrl, dayLabel, stopFromRow, stopToRow, stayFromRow, stayToRow, dayFromRow, dayToRow, expenseFromRow, paymentFromRow, personFromRow, cellDate_, cellStamp_, summarize, undoTarget, canUndo, entryFromRow, parseLogRow, expenseToRow, paymentToRow, setupSeedRows, shouldFetchRate, rateSource, sameKey, hexOfBytes, personKeysFrom, personKeysReadable, seenFrom, seenAfter, seenDay, rollFrom, keyHolder, blankSecrets, paymentsFromRows, expenseFromPayment, paymentIdOf, todosFromRows, bookByDay, todoFromRow, isBooked, colLetter, changeLogRow, shortDay_, stampWindow, pressRefusal, stampDefFromRow, stampFromRow, stampSnap_, plannerWhat_, coordsOf_, pointFromLink, metresBetween_, TICKET_LIMITS, validateTicket, ticketChunks, joinTicketChunks, ticketFromRow, ticketSnap_, listDay, listTime, listRowsFrom, deskFilesFrom, deskFileFrom, LIST_COLS_ };
 }

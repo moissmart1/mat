@@ -256,3 +256,64 @@ test("a friend cannot write another person's entry: the name is the key's, never
   await w.fake({ key: w.keys.Ajen, actor: "Trenton", action: "load", args: { ready: true, name: "Trenton", who: "Trenton" } });
   assert.deepEqual(Object.keys(w.seen()), ["Ajen"]);
 });
+
+// ---------- the day a fact is dated: where the group is (review I1) ----------
+
+test("seenDay: Toronto until the trip's first day begins in the trip's zone, the trip-zone day from then on", () => {
+  assert.equal(P.seenDay("2026-11-27", "2026-11-28", "2026-12-10"), "2026-11-27", "before the trip: Toronto");
+  assert.equal(P.seenDay("2026-12-09", "2026-12-10", "2026-12-10"), "2026-12-10", "the first day has begun in Japan");
+  assert.equal(P.seenDay("2026-12-11", "2026-12-12", "2026-12-10"), "2026-12-12");
+  assert.equal(P.seenDay("2026-11-27", "2026-11-28", ""), "2026-11-27", "no start: Toronto");
+  assert.equal(P.seenDay("2026-11-27", "", "2026-12-10"), "2026-11-27");
+});
+
+test("a Toronto evening open after 19:00, before the trip, keeps Toronto's day; so does the link's day", async () => {
+  // Fri Nov 27, 19:30 in Toronto (00:30 on Nov 28 in UTC); Ajen's link made at 21:00 Toronto on Nov 21.
+  const w = world({ linked: { Mo: "2026-11-20T09:00:00.000Z", Ajen: "2026-11-22T02:00:00.000Z" }, now: "2026-11-28T00:30:00.000Z" });
+  await w.load(w.keys.Ajen, { ready: false });
+  assert.deepEqual(w.seen().Ajen, { o: "2026-11-27", r: 0, d: "2026-11-27" });
+  const mo = await w.load(w.keys.Mo);
+  assert.deepEqual(mo.data.roll[1], { name: "Ajen", opened: "2026-11-27", ready: false, said: "2026-11-27", linkDay: "2026-11-21" });
+  assert.equal(mo.data.roll[0].opened, "2026-11-27");
+});
+
+test("a Japan open before 09:00 during the trip gets the Japan day", async () => {
+  const w = world();
+  await w.load(w.keys.Ajen, { ready: true });
+  // Sat Dec 12, 07:30 in Japan (22:30 on Dec 11 in UTC, 17:30 in Toronto).
+  w.at.now = "2026-12-11T22:30:00.000Z";
+  await w.load(w.keys.Ajen, { ready: false });
+  assert.deepEqual(w.seen().Ajen, { o: "2026-11-25", r: 0, d: "2026-12-12" });
+  // A link made during the trip is dated the same way.
+  const tk = w.fake.personKey("Trenton");
+  assert.ok(tk);
+  const mo = await w.load(w.keys.Mo);
+  assert.equal(mo.data.roll[0].opened, "2026-12-12");
+  assert.equal(mo.data.roll[2].linkDay, "2026-12-12");
+});
+
+test("the switchover: the last minute of the Toronto day before, then the trip's first day in Japan", async () => {
+  // The trip starts Thu Dec 10 in Asia/Tokyo: 00:00 there is 15:00 on Dec 9 UTC (10:00 in Toronto, Dec 9).
+  const w = world({ now: "2026-12-09T14:59:00.000Z" });
+  await w.load(w.keys.Ajen, { ready: true });
+  assert.deepEqual(w.seen().Ajen, { o: "2026-12-09", r: 1, d: "2026-12-09" }, "09:59 in Toronto, 23:59 in Japan: still Toronto's Dec 9");
+  w.at.now = "2026-12-09T15:00:00.000Z";
+  await w.load(w.keys.Ajen, { ready: false });
+  assert.deepEqual(w.seen().Ajen, { o: "2026-12-09", r: 0, d: "2026-12-10" }, "00:00 Dec 10 in Japan: the trip's day");
+});
+
+test("readyKept: the answer says whether the phone's ready flag is stored; a busy lock says false", async () => {
+  const w = world();
+  assert.equal((await w.load(w.keys.Ajen, { ready: true })).data.readyKept, true, "written");
+  assert.equal((await w.load(w.keys.Ajen, { ready: true })).data.readyKept, true, "already there");
+  assert.equal("readyKept" in (await w.load(w.keys.Ajen, {})).data, false, "no flag sent: no key");
+  const realLock = w.fake.world.withLock_;
+  w.fake.world.withLock_ = () => ({ ok: false, error: "busy", message: "Someone else is saving right now. Try again in a moment." });
+  const busy = await w.load(w.keys.Ajen, { ready: false });
+  assert.equal(busy.ok, true);
+  assert.equal(busy.data.readyKept, false);
+  w.fake.world.withLock_ = realLock;
+  assert.equal((await w.load(w.keys.Ajen, { ready: false })).data.readyKept, true);
+  const shared = await w.fake({ key: SHARED, actor: "Mo", action: "load", args: { ready: true } });
+  assert.equal("readyKept" in shared.data, false, "nothing is kept for the shared link");
+});

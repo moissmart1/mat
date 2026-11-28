@@ -5,7 +5,7 @@
 //   readTable_, appendObj_, updateById_, updateWhere_, ensureColumns_, hasColumn_,
 //   getProp_, setProp_, delProp_, withLock_, getRate_, getRateInfo_, tripKey_, nowIso_, sheetUrl_,
 //   claudeToken_, ensureClaudeToken_, newId_, plannerId_, plannerRows_, holderOf_ (Keys.js),
-//   hasTab_, plannerTab_, plannerSetCell_, plannerAppendRow_, torontoNow_, withPlannerLock_,
+//   hasTab_, plannerTab_, plannerSetCell_, plannerAppendRow_, torontoNow_, dayIn_, withPlannerLock_,
 //   appendObjs_, columnValues_, cellsAt_, deleteRowsAt_ (ticket pictures),
 //   deskPost_, deskReady_, cacheGet_, cachePut_ (tickets from the planner's list)
 // It also uses the pure helpers from Pure.js.
@@ -488,10 +488,23 @@ function load_(holder, pre, args) {
   // (the day, once) and what their phone says about no signal. Never the
   // check key, the shared key or the connector. The trip's first person on
   // their own link is answered the roll call; nobody else has the key.
+  // Days are dated where the group is (review I1): Toronto until the trip's
+  // first day begins in the trip's zone, the trip-zone day from then on.
+  // readyKept (only when the load carried an answer): whether SEEN now holds
+  // it, so a phone whose answer was not written (a busy lock) says it again.
   if (holder && holder.kind === "person") {
     var names = data.people.map(function (p) { return p.name; });
-    var seen = noteSeen_(holder.name, props.SEEN, args && args.ready, names);
-    if (names.length && names[0] === holder.name) data.roll = rollFrom(seen, names, personKeysFrom(props.PERSON_KEYS));
+    var tz = data.trip.tz || "Asia/Tokyo";
+    var start = data.trip.start;
+    var day = seenDay(torontoNow_().slice(0, 10), dayIn_(nowIso_(), tz), start);
+    var ready = args ? args.ready : undefined;
+    var noted = noteSeen_(holder.name, day, props.SEEN, ready, names);
+    if (ready === true || ready === false) data.readyKept = noted.kept;
+    if (names.length && names[0] === holder.name) {
+      data.roll = rollFrom(noted.seen, names, personKeysFrom(props.PERSON_KEYS), function (at) {
+        return seenDay(dayIn_(at, "America/Toronto"), dayIn_(at, tz), start);
+      });
+    }
   }
   return ok_(data, rev);
 }
@@ -500,20 +513,20 @@ function load_(holder, pre, args) {
 // under the lock, laid over SEEN read again inside it (two phones loading at
 // once keep each other's entry). Never a rev bump, never a Log or History
 // row, nothing logged. A busy lock or a failed write leaves it for the next
-// load; the load answers as normal either way. -> SEEN as it now stands.
-function noteSeen_(name, raw, ready, names) {
-  var day = nowIso_().slice(0, 10);
+// load; the load answers as normal either way. day: "YYYY-MM-DD" (seenDay).
+// -> { seen: SEEN as it now stands (or would), kept: whether it is stored }
+function noteSeen_(name, day, raw, ready, names) {
   var next = seenAfter(seenFrom(raw), name, day, ready, names);
-  if (!next.changed) return next.seen;
+  if (!next.changed) return { seen: next.seen, kept: true };
   try {
     var wrote = withLock_(function () {
       var fresh = seenAfter(seenFrom(getProp_("SEEN")), name, day, ready, names);
       if (fresh.changed) setProp_("SEEN", JSON.stringify(fresh.seen));
       return { ok: true, seen: fresh.seen };
     });
-    return wrote && wrote.ok === true ? wrote.seen : next.seen;
+    return wrote && wrote.ok === true ? { seen: wrote.seen, kept: true } : { seen: next.seen, kept: false };
   } catch (e) {
-    return next.seen;
+    return { seen: next.seen, kept: false };
   }
 }
 

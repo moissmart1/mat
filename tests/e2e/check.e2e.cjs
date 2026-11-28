@@ -502,7 +502,8 @@ cases.push({
 
 // ---------- the roll call (issue 96) ----------
 
-const LINK_DAY = Date.parse("2026-11-22T10:00:00+09:00");
+// 10:00 on Sun Nov 22 in Toronto: before the trip a link is dated by the Toronto calendar (review I1).
+const LINK_DAY = Date.parse("2026-11-22T10:00:00-05:00");
 // Each row of the roll call as [name, words under the name, opened cell's label, the stamp's day, ready cell's label, ready box].
 const rollRows = (page) => page.evaluate(() => [...document.querySelectorAll("#ckRoll .ck-p")].map((r) => {
   const cells = r.querySelectorAll(".ck-st");

@@ -624,6 +624,7 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
     settled = [];
     unsureUndos = [];
     myName = null;
+    readySaidHere = null;
     for (const k of DATA_KEYS) state[k] = Array.isArray(state[k]) ? [] : null;
     Object.assign(state, {
       eves: [],
@@ -719,6 +720,10 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
   let loadsRunning = 0;
   let readyHeld = { answer: null, since: 0 };
   let readyLoad = null;
+  // What the backend last took in this visit (review M2): a phone whose storage
+  // refuses mat.readySaid still never says the same answer twice.
+  let readySaidHere = null;
+  const saidAlready = (a) => readySaidHere === a || getItem("mat.readySaid") === (a ? "1" : "0");
 
   function readyNow() {
     try {
@@ -748,7 +753,7 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
     const t = now();
     if (a !== readyHeld.answer) readyHeld = { answer: a, since: t };
     if (a === null || wiped || state.status !== "ready" || !state.personal) return null;
-    if (readyLoad || getItem("mat.readySaid") === (a ? "1" : "0")) return null;
+    if (readyLoad || saidAlready(a)) return null;
     const left = readyHeld.since + READY_HOLD_MS - t;
     if (left > 0) return left;
     if (loadsRunning > 0 || !state.online || busy() || isHidden()) return null;
@@ -794,8 +799,14 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
       loadsRunning -= 1;
     }
     if (bootAt !== boots) return false; // an earlier boot's key: its trip is not opened
-    // The backend has this phone's answer now (issue 96).
-    if (args.ready === true || args.ready === false) setItem("mat.readySaid", args.ready ? "1" : "0");
+    // The backend has this phone's answer now (issue 96), unless it says it
+    // could not keep it (readyKept false: a busy lock; review M1), and then it
+    // is said again once it has held another 30 s. An older backend says
+    // nothing either way: taken as kept, so it is never asked again and again.
+    if ((args.ready === true || args.ready === false) && !(r && r.data && r.data.readyKept === false)) {
+      readySaidHere = args.ready;
+      setItem("mat.readySaid", args.ready ? "1" : "0");
+    }
     state.linkChecking = false;
     if (reloadAfter !== null && mine > reloadAfter) reloadAfter = null;
     if (mine < appliedLoad) return true; // a newer load already landed
@@ -977,6 +988,7 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
     setItem("mat.key", candidate);
     // A new link: what the backend last took from this phone was said under the old one.
     removeItem("mat.readySaid");
+    readySaidHere = null;
     // Fix round 2: the reply it already has is the phone's trip at once, so
     // the saved trip says who this is even if the next load fails (else the
     // old shared link could replace the key again from a stale saved trip).

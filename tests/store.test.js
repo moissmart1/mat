@@ -4780,3 +4780,57 @@ test("readySaid is set only after the load answered ok; Forget and a refused key
   await r.store.boot({ candidate: fake.personKey("Mo") });
   assert.equal(r.storage.getItem("mat.readySaid"), null);
 });
+
+test("a phone whose storage refuses mat.readySaid says its answer once, not every 30 s (review M2)", async () => {
+  const fake = createFakeBackend(SEED);
+  const key = fake.personKey("Ajen");
+  const base = memStorage({ "mat.key": key });
+  const storage = { getItem: base.getItem, removeItem: base.removeItem, key: base.key, get length() { return base.length; }, setItem: (k, v) => { if (k === "mat.readySaid") throw new Error("QuotaExceededError"); base.setItem(k, v); } };
+  const said = { answer: null, t: NOW };
+  const p = phone({ fake, storage, clock: () => said.t, getReady: () => said.answer });
+  await p.store.boot();
+  const loads = () => p.net.sent.filter((b) => b.action === "load").length;
+  said.answer = true;
+  p.store.readyTick();
+  for (let i = 0; i < 6; i++) {
+    said.t += 31000;
+    p.store.readyTick();
+    await p.store.idle();
+  }
+  assert.equal(loads(), 2, "the boot load and one ready load, no more");
+  assert.equal(storage.getItem("mat.readySaid"), null);
+  assert.equal(JSON.parse(fake.props.SEEN).Ajen.r, 1);
+});
+
+test("a ready answer the backend could not keep (readyKept false) is said again after 30 s; an old backend's silence counts as kept (review M1)", async () => {
+  const fake = createFakeBackend(SEED);
+  const key = fake.personKey("Ajen");
+  const said = { answer: null, t: NOW };
+  const p = phone({ fake, storage: memStorage({ "mat.key": key }), clock: () => said.t, getReady: () => said.answer });
+  await p.store.boot();
+  const loads = () => p.net.sent.filter((b) => b.action === "load").length;
+  const realLock = fake.world.withLock_;
+  fake.world.withLock_ = () => ({ ok: false, error: "busy", message: "Someone else is saving right now. Try again in a moment." });
+  said.answer = true;
+  p.store.readyTick();
+  said.t += 30000;
+  p.store.readyTick();
+  await p.store.idle();
+  assert.equal(loads(), 2);
+  assert.equal(p.storage.getItem("mat.readySaid"), null, "not kept: not said");
+  fake.world.withLock_ = realLock;
+  said.t += 10000;
+  assert.equal(p.store.readyTick(), 20000, "tried again 30 s after the last try");
+  said.t += 20000;
+  p.store.readyTick();
+  await p.store.idle();
+  assert.equal(loads(), 3);
+  assert.equal(p.storage.getItem("mat.readySaid"), "1");
+  // An old backend (no readyKept in its answer): taken as kept.
+  const oldAnswer = (await fake({ key, action: "load", args: {} })).data;
+  assert.equal("readyKept" in oldAnswer, false);
+  const old = phone({ fake, storage: memStorage({ "mat.key": key }), clock: () => said.t, getReady: () => false });
+  old.net.override = (body) => (body.action === "load" ? { ok: true, rev: 0, data: JSON.parse(JSON.stringify(oldAnswer)) } : null);
+  await old.store.boot();
+  assert.equal(old.storage.getItem("mat.readySaid"), "0");
+});
