@@ -21,7 +21,7 @@
 //   script.googleusercontent.com), and anything else not listed here.
 // - Only OK answers are ever kept.
 
-const SW_VERSION = "42e856bdfc";
+const SW_VERSION = "703928f6a8";
 const SHELL_CACHE = "mat-shell-" + SW_VERSION;
 const FONT_CACHE = "mat-fonts";
 
@@ -36,6 +36,7 @@ const SHELL = [
   "css/before.css",
   "css/board.css",
   "css/bulk.css",
+  "css/check.css",
   "css/days.css",
   "css/history.css",
   "css/money.css",
@@ -53,6 +54,7 @@ const SHELL = [
   "js/bulk.js",
   "js/bulkbatch.js",
   "js/bulkslip.js",
+  "js/check.js",
   "js/clip.js",
   "js/clock.js",
   "js/config.js",
@@ -83,6 +85,7 @@ const SHELL = [
   "js/views/alldays.js",
   "js/views/board.js",
   "js/views/bulkadd.js",
+  "js/views/check.js",
   "js/views/days.js",
   "js/views/first.js",
   "js/views/history.js",

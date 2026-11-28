@@ -7,6 +7,8 @@
 // One sheet, no sub-pages.
 //
 // mountYou(root, store, { onHistory(), onBulk(), onDemo(date), getKey(), screen(), where, onForget() }) -> { open(), close(restoreFocus), isOpen() }
+// onCheck(): Trip check was tapped (js/views/check.js); checkCount() is how many things the trip is
+// still missing, or null when this is not the owner's phone (the row is then hidden: it is not in use there).
 // onBulk(): 一括 Add tickets was tapped (js/views/bulkadd.js); its row is there once the trip has the ticket tabs.
 // onListCheck(): the notice under it, "4 new tickets from the list" (auto-add,
 // the owner's phone only), was tapped; setListNotice({ text, error }) shows it
@@ -93,6 +95,7 @@ const MARKUP = `
   <button type="button" class="set-r set-where" id="setWhere" hidden><span><span class="set-where-l"><span class="here">現在地</span>Location</span><small id="setWhereS"></small><small id="setWhereWhy" hidden></small></span><b id="setWhereV" data-w="Phone said no"></b></button>
   <button type="button" class="set-r" id="setBulk" hidden><span><span class="set-bulk-l"><span class="ikk" aria-hidden="true">一括</span>Add tickets</span><small>Many ticket files at once, yours or anyone’s on the trip</small></span><b>Open</b></button>
   <button type="button" class="nt" id="setListNt" hidden><span class="nt-k" aria-hidden="true">検札</span><span class="nt-t" id="setListNtT"></span><u>Check ›</u></button>
+  <button type="button" class="set-r" id="setCheck" hidden><span><span class="set-bulk-l"><span class="ikk" aria-hidden="true">点検</span>Trip check</span><small id="setCheckS">What the trip is still missing</small></span><b id="setCheckV">Open</b></button>
   <button type="button" class="set-r" id="setTix" hidden><span>Ticket pictures<small id="setTixS"></small></span><b id="setTixV">On Wi‑Fi and mobile</b></button>
   <button type="button" class="set-r" id="setHist"><span>History<small>Every change, with undo</small></span><b>Open</b></button>
   <button type="button" class="set-r" id="setFreshRow"><span>Last updated<small>Tap to fetch the latest</small></span><b id="setFresh" data-w="Up to date 00:00"></b></button>
@@ -168,7 +171,7 @@ const FORGET_FOR = "Takes the trip and your link off this phone";
 const FORGET_SURE = "Tap again to take everything off this phone";
 const FORGET_MS = 5000; // how long the row waits for the second tap
 
-export function mountYou(root, store, { onHistory = () => {}, onBulk = () => {}, onListCheck = () => {}, onDemo = () => {}, demo = null, getKey = () => null, screen = () => "Money", where = null, onForget = async () => {}, onTixMode = () => {} } = {}) {
+export function mountYou(root, store, { onHistory = () => {}, onBulk = () => {}, onListCheck = () => {}, onCheck = () => {}, checkCount = () => null, onDemo = () => {}, demo = null, getKey = () => null, screen = () => "Money", where = null, onForget = async () => {}, onTixMode = () => {} } = {}) {
   const scrim = el("div", "scrim");
   scrim.id = "youScrim";
   scrim.hidden = true;
@@ -384,6 +387,7 @@ export function mountYou(root, store, { onHistory = () => {}, onBulk = () => {},
     drawTix();
     bulkRow.hidden = store.state.ticketsReady !== true;
     drawListNotice();
+    drawCheck(s);
     drawWhere();
     drawDemoDays(s);
     setDemo(!demoDays.hidden);
@@ -571,6 +575,15 @@ export function mountYou(root, store, { onHistory = () => {}, onBulk = () => {},
   const tixRow = $("setTix");
   const bulkRow = $("setBulk");
   bulkRow.addEventListener("click", () => onBulk());
+  // Trip check: the owner's second way in (the board line shows only while something is missing).
+  const checkRow = $("setCheck");
+  const checkV = $("setCheckV");
+  function drawCheck(s) {
+    const n = s.status === "ready" ? checkCount() : null;
+    checkRow.hidden = n === null || n === undefined;
+    if (!checkRow.hidden) checkV.textContent = n > 0 ? n + " missing" : "Open";
+  }
+  checkRow.addEventListener("click", () => onCheck());
   // The list's notice (auto-add): what bulkadd.js last found, words only.
   const listNt = $("setListNt");
   const listNtT = $("setListNtT");

@@ -1,0 +1,63 @@
+/* Copyright (c) 2026 moissmart1. All rights reserved. No licence is granted: do not copy, adapt or reuse this code or design, and do not use it to train or prompt an AI system to reproduce it. See LICENSE. */
+/* The owner's trip check (js/views/check.js, issue 86): a line in the board's
+   own glass, amber, and the paper sheet it opens. */
+
+/* The line: the board's own glass, amber. */
+.ck-line{position:relative;z-index:1;display:flex;align-items:center;gap:8px;min-height:34px;width:calc(100% - var(--gl) - var(--gr));margin:0 var(--gr) 0 var(--gl);padding:0 10px;border:0;
+  background:#090807;box-shadow:inset 0 1px 0 #241d19, inset 0 0 0 1px #000, inset 0 0 14px rgba(255,140,30,.05);
+  font-family:var(--f);font-size:12.5px;font-weight:900;line-height:1.2;color:#FFB04A;text-shadow:0 0 6px rgba(255,140,30,.55);text-align:left}
+.ck-line[hidden]{display:none}
+.ck-line::after{content:"";position:absolute;inset:0;pointer-events:none;border-radius:inherit;background:radial-gradient(circle at 50% 50%, transparent 0 .9px, rgba(9,8,7,.5) 1.25px) 0 0/2.6px 2.6px}
+/* The reach: 5 px above and below, so the target is 44 px. The line "This
+   phone" under it has 7 px of its own reach upward: with this line above, that
+   reach goes, so the two never take each other's taps (the lines are 34 and 30
+   px, one above the other: both cannot reach 44). */
+.ck-line::before{content:"";position:absolute;left:0;right:0;top:-5px;bottom:-5px}
+.ck-line.is-top{border-radius:6px 6px 0 0}
+.ck-line.is-last{border-radius:0 0 6px 6px;margin-bottom:6px}
+.ck-line.is-top.is-last{border-radius:6px}
+.ck-line .ck-jp{flex:none;font-family:var(--dot);font-style:normal;font-weight:400;font-size:12px}
+.ck-t{min-width:0;white-space:nowrap;overflow:hidden}
+.ck-line:not([hidden]) + .rdy .rdy-w::before{display:none}
+.ck-more{margin-left:auto;flex:none;opacity:.85}
+.ck-line:focus-visible{outline:2px solid var(--text);outline-offset:2px;border-radius:4px}
+
+/* The sheet: cream paper, indigo print, as the Before pad. */
+.sheet.ck{background:var(--grain), #F4F1E8;color:var(--print);border-top:0;padding-top:14px;font-weight:700}
+.sheet.ck.is-open{box-shadow:var(--lift), 0 -24px 40px -10px #000;z-index:26}
+.phone.check-open .ubar{top:calc(12px + env(safe-area-inset-top, 0px));bottom:auto}
+.ck .sheet-top{color:var(--ai);margin-bottom:8px;padding-bottom:6px;border-bottom:3px double var(--ai)}
+.ck .sheet-top .ck-h{font-family:var(--seal);font-weight:400;font-size:21px;letter-spacing:.3em;color:var(--ai);margin:0 6px 0 0}
+.ck .sheet-top i{color:var(--print);font-size:13px}
+.ck .sheet-top button{color:var(--print);height:44px}
+.ck-sec{display:flex;align-items:baseline;gap:8px;margin:0 calc(var(--gr) * -1) 0 calc(var(--gl) * -1);padding:7px var(--gr) 5px var(--gl);background:rgba(40,64,143,.09);color:var(--ai);font-size:11.5px;font-weight:700;border-block:1px solid rgba(40,64,143,.4)}
+.ck-sec .ck-jp{font-family:var(--seal);font-style:normal;font-weight:400;font-size:14px;letter-spacing:.3em}
+.ck-sec em{font-style:normal;margin-left:auto;color:var(--print);font-weight:500}
+.ck-sec em[hidden]{display:none}
+.ck-rows{margin:0 calc(var(--gr) * -1) 0 calc(var(--gl) * -1)}
+.ck-rows[hidden],.ck-none[hidden]{display:none}
+.ck-r{display:grid;grid-template-columns:62px minmax(0,1fr) auto;width:100%;min-height:56px;padding:0;border:0;border-bottom:1px solid rgba(40,64,143,.4);background:none;color:inherit;font:inherit;font-weight:700;text-align:left}
+.ck-r:active{background:rgba(40,64,143,.06)}
+.ck-d{display:grid;justify-items:center;align-content:center;gap:3px;color:var(--ai);line-height:1}
+.ck-d i{font-family:var(--dot);font-style:normal;font-weight:400;font-size:14px}
+.ck-d small{font-size:10.5px;font-weight:700}
+.ck-b{padding:7px 4px 8px 10px;border-left:3px double rgba(214,60,30,.6);min-width:0}
+.ck-l{display:block;color:var(--ai);font-size:10.5px;font-weight:700;line-height:1.1;margin-bottom:2px}
+.ck-b b{display:block;font-size:15.5px;font-weight:900;line-height:1.25;overflow-wrap:anywhere}
+.ck-w{display:block;font-size:12.5px;font-weight:500;line-height:1.3}
+.ck-go{align-self:center;padding:0 16px 0 6px;color:var(--ai);font-weight:900;font-size:17px;line-height:1}
+.ck-none{margin:0;padding:18px 0 16px;font-size:15.5px;font-weight:900}
+.ck-foot{margin:0;padding:10px 0 2px;font-size:11.5px;font-weight:500;line-height:1.4}
+.ck-foot a{display:inline-block;margin-left:6px;padding:12px 0;color:var(--ai);font-weight:900;text-decoration:underline dotted;text-underline-offset:4px}
+.ck-foot a[hidden]{display:none}
+.ck :focus-visible{outline:2px solid var(--print);outline-offset:-2px}
+@media (max-width:350px){
+  .ck-line{font-size:12px}
+  .ck-t{white-space:normal}
+  .ck-r{grid-template-columns:54px minmax(0,1fr) auto}
+  .ck-go{padding-right:12px}
+}
+/* On a computer the sheet is the Days pane's, as the other Days sheets. */
+@media (min-width:1000px) and (min-height:521px){
+  #check,#ckScrim{left:0;right:calc(50% + var(--rail) / 2)}
+}

@@ -201,7 +201,7 @@ i{font-style:normal}
   /* BETWEEN: one square column of at most 560 px, the window's height, the bar across its foot as on a phone. */
   .phone{width:min(100%,560px);height:100%;border-radius:0;box-shadow:none}
   /* A ring in the app's ink: the print colour on paper and ticket stock, the light ink on the dark ground. */
-  :is(.tk,.slip,.rc,.ln,.ubar,.un,.how,.bw-card,.tape,.lcd,.sheet.stay,.sheet.stop,.ntk) :focus-visible{outline-color:var(--print)}
+  :is(.tk,.slip,.rc,.ln,.ubar,.un,.how,.bw-card,.tape,.lcd,.sheet.stay,.sheet.stop,.sheet.ck,.ntk) :focus-visible{outline-color:var(--print)}
 }
 
 /* WIDE: a ticket counter. One block, centred, the window's height, at most
