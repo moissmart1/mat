@@ -75,3 +75,16 @@ test("the worker never touches the trip backend", () => {
   assert.ok(SRC.includes('"script.google.com"') && SRC.includes('"script.googleusercontent.com"'));
   assert.match(SRC, /if \(BACKEND_HOSTS\.includes\(url\.hostname\)\) return;/);
 });
+
+// caches.open makes a cache when it is not there. Only the worker's own fills (install, and the
+// page's "mat-keep-shell" ask, which deletes what it could not fill) may make a mat-shell- cache;
+// a fetch or the page's look at the copy that opened it just after a refill failed left an empty
+// one behind (phoneready flake, CI run 46096048563). Lookups use caches.match with cacheName.
+const code = (src) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'])\/\/.*$/gm, "$1");
+test("only the worker's fills open the shell cache; the page never opens a cache", () => {
+  const opens = code(SRC).match(/caches\s*\.open\(\s*SHELL_CACHE\s*\)/g) || [];
+  assert.equal(opens.length, 2, "caches.open(SHELL_CACHE) only in install and the mat-keep-shell fill");
+  const pageFiles = filesUnder("js").filter((f) => f.endsWith(".js"));
+  const opening = pageFiles.filter((f) => /caches\s*\.open\(/.test(code(fs.readFileSync(path.join(ROOT, f), "utf8"))));
+  assert.deepEqual(opening, [], "the page looks with caches.match({ cacheName }), never caches.open");
+});
