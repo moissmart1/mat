@@ -2252,7 +2252,7 @@ function factsNeedMigrate_(stop) {
 
 // A stop with its Japanese for a taxi driver (#95) on a Sheet whose Stops tab lacks the columns: refused rather than dropped.
 function driverNeedsMigrate_(stop) {
-  return (stop.nameJp !== "" || stop.addressJp !== "") && !hasColumn_("Stops", "address_jp");
+  return (stop.nameJp !== "" || stop.addressJp !== "") && (!hasColumn_("Stops", "name_jp") || !hasColumn_("Stops", "address_jp"));
 }
 
 // A stay with any booking fact filled on a Sheet whose Stays tab lacks the columns: refused rather than dropped.

@@ -24,6 +24,12 @@ test("noBreakRuns: full-width digits and the other dashes a phone types", () => 
   assert.deepEqual(noBreakRuns("1-2 3階 4-5-6").filter((r) => r.nb).map((r) => r.text), ["1-2", "4-5-6"]);
 });
 
+test("noBreakRuns: a run too long to be a house number stays breakable (review M3)", () => {
+  assert.deepEqual(noBreakRuns("1234-5678-9012-3"), [{ text: "1234-5678-9012-3", nb: true }], "16 letters: still one word");
+  const long = "1234-5678-9012-3456-7890";
+  assert.deepEqual(noBreakRuns("湖畔" + long), [{ text: "湖畔", nb: false }, { text: long, nb: false }]);
+});
+
 test("noBreakRuns: a text with no numbers is one run; empty and not-text give none", () => {
   assert.deepEqual(noBreakRuns("炭火焼鳥 鳥花 湖畔店"), [{ text: "炭火焼鳥 鳥花 湖畔店", nb: false }]);
   assert.deepEqual(noBreakRuns(""), []);

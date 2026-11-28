@@ -830,6 +830,14 @@ test("an older Sheet with no Stops.name_jp or address_jp: stops load with both e
   assert.equal(after.data.stop.addressJp, "架空県湖畔市1-2-3");
 });
 
+test("review M1 (#95): a Sheet with address_jp but no name_jp (a header added by hand) still says migrate, so a name is never dropped", async () => {
+  const call = client({ stops: [{ id: "stopAAAA0001", date: "2026-12-12", title: "Shibuya Sky" }], missingColumns: ["Stops.name_jp"] });
+  for (const patch of [{ nameJp: "鳥花" }, { addressJp: "架空県湖畔市1-2-3" }]) {
+    assert.equal((await call("updateStop", { id: "stopAAAA0001", patch })).error, "needs_migrate", JSON.stringify(patch));
+  }
+  assert.equal((await call("updateStop", { id: "stopAAAA0001", patch: { note: "x" } })).ok, true);
+});
+
 test("undo puts a stop back, and refuses once it changed again", async () => {
   const call = client({ stops: [{ id: "stopAAAA0001", date: "2026-12-12", title: "Shibuya Sky", time: "14:00" }] });
   const e1 = await call("updateStop", { id: "stopAAAA0001", patch: { time: "15:30" } });

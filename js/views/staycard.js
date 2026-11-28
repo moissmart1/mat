@@ -212,8 +212,9 @@ export function mountStayCard(root, store, { driver = null, where = null, keep =
   // the app). mine: it is up for this card, which stays inert under it.
   let mine = false;
   if (driver) driver.onChange((on) => {
+    if (!mine) return; // a stop's screen: not this card's business
     if (!on) mine = false;
-    sheet.inert = !isOpen() || (mine && on);
+    sheet.inert = !isOpen() || on;
   });
   const driverOpen = () => mine && !!driver && driver.isOpen();
   function openDriver() {

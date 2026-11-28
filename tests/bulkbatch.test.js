@@ -336,3 +336,33 @@ test("S2: a new stop left on because its own picture couldn't be taken off says 
   assert.equal(store.calls.some((c) => c.startsWith("deleteStop")), false);
   assert.notEqual(tb.list()[0].back, "");
 });
+
+test("review I1 (#95): a stop's Japanese counts in its print only when filled, so every print a phone kept still matches", () => {
+  // The print this stop had before the Japanese fields existed (computed with the old printOf).
+  const OLD_PRINT = "5251848e";
+  assert.equal(printOf(STOP), OLD_PRINT, "no Japanese: as it always printed");
+  assert.equal(printOf({ ...STOP, nameJp: "", addressJp: "" }), OLD_PRINT, "empty Japanese: the same");
+  assert.equal(printOf({ ...STOP, nameJp: "  ", addressJp: null }), OLD_PRINT, "blank is empty");
+  assert.notEqual(printOf({ ...STOP, nameJp: "灯籠舟" }), OLD_PRINT);
+  assert.notEqual(printOf({ ...STOP, addressJp: "架空県湖畔郡湖畔町1-2-3" }), OLD_PRINT);
+  assert.notEqual(printOf({ ...STOP, nameJp: "灯籠舟" }), printOf({ ...STOP, addressJp: "灯籠舟" }), "which field it is in counts");
+  // A batch saved before this release (its print without the fields) still frees its untouched stop...
+  const old = batchOf(fields({ prints: { [STOP.id]: OLD_PRINT } }));
+  assert.equal(stopFree(STOP.id, old, { stops: [{ ...STOP, nameJp: "", addressJp: "" }], tickets: [] }), true);
+  // ...and not one given its Japanese since.
+  assert.equal(stopFree(STOP.id, old, { stops: [{ ...STOP, addressJp: "架空県湖畔郡湖畔町1-2-3" }], tickets: [] }), false);
+});
+
+test("review I1 (#95): Take all back leaves on a bulk-added stop given its Japanese since, and still takes back an untouched one", async () => {
+  const kept = fakeStore({ tickets: [], stops: [{ ...STOP, nameJp: "灯籠舟", addressJp: "架空県湖畔郡湖畔町1-2-3", lat: "", lng: "" }] });
+  const tb = createTakeBack(kept, { storage: memory(), wait: noWait });
+  tb.record({ at: AT, n: 0, off: 0, items: [], stops: [STOP.id], prints: { [STOP.id]: printOf(STOP) } });
+  assert.equal(await tb.run(AT), "Taken back. The stop it added is left on: it changed since.");
+  assert.equal(kept.calls.some((c) => c.startsWith("deleteStop")), false);
+  // Untouched (the load gives both fields as ""): taken back, as before.
+  const gone = fakeStore({ tickets: [], stops: [{ ...STOP, nameJp: "", addressJp: "" }] });
+  const tb2 = createTakeBack(gone, { storage: memory(), wait: noWait });
+  tb2.record({ at: AT, n: 0, off: 0, items: [], stops: [STOP.id], prints: { [STOP.id]: printOf(STOP) } });
+  assert.equal(await tb2.run(AT), "Taken back.");
+  assert.deepEqual(gone.calls.filter((c) => c.startsWith("deleteStop")), ["deleteStop:" + STOP.id]);
+});

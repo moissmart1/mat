@@ -90,11 +90,17 @@ export function saveBatches(storage, list) {
 
 // The fields a person (or the list's facts) can change on a stop, as one short print.
 const PRINTED = ["date", "time", "title", "detail", "gettingThere", "note", "link", "photo", "place", "signJp", "booked", "fixed", "tkRef", "tkName", "tkSeat"];
+// Fields added since prints were first kept (#95: the Japanese for a taxi
+// driver): in the print only when filled, so a stop without them prints as
+// it always did (every print a phone kept still matches), and a stop given
+// them since the Add is changed, so Take all back leaves it on.
+const PRINTED_IF_SET = ["nameJp", "addressJp"];
 export function printOf(stop) {
-  const s = PRINTED.map((k) => {
+  const cell = (k) => {
     const v = stop ? stop[k] : "";
     return v === true ? "1" : v === false || v === undefined || v === null ? "" : String(v).trim();
-  }).join("\u0001");
+  };
+  const s = PRINTED.map(cell).join("\u0001") + PRINTED_IF_SET.filter((k) => cell(k) !== "").map((k) => "\u0001" + k + "=" + cell(k)).join("");
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) {
     h ^= s.charCodeAt(i);

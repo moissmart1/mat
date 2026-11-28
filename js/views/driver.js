@@ -37,15 +37,18 @@ function el(tag, cls, text) {
 const str = (v) => (typeof v === "string" ? v.trim() : "");
 
 // A house number is one word: 9-9-9 (or ９−９−９, or 1ー2) never breaks at its
-// hyphens. Splits text into runs; each such number is nb: true.
+// hyphens. Splits text into runs; each such number is nb: true. A run longer
+// than NB_MAX letters is no house number and stays breakable, so it can never
+// run past the ticket (where the type is not fitted).
 const NUMBER_RUN = /[0-9０-９]+(?:[-‐−–ー－][0-9０-９]+)+/g;
+const NB_MAX = 16;
 export function noBreakRuns(text) {
   const s = typeof text === "string" ? text : "";
   const out = [];
   let at = 0;
   for (const m of s.matchAll(NUMBER_RUN)) {
     if (m.index > at) out.push({ text: s.slice(at, m.index), nb: false });
-    out.push({ text: m[0], nb: true });
+    out.push({ text: m[0], nb: m[0].length <= NB_MAX });
     at = m.index + m[0].length;
   }
   if (at < s.length) out.push({ text: s.slice(at), nb: false });
