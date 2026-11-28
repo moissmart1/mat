@@ -17,6 +17,8 @@
 // - tickets: { mark(stop, state), stayMark(stay, state), subscribe(fn) } (the
 //   券 box and Show ticket, and a stay's booking on its 宿泊 line,
 //   js/tickets.js), or null; onTicket(stopId, button): Show ticket was tapped.
+//   onDriver(stopId, button): an open stop's 行先 block (its Japanese for a
+//   taxi driver) was tapped.
 // - held(): true while a sheet over Days is in use (the stop sheet): coming
 //   back to the screen then does not move the rail (R32).
 // - goDay(index, smooth): bring that day's ticket into view. day(): the date
@@ -186,7 +188,7 @@ function patchTicket(old, fresh) {
   return old;
 }
 
-export function mountDays(root, store, { clock, where = null, storage = null, ready = null, check = null, onAllDays = () => {}, onStay = () => {}, onStop = () => {}, onAddStop = () => {}, onStampBook = () => {}, held = () => false, tickets = null, onTicket = () => {} } = {}) {
+export function mountDays(root, store, { clock, where = null, storage = null, ready = null, check = null, onAllDays = () => {}, onStay = () => {}, onStop = () => {}, onAddStop = () => {}, onStampBook = () => {}, held = () => false, tickets = null, onTicket = () => {}, onDriver = () => {} } = {}) {
   const count = el("button", "bar-t");
   count.type = "button";
   count.id = "dayCount";
@@ -514,6 +516,13 @@ export function mountDays(root, store, { clock, where = null, storage = null, re
     const add = ev.target.closest(".tk-add");
     if (add) {
       onAddStop(add.dataset.date);
+      return;
+    }
+    // 行先 on an open stop: its driver's screen (the row stays open).
+    const dst = ev.target.closest(".dst");
+    if (dst) {
+      const r = dst.closest(".r[data-id]");
+      if (r) onDriver(r.dataset.id, dst);
       return;
     }
     const show = ev.target.closest(".r-tk");

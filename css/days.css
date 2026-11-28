@@ -317,12 +317,29 @@ button.bw-b:active{background:rgba(21,18,15,.06)}
 .drv span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media (max-width:350px){ .drv{padding:0 14px;gap:6px} .drv span{font-size:15px} .drv span b{font-size:15.5px;margin-right:6px} }
 .stay .drv:focus-visible{outline-color:var(--print)}
+/* 行先, the destination printed on the ticket in Japanese; the whole block is the key. */
+.dst{display:block;width:100%;margin:10px 0 4px;padding:0;border:0;background:none;color:var(--print);text-align:left;font-family:var(--f)}
+.dst-h{display:flex;align-items:baseline;gap:7px;padding:6px 0 0;border-top:2px solid var(--print);font-size:12.5px;font-weight:700}
+.dst-h b{font-weight:900}
+.dst-n{display:block;margin-top:3px;font-family:var(--seal);font-weight:400;font-size:23px;line-height:1.2;letter-spacing:.03em;word-break:keep-all;overflow-wrap:anywhere}
+.dst-a{display:block;margin-top:5px;padding-top:5px;border-top:1px solid rgba(21,18,15,.45);font-size:14.5px;font-weight:900;line-height:1.4;word-break:keep-all;overflow-wrap:anywhere}
+.dst-k{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:44px;margin-top:8px;padding:0 14px;border-radius:3px;background:var(--print);color:var(--stock);font-size:14.5px;font-weight:900;
+  -webkit-mask:radial-gradient(circle at 0 50%,transparent 6px,#000 6.5px) left/51% 100% no-repeat,radial-gradient(circle at 100% 50%,transparent 6px,#000 6.5px) right/51% 100% no-repeat;
+          mask:radial-gradient(circle at 0 50%,transparent 6px,#000 6.5px) left/51% 100% no-repeat,radial-gradient(circle at 100% 50%,transparent 6px,#000 6.5px) right/51% 100% no-repeat}
+.dst-k b{font-family:var(--seal);font-weight:400;font-size:15.5px;margin-right:7px}
+.dst-k i{opacity:.7;font-size:17px}
+@media (max-width:350px){ .dst-n{font-size:20px} .dst-a{font-size:13.5px} .dst-k{font-size:14px;padding:6px 14px 7px;line-height:1.25} .dst-k b{display:block;font-size:14.5px;margin:0} }
+.dst-h + .dst-a{border-top:0;padding-top:0;margin-top:3px}
+.dst:active .dst-k{transform:scale(.99)}
+.tk .dst:focus-visible{outline-color:var(--print)}
+/* A house number is one word: 9-9-9 never breaks at its hyphens (the driver's screen and the block). */
+.nb{white-space:nowrap}
 /* With a position: how far the stay is, under the key. */
 .sy-dist{display:flex;align-items:center;gap:8px;margin:12px 0 2px;font-size:12.5px;font-weight:700}
 
 /* The driver's screen (#driver): the little card a ryokan gives you for
    taxis, full screen. Paper-white, Japanese only, as large as fits (the
-   sizes here are the largest; js/views/staycard.js fits them to the width). */
+   sizes here are the largest; js/views/driver.js fits them to the width). */
 .drvcard{position:absolute;inset:0;z-index:28;display:flex;flex-direction:column;overflow-y:auto;overscroll-behavior:contain;
   background:var(--grain), var(--paper);color:var(--print);scrollbar-width:none}
 .drvcard::-webkit-scrollbar{display:none}

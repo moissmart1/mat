@@ -2,7 +2,7 @@
 // The hotel card: where you sleep, to hold up to a taxi driver. A sheet on
 // the ticket's own stock, opened from a ticket's stay row.
 //
-// mountStayCard(root, store, { where }) -> { open(stayId), close(restoreFocus), isOpen() }
+// mountStayCard(root, store, { driver, where }) -> { open(stayId), close(restoreFocus), isOpen() }
 // root is the phone. The card draws from store.state.stays only, so it opens
 // with no signal; nothing is fetched. It redraws on every store change while
 // open, and closes itself when its stay is gone. The name and the address are
@@ -12,15 +12,11 @@
 // the Sheet goes in with textContent; a link only through safeHref.
 //
 // 運転手さんへ Show to driver: when the stay has a Japanese name or address,
-// the card's one bold key opens the driver's screen (#driver), the little
-// card a ryokan gives you for taxis: paper-white, Japanese only, the name and
-// the address as large as fits the width (fitted, never cut; a long address
-// wraps between words) and ここまでお願いします。. No telephone: the Sheet has
-// none. Done, Escape and the scrim close it, back to the card; driver-open
-// is on the phone while it is up, so the self-updater waits. The screen is
-// kept awake while it is up where the phone allows (Wake Lock); a refusal is
-// silent, and only a screen really kept awake says so. On a computer it
-// opens in the Days pane. Closing the card closes it too.
+// the card's one bold key opens the driver's screen (js/views/driver.js,
+// mounted once by the app and handed in as `driver`) with 宿泊 and the stay's
+// name in its dark bar. Done, Escape and the scrim close it, back to the card
+// (inert while the screen is up). Closing the card closes it too; a stay that
+// loses its Japanese closes it.
 //
 // With a usable position (js/where.js) and the stay's coordinates, the card
 // also says how far (up to 50 km): 現在地 2.4 km from here. Otherwise nothing
@@ -190,53 +186,10 @@ function card(stay, far = "", tag = null) {
   return nodes;
 }
 
-// The driver's screen for one stay: the top bar (for the person holding the
-// phone), then the Japanese for the driver.
-function driverCard(stay) {
-  const top = el("div", "dc-top");
-  const label = el("div");
-  label.append(el("i", "", "宿泊"), el("span", "", str(stay.name) || str(stay.nameJp)));
-  const done = el("button", "", "Done");
-  done.type = "button";
-  done.id = "driverDone";
-  top.append(label, done);
-  const mid = el("div", "dc-mid");
-  mid.append(el("div", "dc-to", "運転手さんへ"));
-  const jp = str(stay.nameJp);
-  if (jp) mid.append(el("div", "dc-name", jp));
-  const address = str(stay.addressJp);
-  if (address) mid.append(el("div", "dc-ad", address));
-  const ask = el("div", "dc-ask");
-  ask.append("ここまで", el("br"), "お願いします。");
-  mid.append(ask);
-  const bot = el("div", "dc-bot", "Hold the phone up to the driver.");
-  return { nodes: [top, mid, bot], done, bot };
-}
+// What the driver's screen (js/views/driver.js) shows for one stay.
+const driverWhat = (stay) => ({ mark: "宿泊", title: str(stay.name) || str(stay.nameJp), nameJp: stay.nameJp, addressJp: stay.addressJp });
 
-// The big lines as large as fits: from the drawn size down, one pixel at a
-// time, until no word runs past the line (they wrap only between words). A
-// word too long even at the smallest size may then break anywhere.
-const FIT = [
-  [".dc-name", 46, 18],
-  [".dc-ad", 30, 16],
-  [".dc-ask", 30, 18],
-];
-function fitType(box) {
-  for (const [sel, max, min] of FIT) {
-    const n = box.querySelector(sel);
-    if (!n) continue;
-    n.style.overflowWrap = "";
-    let size = max;
-    n.style.fontSize = size + "px";
-    while (size > min && n.scrollWidth > n.clientWidth + 0.5) {
-      size -= 1;
-      n.style.fontSize = size + "px";
-    }
-    if (n.scrollWidth > n.clientWidth + 0.5) n.style.overflowWrap = "anywhere";
-  }
-}
-
-export function mountStayCard(root, store, { where = null, keep = null, clock = null, onEdit = () => {}, onBooking = () => {} } = {}) {
+export function mountStayCard(root, store, { driver = null, where = null, keep = null, clock = null, onEdit = () => {}, onBooking = () => {} } = {}) {
   const scrim = el("div", "scrim");
   scrim.id = "stayScrim";
   scrim.hidden = true;
@@ -255,141 +208,29 @@ export function mountStayCard(root, store, { where = null, keep = null, clock = 
   let shown = ""; // what the card was last drawn from
   let recheck = null; // while open: is the distance still from a usable position?
 
-  // The driver's screen, over the card.
-  const dScrim = el("div", "scrim");
-  dScrim.id = "driverScrim";
-  dScrim.hidden = true;
-  const driver = el("div", "drvcard");
-  driver.id = "driver";
-  driver.setAttribute("role", "dialog");
-  driver.setAttribute("aria-modal", "true");
-  driver.setAttribute("aria-label", "Show to driver");
-  driver.lang = "ja";
-  driver.hidden = true;
-  driver.inert = true;
-  root.append(dScrim, driver);
-  let driverSig = "";
-  let lock = null; // the wake lock while one is held
-  let wantLock = false;
-  const driverOpen = () => driver.classList.contains("is-open");
-
-  function holdAwake() {
-    if (!wantLock || lock || document.visibilityState === "hidden") return;
-    let req;
-    try {
-      req = navigator.wakeLock && typeof navigator.wakeLock.request === "function" ? navigator.wakeLock.request("screen") : null;
-    } catch {
-      req = null;
-    }
-    if (!req) return;
-    Promise.resolve(req).then((l) => {
-      if (!l) return;
-      if (!wantLock) {
-        Promise.resolve(l.release()).catch(() => {});
-        return;
-      }
-      lock = l;
-      if (typeof l.addEventListener === "function") l.addEventListener("release", () => {
-        if (lock === l) lock = null;
-        sayAwake();
-      });
-      sayAwake();
-    }, () => {});
-  }
-  function letGo() {
-    wantLock = false;
-    const l = lock;
-    lock = null;
-    if (l) {
-      try {
-        Promise.resolve(l.release()).catch(() => {});
-      } catch {
-        // already gone
-      }
-    }
-  }
-  // The foot says the screen stays on only while it really does.
-  let foot = null;
-  function sayAwake() {
-    if (!foot) return;
-    const words = "Hold the phone up to the driver." + (lock && driverOpen() ? " It stays on while this is open." : "");
-    if (foot.textContent !== words) foot.textContent = words;
-  }
-  // Coming back on screen: the phone let go of the lock while hidden.
-  document.addEventListener("visibilitychange", holdAwake);
-
-  function drawDriver(stay) {
-    const sig = JSON.stringify([stay.name, stay.nameJp, stay.addressJp]);
-    if (sig === driverSig) return;
-    driverSig = sig;
-    const d = driverCard(stay);
-    foot = d.bot;
-    driver.replaceChildren(...d.nodes);
-    d.done.addEventListener("click", () => closeDriver());
-    sayAwake();
-    fit();
-  }
-  function fit() {
-    if (!driverOpen()) return;
-    fitType(driver);
-    driver.dataset.fit = "1";
-  }
-  if (typeof ResizeObserver === "function") {
-    let w = 0;
-    new ResizeObserver(() => {
-      if (driver.clientWidth === w) return;
-      w = driver.clientWidth;
-      fit();
-    }).observe(driver);
-  }
-  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fit, () => {});
-
+  // The driver's screen, over the card (js/views/driver.js, mounted once by
+  // the app). mine: it is up for this card, which stays inert under it.
+  let mine = false;
+  if (driver) driver.onChange((on) => {
+    if (!on) mine = false;
+    sheet.inert = !isOpen() || (mine && on);
+  });
+  const driverOpen = () => mine && !!driver && driver.isOpen();
   function openDriver() {
     const stay = current();
-    if (!stay || driverOpen()) return;
-    driverSig = "";
-    driver.hidden = false;
-    driver.inert = false;
-    dScrim.hidden = false;
-    driver.classList.add("is-open");
-    root.classList.add("driver-open");
-    sheet.inert = true;
-    drawDriver(stay);
-    driver.scrollTop = 0;
-    wantLock = true;
-    holdAwake();
-    const d = driver.querySelector("#driverDone");
-    if (d) d.focus({ preventScroll: true });
+    if (!stay || !driver || driver.isOpen()) return;
+    mine = true;
+    // Done, Escape or the scrim: back to the card's key (as it is drawn then).
+    if (!driver.open(driverWhat(stay), () => (isOpen() ? sheet.querySelector(".drv") : null))) mine = false;
   }
-  // restoreFocus: back to the card's key.
-  function closeDriver(restoreFocus = true) {
-    if (!driverOpen()) return;
-    letGo();
-    driver.classList.remove("is-open");
-    driver.hidden = true;
-    driver.inert = true;
-    dScrim.hidden = true;
-    delete driver.dataset.fit;
-    root.classList.remove("driver-open");
-    if (driver.contains(document.activeElement)) document.activeElement.blur();
-    sheet.inert = !isOpen();
-    if (restoreFocus && isOpen()) {
-      const key = sheet.querySelector(".drv");
-      if (key) key.focus({ preventScroll: true });
-    }
-  }
-  dScrim.addEventListener("click", () => closeDriver());
+  const closeDriver = () => {
+    if (driverOpen()) driver.close(false);
+  };
   body.addEventListener("click", (ev) => {
     if (ev.target.closest(".drv")) openDriver();
     else if (ev.target.closest(".r-edit") && stayId) onEdit(stayId);
     else if (ev.target.closest(".bk-key") && stayId) onBooking(stayId, ev.target.closest(".bk-key"));
   });
-  // Escape closes the driver's screen first (the card stays).
-  document.addEventListener("keydown", (ev) => {
-    if (ev.key !== "Escape" || !driverOpen()) return;
-    ev.stopPropagation();
-    closeDriver();
-  }, true);
 
   const current = () => (store.state.stays || []).find((s) => s && s.id === stayId && !s.deleted) || null;
   const isOpen = () => sheet.classList.contains("is-open");
@@ -409,10 +250,7 @@ export function mountStayCard(root, store, { where = null, keep = null, clock = 
     if (store.state.status === "nokey") {
       close(false);
       body.replaceChildren();
-      driver.replaceChildren();
       shown = "";
-      driverSig = "";
-      foot = null;
       return;
     }
     if (!isOpen()) return;
@@ -421,10 +259,8 @@ export function mountStayCard(root, store, { where = null, keep = null, clock = 
       close(false);
       return;
     }
-    if (driverOpen()) {
-      if (str(stay.nameJp) || str(stay.addressJp)) drawDriver(stay);
-      else closeDriver(false);
-    }
+    // Redrawn with the stay's words; closed when it lost its Japanese.
+    if (driverOpen()) driver.update(driverWhat(stay));
     const far = where ? stayDistance(stay, where.current()) : "";
     const tag = tagOf(stay);
     // The pictures, whether each is on this phone, and the night redraw it too.
@@ -463,7 +299,7 @@ export function mountStayCard(root, store, { where = null, keep = null, clock = 
   // restoreFocus: give focus back to the stay row on the ticket in view.
   function close(restoreFocus = true) {
     if (!isOpen()) return;
-    closeDriver(false);
+    closeDriver();
     clearInterval(recheck);
     recheck = null;
     const id = stayId;

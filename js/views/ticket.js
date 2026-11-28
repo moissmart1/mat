@@ -64,12 +64,18 @@
 //   whoseOf) the 券 line says whose it is (a seal and words: Yours, all of
 //   us, none for you yet) and so does Show ticket's right side; seal
 //   ({ name, url }) is your picture for your own code (url a blob: address).
+// A stop with its Japanese name or address (nameJp, addressJp; #95) prints
+// it when open, under 行先 For a taxi driver, before the links: one button,
+// .dst, that opens the driver's screen (the Days view sees to the tap). A
+// house number in the address never breaks at its hyphens (js/views/driver.js
+// putNoBreaks). Without them the open stop reads exactly as it did.
 
 import { minutesOf, issueLine, isPast, nextLine, mapsUrl, safeHref, gateDate } from "../plan.js";
 import { dayHead, yen, weekdayOf } from "../format.js";
 import { rng, gateStampSVG } from "../stamp.js";
 import { nightsShort, nightsLong } from "../staywords.js";
 import { sealFor } from "./nextticket.js";
+import { putNoBreaks } from "./driver.js";
 
 const SVG = "http://www.w3.org/2000/svg";
 
@@ -182,6 +188,10 @@ function more(stop, tix) {
     show.append(w, el("i", "", showWords(tix)));
     inner.append(show);
   }
+  // 行先 (#95): the stop's Japanese, printed for a taxi driver; the whole
+  // block is the key to the driver's screen (the Days view sees to the tap).
+  const dest = destination(stop);
+  if (dest) inner.append(dest);
   const btns = el("div", "r-btns");
   const link = (cls, text, href) => {
     const a = el("a", cls, text);
@@ -206,6 +216,38 @@ function more(stop, tix) {
   }
   wrap.append(inner);
   return wrap;
+}
+
+// 行先, For a taxi driver: the Japanese name (large) and the address, then
+// 運転手さんへ Show it large. null when the stop has neither.
+function destination(stop) {
+  const name = str(stop.nameJp);
+  const address = str(stop.addressJp);
+  if (!name && !address) return null;
+  const b = el("button", "dst");
+  b.type = "button";
+  b.setAttribute("aria-label", "運転手さんへ Show to driver");
+  const h = el("span", "dst-h");
+  h.append(el("b", "", "行先"), "For a taxi driver");
+  b.append(h);
+  if (name) {
+    const n = el("span", "dst-n", name);
+    n.lang = "ja";
+    b.append(n);
+  }
+  if (address) {
+    const a = putNoBreaks(el("span", "dst-a"), address);
+    a.lang = "ja";
+    b.append(a);
+  }
+  const k = el("span", "dst-k");
+  const w = el("span");
+  w.append(el("b", "", "運転手さんへ"), "Show it large");
+  const go = el("i", "", "›");
+  go.setAttribute("aria-hidden", "true");
+  k.append(w, go);
+  b.append(k);
+  return b;
 }
 
 // The 券 line under a stop's name: the box (dashed when a picture still

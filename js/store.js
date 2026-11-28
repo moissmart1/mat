@@ -89,7 +89,7 @@ const STAMP_DROP_MS = 48 * 3600000;
 const STAMP_DROPPED = "That stamp’s day has closed.";
 
 // A stop as the backend gives it back, before the fields are filled in.
-const STOP_BLANK = { date: "", time: "", title: "", detail: "", gettingThere: "", travelMin: 0, fixed: false, place: "", signJp: "", booked: false, link: "", photo: "", note: "", lat: "", lng: "" };
+const STOP_BLANK = { date: "", time: "", title: "", detail: "", gettingThere: "", travelMin: 0, fixed: false, place: "", signJp: "", booked: false, link: "", photo: "", note: "", lat: "", lng: "", nameJp: "", addressJp: "" };
 // The same for a stay (bulk add's "Add the stay").
 const STAY_BLANK = { name: "", nameJp: "", addressJp: "", firstNight: "", lastNight: "", note: "", place: "", link: "", photo: "", lat: "", lng: "", tkRef: "", tkName: "", tkPeople: "", tkRoom: "" };
 
