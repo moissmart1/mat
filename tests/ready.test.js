@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { phoneReady, sheetFor, track, NOTE, refillWait, refillAfter, refillTick, REFILL_START } from "../js/ready.js";
+import { phoneReady, sheetFor, track, NOTE, refillWait, refillAfter, refillTick, REFILL_START, readyAnswer, seenNote } from "../js/ready.js";
 
 // Made-up trip: Thu Dec 10 to Sun Dec 20, in Japan.
 const DAYS = Array.from({ length: 11 }, (_, i) => ({ date: "2026-12-" + String(10 + i).padStart(2, "0") }));
@@ -249,4 +249,30 @@ test("unsent changes this phone could not save: never ready, the line says so, t
   assert.equal(m.strip, null, "the strip says what it said before issue 84");
   assert.equal(sheetFor(m).notes[1], "Couldn’t save unsent changes on this device. Keep the app open to avoid losing them.");
   assert.equal(phoneReady(state(), WEEKS, env({ queueFailed: true, standalone: true, noStore: true })).why, "queue");
+});
+
+test("the sheet's last note tells a friend what the organiser can see; the owner's phone says it the other way; the shared link says nothing", () => {
+  const m = phoneReady(state(), WEEKS, env());
+  const friend = sheetFor(m, { owner: "Mo", mine: "Ajen" });
+  assert.equal(friend.notes.at(-1), "Mo can see that you have opened MAT and whether this phone is ready for no signal. Nothing else.");
+  assert.equal(friend.notes.length, 2);
+  const owner = sheetFor(m, { owner: "Mo", mine: "mo " });
+  assert.equal(owner.notes.at(-1), "The others’ phones tell you that they have opened MAT and whether they are ready for no signal. Nothing else.");
+  assert.deepEqual(sheetFor(m, { owner: "Mo", mine: "" }).notes, sheetFor(m).notes, "the shared link: no note");
+  assert.equal(sheetFor(m).notes.length, 1);
+  assert.equal(seenNote({ owner: "", mine: "Ajen" }), "", "no organiser known: nothing");
+  // The note comes last, after a kind's own note.
+  const miss = sheetFor(phoneReady(state(), WEEKS, env({ have: lacking("s1"), failed: true })), { owner: "Mo", mine: "Ajen" });
+  assert.equal(miss.notes[1], "Some pictures would not fetch. This phone may be full, or the signal dropped. Try again on Wi‑Fi.");
+  assert.match(miss.notes[2], /^Mo can see/);
+});
+
+test("readyAnswer: ready is true, not ready is false, still deciding is null", () => {
+  const kind = (k) => readyAnswer({ kind: k });
+  assert.deepEqual(["ready", "ready-off"].map(kind), [true, true]);
+  assert.deepEqual(["missing", "failed", "wait", "nokeep"].map(kind), [false, false, false, false]);
+  assert.deepEqual(["setup", "fetching", "other"].map(kind), [null, null, null]);
+  assert.equal(readyAnswer(null), null, "not decided yet");
+  assert.equal(readyAnswer(phoneReady(state(), WEEKS, env())), true);
+  assert.equal(readyAnswer(phoneReady(state(), WEEKS, env({ have: lacking("s1"), fetching: true }))), null, "part-way through fetching");
 });

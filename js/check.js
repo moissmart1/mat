@@ -16,6 +16,12 @@
 // { type: "stay-edit", id } | { type: "stop", id }.
 // ownerOf(state): this phone is on the first person's own link.
 // lineWords(n): the board line's words.
+//
+// The roll call (issue 96), from state.roll (the owner's load only):
+// peopleWords(roll, me): who needs a nudge, as the line says it ("" none).
+// checkWords(n, people): the line's words, missing things and people.
+// rollRow(entry, { owner, ownReady }): one person's row, as words.
+// shortDay(date): "Nov 25"; stampDay(date): "11.25" (the date string alone).
 
 import { tripNow, stayFor, nightOf, minutesOf } from "./plan.js";
 import { ticketKinds, ticketMark, whoseOf, stayPictures, sameName } from "./tickets.js";
@@ -147,4 +153,76 @@ export function missing(s, nowMs) {
     if (ma !== mb) return ma < mb ? -1 : 1;
     return cmp(a.title, b.title) || cmp(a.open.id, b.open.id) || RANK[a.kind] - RANK[b.kind];
   });
+}
+
+// ---- the roll call (issue 96) ----
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+export const shortDay = (date) => (DATE_RE.test(str(date)) ? MONTHS[Number(date.slice(5, 7)) - 1] + " " + Number(date.slice(8, 10)) : "");
+export const stampDay = (date) => (DATE_RE.test(str(date)) ? date.slice(5).replace("-", ".") : "");
+
+export const ROLL_NOTE = "Each phone says two things only: that it opened, and whether it is ready for no signal.";
+
+const rollList = (roll) => list(roll).filter((e) => e && typeof e === "object" && str(e.name));
+
+// Who needs a nudge, the owner never counted: someone who has not opened,
+// else someone whose phone said it is not ready. Opened with nothing said
+// is not a nudge.
+export function peopleWords(roll, me) {
+  const others = rollList(roll).filter((e) => !sameName(e.name, me));
+  const shut = others.filter((e) => !str(e.opened));
+  if (shut.length === 1) return str(shut[0].name) + " has not opened";
+  if (shut.length > 1) return shut.length + " have not opened";
+  const notReady = others.filter((e) => e.ready === false);
+  if (notReady.length === 1) return str(notReady[0].name) + "’s phone is not ready";
+  if (notReady.length > 1) return notReady.length + " phones not ready";
+  return "";
+}
+
+// The line's words: missing things and people, either alone, or "" (hidden).
+export function checkWords(n, people) {
+  const p = str(people);
+  if (n > 0 && p) return n + " missing · " + p;
+  if (n > 0) return lineWords(n);
+  return p;
+}
+
+// One person's row: { name, lines: [{ text, not }], opened: "11.25" | "",
+// openedLabel, ready: "ok" | "no", readyLabel }. opened "" draws the empty
+// circle; ready "no" the empty circle. The owner's ready box is this phone's
+// own answer now (ownReady), never the stored one.
+export function rollRow(e, { owner = false, ownReady = null } = {}) {
+  const name = str(e && e.name);
+  const opened = str(e && e.opened);
+  const said = shortDay(e && e.said);
+  const stamp = stampDay(opened);
+  const out = {
+    name,
+    lines: [],
+    opened: stamp,
+    openedLabel: stamp ? "Opened " + shortDay(opened) : "Not opened",
+    ready: "no",
+    readyLabel: "Nothing said yet",
+  };
+  const readyIs = (r) => {
+    out.ready = r === true ? "ok" : "no";
+    out.readyLabel = r === true ? "Ready" : r === false ? "Not ready" : "Nothing said yet";
+  };
+  if (owner) {
+    out.lines.push({ text: "This phone", not: false });
+    readyIs(ownReady === true ? true : ownReady === false ? false : null);
+    return out;
+  }
+  if (!stamp) {
+    const link = shortDay(e && e.linkDay);
+    if (link) out.lines.push({ text: "Not opened yet", not: true }, { text: "Link made " + link, not: false });
+    else out.lines.push({ text: "No link yet", not: true });
+    return out;
+  }
+  const r = e.ready === true ? true : e.ready === false ? false : null;
+  readyIs(r);
+  if (r === true) out.lines.push({ text: "Ready for no signal" + (said ? ", said " + said : ""), not: false });
+  else if (r === false) out.lines.push({ text: "Not ready yet" + (said ? ", said " + said : ""), not: true });
+  else out.lines.push({ text: "Opened " + shortDay(opened), not: false }, { text: "Nothing said about no signal yet", not: false });
+  return out;
 }

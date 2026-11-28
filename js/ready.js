@@ -28,7 +28,7 @@
 // track(prev, n, fetching) -> the progress { at, of, left } or null.
 
 import { tripNow, daysToGo } from "./plan.js";
-import { aheadPictures } from "./tickets.js";
+import { aheadPictures, sameName } from "./tickets.js";
 import { dayHead } from "./format.js";
 
 const AMBER = ["nokeep", "fetching", "wait", "failed", "missing", "setup"];
@@ -190,9 +190,32 @@ export function phoneReady(s, nowMs, env) {
   };
 }
 
+// What this phone says about no signal, for the trip's organiser (issue 96):
+// true ready (ready, ready-off), false not ready (missing, failed, wait,
+// nokeep), null nothing yet (setup, fetching, not decided). A phone part-way
+// through fetching is not written as not ready and then ready a minute later.
+export function readyAnswer(m) {
+  if (!m || typeof m !== "object") return null;
+  if (m.kind === "ready" || m.kind === "ready-off") return true;
+  if (m.kind === "missing" || m.kind === "failed" || m.kind === "wait" || m.kind === "nokeep") return false;
+  return null;
+}
+
+// The last note of the sheet (issue 96): what the organiser can see. owner:
+// the trip's first person; mine: this phone's person on their own link (""
+// on the shared link, where nothing is kept and nothing is said).
+export function seenNote({ owner = "", mine = "" } = {}) {
+  const o = typeof owner === "string" ? owner.trim() : "";
+  const m = typeof mine === "string" ? mine.trim() : "";
+  if (!o || !m) return "";
+  if (sameName(o, m)) return "The others’ phones tell you that they have opened MAT and whether they are ready for no signal. Nothing else.";
+  return o + " can see that you have opened MAT and whether this phone is ready for no signal. Nothing else.";
+}
+
 // The sheet a tap on the line opens ("This phone"), as rows of words.
+// who: { owner, mine } for the last note (seenNote).
 // -> { verdict, rows: [{ label, value, lines? }], notes: [..], key }
-export function sheetFor(m) {
+export function sheetFor(m, who = {}) {
   const ready = m.kind === "ready" || m.kind === "ready-off";
   const rows = [{ id: "trip", label: "The trip", value: "on this phone" }];
   const here = m.total - m.n;
@@ -220,6 +243,8 @@ export function sheetFor(m) {
     );
   if (m.kind === "setup") notes.push("The app is still saving itself to this phone. It takes a moment with signal.");
   if (m.kind === "wait") notes.push(m.mode === "open" ? "No signal now. Fetch them when it is back." : "No signal now. The missing pictures come by themselves when it is back.");
+  const seen = seenNote(who);
+  if (seen) notes.push(seen);
   // The key: only when the line has one. Two days before it says what the board's paper key says.
   const key = !m.key ? "" : m.kind === "failed" ? "Try again" : m.big ? m.big.key : "Fetch now";
   return { verdict: ready ? "Ready for no signal." : "Not ready for no signal yet.", rows, notes, key };

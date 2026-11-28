@@ -95,7 +95,7 @@ const MARKUP = `
   <button type="button" class="set-r set-where" id="setWhere" hidden><span><span class="set-where-l"><span class="here">現在地</span>Location</span><small id="setWhereS"></small><small id="setWhereWhy" hidden></small></span><b id="setWhereV" data-w="Phone said no"></b></button>
   <button type="button" class="set-r" id="setBulk" hidden><span><span class="set-bulk-l"><span class="ikk" aria-hidden="true">一括</span>Add tickets</span><small>Many ticket files at once, yours or anyone’s on the trip</small></span><b>Open</b></button>
   <button type="button" class="nt" id="setListNt" hidden><span class="nt-k" aria-hidden="true">検札</span><span class="nt-t" id="setListNtT"></span><u>Check ›</u></button>
-  <button type="button" class="set-r" id="setCheck" hidden><span><span class="set-bulk-l"><span class="ikk" aria-hidden="true">点検</span>Trip check</span><small id="setCheckS">What the trip is still missing</small></span><b id="setCheckV">Open</b></button>
+  <button type="button" class="set-r" id="setCheck" hidden><span><span class="set-bulk-l"><span class="ikk" aria-hidden="true">点検</span>Trip check</span><small id="setCheckS">What the trip is still missing, and who has opened</small></span><b id="setCheckV">Open</b></button>
   <button type="button" class="set-r" id="setTix" hidden><span>Ticket pictures<small id="setTixS"></small></span><b id="setTixV">On Wi‑Fi and mobile</b></button>
   <button type="button" class="set-r" id="setHist"><span>History<small>Every change, with undo</small></span><b>Open</b></button>
   <button type="button" class="set-r" id="setFreshRow"><span>Last updated<small>Tap to fetch the latest</small></span><b id="setFresh" data-w="Up to date 00:00"></b></button>
