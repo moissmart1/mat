@@ -25,7 +25,7 @@ const path = require("node:path");
 const DIR = path.join(__dirname, "e2e");
 
 // Every sliding sheet or panel the app opens with is-open.
-const SHEETS = ["stay", "reg", "stop", "you", "allDays", "line", "hist", "driver", "bulk", "staySheet", "book"];
+const SHEETS = ["stay", "reg", "stop", "you", "allDays", "line", "hist", "driver", "bulk", "staySheet", "book", "check"];
 
 // Allowed real-time sleeps: file -> [{ next: the first words of the line the
 // sleep comes before, why }]. Line numbers move; the guarded check does not.

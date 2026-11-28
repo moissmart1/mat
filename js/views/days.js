@@ -186,7 +186,7 @@ function patchTicket(old, fresh) {
   return old;
 }
 
-export function mountDays(root, store, { clock, where = null, storage = null, ready = null, onAllDays = () => {}, onStay = () => {}, onStop = () => {}, onAddStop = () => {}, onStampBook = () => {}, held = () => false, tickets = null, onTicket = () => {} } = {}) {
+export function mountDays(root, store, { clock, where = null, storage = null, ready = null, check = null, onAllDays = () => {}, onStay = () => {}, onStop = () => {}, onAddStop = () => {}, onStampBook = () => {}, held = () => false, tickets = null, onTicket = () => {} } = {}) {
   const count = el("button", "bar-t");
   count.type = "button";
   count.id = "dayCount";
@@ -222,14 +222,25 @@ export function mountDays(root, store, { clock, where = null, storage = null, re
   // The departure board (js/views/board.js): between the top line and the rail.
   // The line "This phone" (js/views/ready.js, issue 84) right after it: the
   // board's foot when the board shows, alone in the same glass when not.
+  // Between them, the owner's trip check line (js/views/check.js, issue 86):
+  // board, check line and "This phone" are one piece of glass. The board keeps
+  // its foot while either line shows; with no board above, the first line
+  // showing has round top corners, the last one round bottom corners.
   const board = mountBoard({ storage, onToggle: (on) => joinFoot(on) });
   function joinFoot(on = board.isShown()) {
-    if (!ready) return;
+    if (!ready && !check) return;
     // The line's place counts while it is being decided too (js/views/ready.js is-pending).
-    board.foot(on && !ready.el.hidden);
-    ready.el.classList.toggle("is-alone", !on);
+    const readyOn = !!ready && !ready.el.hidden;
+    const checkOn = !!check && !check.el.hidden;
+    board.foot(on && (checkOn || readyOn));
+    if (ready) ready.el.classList.toggle("is-alone", !on && !checkOn);
+    if (check) {
+      check.el.classList.toggle("is-top", !on);
+      check.el.classList.toggle("is-last", !readyOn);
+    }
   }
   root.replaceChildren(demo, bar, board.el, ...(ready ? [ready.el] : []), rail);
+  if (check) check.attach(root, ready ? ready.el : rail);
 
   let dates = []; // the dates of the drawn tickets, in order
   let states = []; // each one's dayState
@@ -593,6 +604,7 @@ export function mountDays(root, store, { clock, where = null, storage = null, re
   function wipe() {
     board.clear();
     if (ready) ready.update(true);
+    if (check) check.update();
     joinFoot();
     dates = [];
     states = [];
@@ -623,6 +635,7 @@ export function mountDays(root, store, { clock, where = null, storage = null, re
     const stampToday = showStamps(s);
     const ok = s.status === "ready" && s.trip && s.trip.start && list(s.days).length;
     if (ready) ready.update(true);
+    if (check) check.update();
     if (!ok) {
       board.update(null);
       joinFoot();
@@ -851,6 +864,8 @@ export function mountDays(root, store, { clock, where = null, storage = null, re
   store.subscribe(render);
   // What the line says changed (a picture kept, signal, a pass): the board may give or take back its face.
   if (ready) ready.subscribe(() => render(store.state));
+  // The trip check line comes or goes (a count, the day turning over): the block of lines is placed again.
+  if (check) check.subscribe(() => joinFoot());
   if (where) where.subscribe(() => render(store.state));
   // A picture reaching this phone turns its 券 box solid.
   if (tickets && tickets.subscribe) tickets.subscribe(() => render(store.state));

@@ -34,6 +34,7 @@ import { isPicture } from "./picture.js";
 import { mountReady } from "./views/ready.js";
 import { mountStub } from "./views/stub.js";
 import { mountStaySheet } from "./views/staysheet.js";
+import { mountCheck } from "./views/check.js";
 import { tripNow, zoneOf, daySpan } from "./plan.js";
 import { mountBulkAdd } from "./views/bulkadd.js";
 import { createTakeBack } from "./takeback.js";
@@ -413,6 +414,20 @@ function start() {
   const allDays = mountAllDays(phone, store, { clock, onPick: (i) => days.goDay(i) });
   const stopSheet = mountStopSheet(phone, store, { keep, storage: raw });
   const staySheet = mountStaySheet(phone, store, keep, { onClose: (id) => stayCard.open(id) });
+  // The owner's trip check (issue 86): a line on Days and its sheet (js/views/check.js).
+  // A row's tap has closed the sheet; this opens the thing to fix, over Days.
+  const tripCheck = mountCheck(phone, store, {
+    clock,
+    beforeOpen: () => closeForDays(),
+    onOpenLine: (to) => {
+      closeForDays();
+      tabs.showTab("days", false);
+      if (to.type === "stop") stopSheet.edit(to.id);
+      else if (to.type === "stay-edit") staySheet.open(to.id);
+      else if (to.type === "stay") stayCard.open(to.id);
+      else if (to.type === "day") days.goDay(Math.max(0, (store.state.days || []).findIndex((d) => d && d.date === to.date)), false);
+    },
+  });
   // The stamp book, a panel like History, opened from the Days bar or today's ticket.
   const book = mountStampBook(phone, store, { where });
   // The real ticket, torn off the day's ticket (js/views/stub.js); a stay's
@@ -426,6 +441,7 @@ function start() {
     staySheet.close(false);
     book.close(false);
     ready.close(false);
+    tripCheck.close(false);
   };
   // A tab switch closes them (they belong to Days).
   document.getElementById("nav").addEventListener("click", (ev) => {
@@ -488,6 +504,12 @@ function start() {
     onHistory: () => {
       you.close(false);
       history.open();
+    },
+    // Trip check (the owner's phone only): the sheet over Days, You closing first.
+    checkCount: () => tripCheck.count(),
+    onCheck: () => {
+      you.close(false);
+      tripCheck.open();
     },
     // 一括 Add tickets: its own sheet, where You stands (the Money pane on a computer).
     // On the owner's phone it opens straight on the list's slip (bulk C).
@@ -772,6 +794,7 @@ function start() {
     where,
     storage: raw,
     ready,
+    check: tripCheck,
     onStay: (id) => {
       closeForDays();
       stayCard.open(id);
