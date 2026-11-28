@@ -758,6 +758,99 @@ function hexOfBytes(bytes) {
 
 var KEY_HASH_RE_ = /^[0-9a-f]{64}$/;
 
+// ---- the owner's roll call (issue 96) ----
+// SEEN, one Script Property: { "<name>": { o, r, d } } for each person who
+// has opened MAT on their own link. o: the day of the first such load,
+// written once. r: 1 or 0, the last ready answer that person's phone sent
+// (absent until one is). d: the day r last changed. Days are "YYYY-MM-DD"
+// from the backend's own clock. Nothing else is kept: no time of day, no
+// count, no device, nothing from a key.
+var seenOwn_ = function (obj, k) { return Object.prototype.hasOwnProperty.call(obj, k); };
+
+// SEEN as stored, keeping only entries of that shape (an entry with a good
+// o and a broken r or d keeps its o alone). Anything unreadable (missing,
+// not JSON, an array, not an object) is {}.
+function seenFrom(raw) {
+  var out = {};
+  if (typeof raw !== "string" || raw === "") return out;
+  var obj;
+  try {
+    obj = JSON.parse(raw);
+  } catch (e) {
+    return out;
+  }
+  if (!isObj_(obj)) return out;
+  Object.keys(obj).forEach(function (name) {
+    var v = obj[name];
+    if (name === "" || name === "__proto__" || !isObj_(v) || typeof v.o !== "string" || !DAY_RE_.test(v.o)) return;
+    var e = { o: v.o };
+    if ((v.r === 0 || v.r === 1) && typeof v.d === "string" && DAY_RE_.test(v.d)) {
+      e.r = v.r;
+      e.d = v.d;
+    }
+    out[name] = e;
+  });
+  return out;
+}
+
+// SEEN after `name` loaded on their own link on `day`, with the ready
+// answer their phone sent (only true or false count; anything else leaves r
+// and d as they are). Entries for names not in `names` (the trip's people)
+// are dropped. -> { seen, changed }; seen is a new object.
+function seenAfter(seen, name, day, ready, names) {
+  var list = Array.isArray(names) ? names : [];
+  var out = {};
+  var changed = false;
+  var src = isObj_(seen) ? seen : {};
+  Object.keys(src).forEach(function (k) {
+    if (list.indexOf(k) === -1) {
+      changed = true;
+      return;
+    }
+    var e = { o: src[k].o };
+    if (seenOwn_(src[k], "r")) {
+      e.r = src[k].r;
+      e.d = src[k].d;
+    }
+    out[k] = e;
+  });
+  if (typeof name !== "string" || name === "" || name === "__proto__" || list.indexOf(name) === -1 || typeof day !== "string" || !DAY_RE_.test(day)) {
+    return { seen: out, changed: changed };
+  }
+  if (!seenOwn_(out, name)) {
+    out[name] = { o: day };
+    changed = true;
+  }
+  if (ready === true || ready === false) {
+    var r = ready ? 1 : 0;
+    if (!seenOwn_(out[name], "r") || out[name].r !== r) {
+      out[name].r = r;
+      out[name].d = day;
+      changed = true;
+    }
+  }
+  return { seen: out, changed: changed };
+}
+
+// The roll call the owner's load is answered: one entry per person, in trip
+// order. keys: PERSON_KEYS as personKeysFrom reads it (only each link's day
+// is used). -> [{ name, opened, ready, said, linkDay }]
+function rollFrom(seen, names, keys) {
+  var s = isObj_(seen) ? seen : {};
+  var k = isObj_(keys) ? keys : {};
+  return (Array.isArray(names) ? names : []).map(function (name) {
+    var e = seenOwn_(s, name) ? s[name] : null;
+    var at = seenOwn_(k, name) && k[name] && typeof k[name].at === "string" ? k[name].at.slice(0, 10) : "";
+    return {
+      name: name,
+      opened: e ? e.o : "",
+      ready: e && seenOwn_(e, "r") ? e.r === 1 : null,
+      said: e && seenOwn_(e, "r") ? e.d : "",
+      linkDay: DAY_RE_.test(at) ? at : "",
+    };
+  });
+}
+
 // PERSON_KEYS as stored ({ "<name>": { hash, at } }), keeping only entries
 // whose hash is 64 hex characters. Anything else (missing, not JSON, not an
 // object) is no personal keys at all.
@@ -1697,5 +1790,5 @@ function ticketSnap_(t, stopTitle) {
 }
 
 if (typeof module !== "undefined") {
-  module.exports = { TABS, KINDS, isTextColumn, sanitizeCell, unsanitizeCell, rowToObj, objToRow, validateExpense, validatePayment, validatePersonPatch, validateStop, validateStay, validateDayPatch, DAY_PATCH_KEYS, safeUrl, safeHttpsUrl, dayLabel, stopFromRow, stopToRow, stayFromRow, stayToRow, dayFromRow, dayToRow, expenseFromRow, paymentFromRow, personFromRow, cellDate_, cellStamp_, summarize, undoTarget, canUndo, entryFromRow, parseLogRow, expenseToRow, paymentToRow, setupSeedRows, shouldFetchRate, rateSource, sameKey, hexOfBytes, personKeysFrom, personKeysReadable, keyHolder, blankSecrets, paymentsFromRows, expenseFromPayment, paymentIdOf, todosFromRows, bookByDay, todoFromRow, isBooked, colLetter, changeLogRow, shortDay_, stampWindow, pressRefusal, stampDefFromRow, stampFromRow, stampSnap_, plannerWhat_, coordsOf_, pointFromLink, metresBetween_, TICKET_LIMITS, validateTicket, ticketChunks, joinTicketChunks, ticketFromRow, ticketSnap_, listDay, listTime, listRowsFrom, deskFilesFrom, deskFileFrom, LIST_COLS_ };
+  module.exports = { TABS, KINDS, isTextColumn, sanitizeCell, unsanitizeCell, rowToObj, objToRow, validateExpense, validatePayment, validatePersonPatch, validateStop, validateStay, validateDayPatch, DAY_PATCH_KEYS, safeUrl, safeHttpsUrl, dayLabel, stopFromRow, stopToRow, stayFromRow, stayToRow, dayFromRow, dayToRow, expenseFromRow, paymentFromRow, personFromRow, cellDate_, cellStamp_, summarize, undoTarget, canUndo, entryFromRow, parseLogRow, expenseToRow, paymentToRow, setupSeedRows, shouldFetchRate, rateSource, sameKey, hexOfBytes, personKeysFrom, personKeysReadable, seenFrom, seenAfter, rollFrom, keyHolder, blankSecrets, paymentsFromRows, expenseFromPayment, paymentIdOf, todosFromRows, bookByDay, todoFromRow, isBooked, colLetter, changeLogRow, shortDay_, stampWindow, pressRefusal, stampDefFromRow, stampFromRow, stampSnap_, plannerWhat_, coordsOf_, pointFromLink, metresBetween_, TICKET_LIMITS, validateTicket, ticketChunks, joinTicketChunks, ticketFromRow, ticketSnap_, listDay, listTime, listRowsFrom, deskFilesFrom, deskFileFrom, LIST_COLS_ };
 }

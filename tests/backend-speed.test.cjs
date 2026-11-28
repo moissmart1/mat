@@ -59,9 +59,15 @@ test("issue 16 budgets: load, the 20-second check, a write and a pull", async ()
   const pull = await measured(fake, { key: keys.Mo, action: "syncTodos", args: { force: true } });
   assert.deepEqual(pull.cost, { sheetReads: 5, peopleRows: 1, peopleNames: 0, props: 7 }, "a pull over 26 items");
 
-  const owner = await measured(fake, { key: keys.Mo, action: "load", args: {} });
+  // Issue 96: a person's first load of all (or one whose ready answer
+  // changed) writes SEEN, reading it once more inside the lock; every other
+  // load costs what it did.
+  const first = await measured(fake, { key: keys.Mo, action: "load", args: { ready: true } });
+  assert.deepEqual(first.cost, { sheetReads: 11, peopleRows: 1, peopleNames: 0, props: 4 }, "the owner's first load: SEEN read again under the lock");
+  const owner = await measured(fake, { key: keys.Mo, action: "load", args: { ready: true } });
   assert.equal(owner.env.data.ticketList, true, "the owner's busiest load");
   assert.deepEqual(owner.cost, { sheetReads: 11, peopleRows: 1, peopleNames: 0, props: 3 }, "load as the owner");
+  await measured(fake, { key: keys.Ajen, action: "load", args: {} });
   const ajen = await measured(fake, { key: keys.Ajen, action: "load", args: {} });
   assert.deepEqual(ajen.cost, { sheetReads: 11, peopleRows: 1, peopleNames: 0, props: 3 }, "load on Ajen's key");
   const rev = await measured(fake, { key: keys.Ajen, action: "rev", args: {} });
@@ -121,6 +127,7 @@ test("issue 16: load reads its Script Properties in one getProperties(), with th
   fake.props.TODO_PROBLEMS = JSON.stringify({ at: "2026-11-20T14:00:00.000Z", list: [{ id: "4", message: "Made-up problem.", row: 7, what: "x" }], more: 0 });
   fake.props.PAYMENT_PROBLEMS = "not json";
   fake.props.REV = "41";
+  await fake({ key: keys.Mo, action: "load", args: {} }); // the first load writes SEEN (issue 96)
   fake.resetCalls();
   const load = await fake({ key: keys.Mo, action: "load", args: {} });
   assert.equal(fake.calls.getProps_, 1);

@@ -22,11 +22,20 @@
 //   "stay" (the hotel card) or "day" (js/app.js does it).
 // - beforeOpen(): app.js closes the other sheets.
 // - subscribe(fn): told when the line shows or hides (Days places its foot).
+// - The roll call (issue 96), above the missing list, when the load gave one
+//   (state.roll, the owner's own link only): each person's opened day as a
+//   date stamp and whether their phone said it is ready for no signal. The
+//   owner's own ready box is this phone's answer now (ready.answer()). The
+//   line also names who needs a nudge (js/check.js peopleWords). The rows
+//   are not buttons.
+// - ready: { answer(), subscribe(fn) }: this phone's own ready answer (app.js).
 // Every word is set with textContent.
 
-import { missing, ownerOf, lineWords } from "../check.js";
+import { missing, ownerOf, peopleWords, checkWords, rollRow, ROLL_NOTE } from "../check.js";
 import { weekdayOf, dayHead } from "../format.js";
 import { safeHref } from "../plan.js";
+import { fillSeal } from "../picture.js";
+import { sameName } from "../tickets.js";
 
 const MARKUP = `
 <div class="sheet-top"><span><i class="ck-h" aria-hidden="true">点検表</i><i>Trip check</i></span><button type="button" id="ckDone">Done</button></div>
@@ -44,7 +53,7 @@ function el(tag, cls, text) {
 
 const MINUTE = 60 * 1000;
 
-export function mountCheck(phone, store, { clock, beforeOpen = () => {}, onOpenLine = () => {} } = {}) {
+export function mountCheck(phone, store, { clock, beforeOpen = () => {}, onOpenLine = () => {}, ready = null } = {}) {
   // ---- the line ----
   const line = el("button", "ck-line");
   line.type = "button";
@@ -77,6 +86,36 @@ export function mountCheck(phone, store, { clock, beforeOpen = () => {}, onOpenL
   const none = $("ckNone");
   const sheetLink = $("ckSheet");
 
+  // The roll call (issue 96): drawn above the missing list while state.roll is an array.
+  const roll = el("div", "ck-roll");
+  roll.id = "ckRoll";
+  roll.setAttribute("role", "table");
+  roll.setAttribute("aria-label", "Roll call");
+  roll.hidden = true;
+  const rollHead = el("div", "ck-rh");
+  rollHead.setAttribute("role", "row");
+  const headCell = (cls, jp, words, label) => {
+    const c = el("span", cls);
+    c.setAttribute("role", "columnheader");
+    c.setAttribute("aria-label", label);
+    if (cls) {
+      const j = el("i", "ck-jp", jp);
+      j.setAttribute("aria-hidden", "true");
+      c.append(j, document.createTextNode(words));
+    } else c.append(document.createTextNode(jp), el("br"), document.createTextNode(words));
+    return c;
+  };
+  rollHead.append(headCell("ck-rt", "点呼", "Roll call", "Roll call"), headCell("", "開封", "Opened", "Opened"), headCell("", "圏外", "Ready", "Ready"));
+  const rollRows = el("div", "ck-rb");
+  rollRows.setAttribute("role", "rowgroup");
+  roll.append(rollHead, rollRows);
+  const rollNote = el("p", "ck-rf", ROLL_NOTE);
+  rollNote.id = "ckRollNote";
+  rollNote.hidden = true;
+  sheet.insertBefore(rollNote, $("ckMissH"));
+  sheet.insertBefore(roll, rollNote);
+  let rollSig = "";
+
   const subs = [];
   let lines = [];
   let sig = "";
@@ -102,6 +141,16 @@ export function mountCheck(phone, store, { clock, beforeOpen = () => {}, onOpenL
 
   const owner = () => ownerOf(store.state);
   const now = () => (clock && clock.now ? clock.now() : Date.now());
+  // This phone's own ready answer, for the owner's own row (true, false or null).
+  const ownReady = () => {
+    try {
+      const a = ready && typeof ready.answer === "function" ? ready.answer() : null;
+      return a === true || a === false ? a : null;
+    } catch {
+      return null;
+    }
+  };
+  let people = ""; // who needs a nudge, as the line says it
   const compute = () => {
     const s = store.state;
     return ownerOf(s) && s.status === "ready" && s.trip ? missing(s, now()) : [];
@@ -134,7 +183,60 @@ export function mountCheck(phone, store, { clock, beforeOpen = () => {}, onOpenL
     return li;
   }
 
+  // One person's row of the roll call: the seal and the words, the opened stamp, the ready box.
+  function rollLine(e, s, isOwner) {
+    const r = rollRow(e, { owner: isOwner, ownReady: ownReady() });
+    const row = el("div", "ck-p");
+    row.setAttribute("role", "row");
+    row.dataset.name = r.name;
+    const who = el("div", "ck-n");
+    who.setAttribute("role", "cell");
+    const person = (Array.isArray(s.people) ? s.people : []).find((p) => p && sameName(p.name, r.name)) || null;
+    const seal = fillSeal(el("span", "seal" + (isOwner ? " is-on" : "")), person, r.name);
+    seal.setAttribute("aria-hidden", "true");
+    const words = el("span");
+    words.append(el("b", "", r.name));
+    for (const l of r.lines) words.append(el("small", l.not ? "is-not" : "", l.text));
+    who.append(seal, words);
+    const openedCell = el("div", "ck-st");
+    openedCell.setAttribute("role", "cell");
+    openedCell.setAttribute("aria-label", r.openedLabel);
+    let mark;
+    if (r.opened) {
+      mark = el("span", "ck-ds");
+      mark.append(el("i", "", "開封"), el("b", "", r.opened), el("i", "", "MAT"));
+    } else mark = el("span", "ck-no", "開");
+    mark.setAttribute("aria-hidden", "true");
+    openedCell.append(mark);
+    const readyCell = el("div", "ck-st");
+    readyCell.setAttribute("role", "cell");
+    readyCell.setAttribute("aria-label", r.readyLabel);
+    const box = el("span", r.ready === "ok" ? "ck-ok" : "ck-no", "済");
+    box.setAttribute("aria-hidden", "true");
+    readyCell.append(box);
+    row.append(who, openedCell, readyCell);
+    return row;
+  }
+
+  function drawRoll() {
+    const s = store.state;
+    const on = Array.isArray(s.roll);
+    roll.hidden = !on;
+    rollNote.hidden = !on;
+    if (!on) {
+      rollSig = "";
+      rollRows.replaceChildren();
+      return;
+    }
+    const pics = (Array.isArray(s.people) ? s.people : []).map((p) => (p ? [p.name, p.photo, p.initials] : null));
+    const key = JSON.stringify([s.roll, s.me, ownReady(), pics]);
+    if (key === rollSig) return;
+    rollSig = key;
+    rollRows.replaceChildren(...s.roll.filter((e) => e && typeof e === "object" && typeof e.name === "string" && e.name.trim()).map((e) => rollLine(e, s, sameName(e.name, s.me))));
+  }
+
   function drawSheet() {
+    drawRoll();
     head.textContent = "Still missing: " + (lines.length ? lines.length : "nothing");
     headNote.hidden = !lines.length;
     rows.hidden = !lines.length;
@@ -165,11 +267,11 @@ export function mountCheck(phone, store, { clock, beforeOpen = () => {}, onOpenL
   }
 
   function drawLine() {
-    const n = lines.length;
-    const on = n > 0;
+    const said = checkWords(lines.length, people);
+    const on = said !== "";
     if (on) {
-      words.textContent = lineWords(n);
-      line.setAttribute("aria-label", "Trip check: " + lineWords(n) + ". Open the list");
+      words.textContent = said;
+      line.setAttribute("aria-label", "Trip check: " + said + ". Open the list");
     }
     line.hidden = !on;
     if (on !== shownWas) {
@@ -182,6 +284,7 @@ export function mountCheck(phone, store, { clock, beforeOpen = () => {}, onOpenL
     const s = store.state;
     if (s.status === "nokey" || !owner()) {
       lines = [];
+      people = "";
       sig = "";
       sync(false);
       drawLine();
@@ -191,15 +294,18 @@ export function mountCheck(phone, store, { clock, beforeOpen = () => {}, onOpenL
     // Not loaded: no line (an open sheet keeps what it shows until the trip is back).
     if (s.status !== "ready" || !s.trip) {
       lines = [];
+      people = "";
       sig = "";
       drawLine();
       return;
     }
     const next = missing(s, now());
-    const key = JSON.stringify(next) + "|" + safeHref(s.sheetUrl);
+    const nudge = peopleWords(s.roll, s.me);
+    const key = JSON.stringify([next, nudge, s.roll, ownReady(), (Array.isArray(s.people) ? s.people : []).map((p) => (p ? [p.name, p.photo, p.initials] : null))]) + "|" + safeHref(s.sheetUrl);
     if (key === sig) return;
     sig = key;
     lines = next;
+    people = nudge;
     drawLine();
     if (opened) drawSheet();
   }
@@ -239,6 +345,8 @@ export function mountCheck(phone, store, { clock, beforeOpen = () => {}, onOpenL
   });
 
   store.subscribe(update);
+  // The owner's own ready box follows this phone's line "This phone".
+  if (ready && typeof ready.subscribe === "function") ready.subscribe(() => update());
   if (clock && typeof clock.subscribe === "function") clock.subscribe(update);
   // The trip's day turns over with nobody touching the phone: the minute's look.
   setInterval(update, MINUTE);

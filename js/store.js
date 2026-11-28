@@ -62,7 +62,7 @@ const TODO_PULLS = 4;
 
 // How often an open phone asks for the planner's payments on its own.
 const PAY_AUTO_MS = 10 * 60 * 1000;
-const DATA_KEYS = ["trip", "people", "days", "stops", "stays", "expenses", "payments", "rateToday", "rateSource", "sheetUrl", "plannerLinked", "todos", "todosPulledAt", "paymentsPulledAt", "stampDefs", "stamps", "paymentProblems", "todoProblems", "tickets", "ticketList"];
+const DATA_KEYS = ["trip", "people", "days", "stops", "stays", "expenses", "payments", "rateToday", "rateSource", "sheetUrl", "plannerLinked", "todos", "todosPulledAt", "paymentsPulledAt", "stampDefs", "stamps", "paymentProblems", "todoProblems", "tickets", "ticketList", "roll"];
 // Every kind of item the store keeps, the field it is found by and the flag
 // that marks it gone. Stays and day headers only ever change here through an
 // undo from History (their writes come in later tasks). A todo is an item
@@ -176,7 +176,13 @@ const ADDRESS_KEY_REFUSED = "That link didn’t work. This phone stays on the li
 // and is tried again; one that never did is as missing.
 // afterLoad(): called after every load that answered (js/tickets.js
 // fetchMissing hangs here).
-export function createStore({ api, storage, durableStorage = true, now = () => Date.now(), wait = defaultWait, clear = (queue) => clearTrip(storage, { queue }), ticketData = async () => null, afterLoad = null, isHidden = () => false }) {
+// getReady() -> true | false | null: whether this phone is ready for no
+// signal, as the line "This phone" judges it (null: nothing to say yet).
+// Every load sends it (issue 96), so the trip's organiser can see whose
+// phone is ready; null sends nothing. The answer the backend last took is
+// kept as mat.readySaid ("1" or "0"); readyTick() makes one load when the
+// answer has changed since and held for READY_HOLD_MS.
+export function createStore({ api, storage, durableStorage = true, now = () => Date.now(), wait = defaultWait, clear = (queue) => clearTrip(storage, { queue }), ticketData = async () => null, afterLoad = null, isHidden = () => false, getReady = () => null }) {
   // How many times the page went to the background. A request that failed
   // while the page was hidden, or that was running when it went hidden, was
   // most likely cut off by the phone, not by a lost signal: it is not news
@@ -216,6 +222,13 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
       return false;
     }
   };
+  const removeItem = (k) => {
+    try {
+      if (typeof storage.removeItem === "function") storage.removeItem(k);
+    } catch {
+      // nothing more can be done
+    }
+  };
   const getJson = (k) => {
     const raw = getItem(k);
     if (raw === null) return null;
@@ -229,6 +242,9 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
   const state = {
     status: "boot", online: true, rev: null, me: null,
     trip: null, people: [], days: [], eves: [], stops: [], stays: [], expenses: [], payments: [], rateToday: null, rateSource: null, sheetUrl: "", plannerLinked: false, todos: [], todosPulledAt: "", paymentsPulledAt: "", stampDefs: [], stamps: [], paymentProblems: { at: "", list: [], more: 0 }, todoProblems: { at: "", list: [], more: 0 }, tickets: [], ticketsReady: false, ticketList: false,
+    // roll: the owner's roll call (issue 96): [{ name, opened, ready, said, linkDay }]
+    // when the load had one (the trip's first person, on their own link), else null.
+    roll: null,
     loadedAt: null, seenAt: null, lastChange: null, notice: null, setAside: [], keyRefused: false,
     // linkKept: a key is stored but no trip has loaded in this storage yet, and
     // the load got no answer (a link pasted with no signal, or a relaunch still
@@ -283,6 +299,8 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
 
   function derive() {
     if (base) for (const k of DATA_KEYS) state[k] = base[k];
+    // Only an array is a roll call: an old backend, a friend's load or a saved trip from before has none.
+    if (!Array.isArray(state.roll)) state.roll = null;
     // A cache or a backend from before the book has neither list.
     if (!Array.isArray(state.stampDefs)) state.stampDefs = [];
     // A backend where migrate has not made the ticket tabs sends no tickets at all.
@@ -609,7 +627,7 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
     for (const k of DATA_KEYS) state[k] = Array.isArray(state[k]) ? [] : null;
     Object.assign(state, {
       eves: [],
-      rev: null, me: null, personal: false, sheetUrl: "", plannerLinked: false, todosPulledAt: "", paymentsPulledAt: "",
+      rev: null, me: null, personal: false, sheetUrl: "", plannerLinked: false, todosPulledAt: "", paymentsPulledAt: "", roll: null,
       paymentProblems: { at: "", list: [], more: 0 }, todoProblems: { at: "", list: [], more: 0 },
       loadedAt: null, lastChange: null, notice: null, setAside: [],
       history: { entries: [], more: false, loading: false, error: null, firstPageError: null },
@@ -694,6 +712,54 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
     }));
   }
 
+  // ---- this phone's ready answer (issue 96) ----
+
+  // How long a changed answer must hold before a load of its own tells the backend.
+  const READY_HOLD_MS = 30000;
+  let loadsRunning = 0;
+  let readyHeld = { answer: null, since: 0 };
+  let readyLoad = null;
+
+  function readyNow() {
+    try {
+      const a = getReady();
+      return a === true || a === false ? a : null;
+    } catch {
+      return null;
+    }
+  }
+  // What a load sends: the answer when there is one, nothing otherwise.
+  function readyArgs() {
+    const a = readyNow();
+    return a === null ? {} : { ready: a };
+  }
+
+  // Loads are rare on a quiet trip, so an answer that changed after the last
+  // one would never be said. Called on every change of the answer and on the
+  // app's 20-second look: once the answer (true or false) differs from what
+  // the backend last took (mat.readySaid) and has held READY_HOLD_MS, one
+  // ordinary load (refresh, as after a change of rev). Never two at once,
+  // never beside another load, never while saving, never with no signal or
+  // in the background: then it waits for the next call. Only on a person's
+  // own link (nothing is kept for the shared one).
+  // -> ms until the answer will have held long enough (to call again then), or null.
+  function readyTick() {
+    const a = readyNow();
+    const t = now();
+    if (a !== readyHeld.answer) readyHeld = { answer: a, since: t };
+    if (a === null || wiped || state.status !== "ready" || !state.personal) return null;
+    if (readyLoad || getItem("mat.readySaid") === (a ? "1" : "0")) return null;
+    const left = readyHeld.since + READY_HOLD_MS - t;
+    if (left > 0) return left;
+    if (loadsRunning > 0 || !state.online || busy() || isHidden()) return null;
+    // A load that does not take is tried again no sooner than READY_HOLD_MS on.
+    readyHeld = { answer: a, since: t };
+    readyLoad = track(refresh().finally(() => {
+      readyLoad = null;
+    }));
+    return null;
+  }
+
   // A write got no reply: the next contact reloads.
   function wantReload() {
     reloadAfter = loadCount;
@@ -703,9 +769,11 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
     const startSeq = writeSeq;
     const mine = ++loadCount;
     const bootAt = boots;
+    const args = readyArgs();
     let r;
+    loadsRunning += 1;
     try {
-      r = await call("load", {});
+      r = await call("load", args);
     } catch (err) {
       if (bootAt !== boots) return false; // an earlier boot's key: not this one's to judge
       state.linkChecking = false;
@@ -722,7 +790,12 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
       changed();
       return false;
     }
+    finally {
+      loadsRunning -= 1;
+    }
     if (bootAt !== boots) return false; // an earlier boot's key: its trip is not opened
+    // The backend has this phone's answer now (issue 96).
+    if (args.ready === true || args.ready === false) setItem("mat.readySaid", args.ready ? "1" : "0");
     state.linkChecking = false;
     if (reloadAfter !== null && mine > reloadAfter) reloadAfter = null;
     if (mine < appliedLoad) return true; // a newer load already landed
@@ -902,6 +975,8 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
     // never overwrites it, and its trip is not opened (round 3 review, I1).
     if (bootAt !== boots) return;
     setItem("mat.key", candidate);
+    // A new link: what the backend last took from this phone was said under the old one.
+    removeItem("mat.readySaid");
     // Fix round 2: the reply it already has is the phone's trip at once, so
     // the saved trip says who this is even if the next load fails (else the
     // old shared link could replace the key again from a stale saved trip).
@@ -2036,7 +2111,7 @@ export function createStore({ api, storage, durableStorage = true, now = () => D
       subs.add(fn);
       return () => subs.delete(fn);
     },
-    boot, refresh, checkRev, flush, idle, queueChanged, storageEvent,
+    boot, refresh, checkRev, flush, idle, queueChanged, storageEvent, readyTick,
     setMe, setPerson, markSeen, pageHidden, pageShown, forgot, unsentCount, notify, clearNotice, claudeToken, syncPayments, autoPayments,
     syncTodos, tickTodo, claimTodo,
     pressStamp,
