@@ -318,7 +318,7 @@ const STOP = { id: "stopAAAA0001", date: "2026-12-12", title: " Shibuya Sky ", t
 
 test("validateStop fills the blanks and trims", () => {
   const v = P.validateStop(STOP, DATES);
-  assert.deepEqual(v.value, { id: "stopAAAA0001", date: "2026-12-12", time: "14:00", title: "Shibuya Sky", detail: "", gettingThere: "", travelMin: 0, fixed: false, place: "", signJp: "", booked: false, link: "", photo: "", note: "", lat: "", lng: "", tkRef: "", tkName: "", tkPeople: "", tkSeat: "" });
+  assert.deepEqual(v.value, { id: "stopAAAA0001", date: "2026-12-12", time: "14:00", title: "Shibuya Sky", detail: "", gettingThere: "", travelMin: 0, fixed: false, place: "", signJp: "", booked: false, link: "", photo: "", note: "", lat: "", lng: "", tkRef: "", tkName: "", tkPeople: "", tkSeat: "", nameJp: "", addressJp: "" });
 });
 test("validateStop refuses what it must", () => {
   const bad = (patch, message) => assert.deepEqual(P.validateStop({ ...STOP, ...patch }, DATES), { ok: false, message });
@@ -344,6 +344,25 @@ test("validateStop length limits", () => {
   bad({ note: "x".repeat(301) }, "Keep the note under 300 letters.");
   bad({ booked: 1 }, "Booked has to be on or off.");
   assert.equal(P.validateStop({ ...STOP, detail: "x".repeat(120), note: "x".repeat(300) }, DATES).ok, true);
+});
+test("a stop's Japanese for a taxi driver (#95): taken trimmed, kept to the stay's limits", () => {
+  const v = P.validateStop({ ...STOP, nameJp: " 炭火焼鳥 鳥花 湖畔店 ", addressJp: " 架空県湖畔市港町9-9-9 みどりビル3階 " }, DATES);
+  assert.equal(v.ok, true);
+  assert.deepEqual([v.value.nameJp, v.value.addressJp], ["炭火焼鳥 鳥花 湖畔店", "架空県湖畔市港町9-9-9 みどりビル3階"]);
+  const bad = (patch, message) => assert.deepEqual(P.validateStop({ ...STOP, ...patch }, DATES), { ok: false, message });
+  bad({ nameJp: "あ".repeat(81) }, "Keep the Japanese name under 80 letters.");
+  bad({ addressJp: "あ".repeat(201) }, "Keep the address under 200 letters.");
+  bad({ nameJp: 5 }, "That didn’t come through properly.");
+  assert.equal(P.validateStop({ ...STOP, nameJp: "あ".repeat(80), addressJp: "あ".repeat(200) }, DATES).ok, true);
+  // Both columns at the end of Stops, after the ticket's facts: an existing Sheet never shifts.
+  assert.deepEqual(P.TABS.Stops.slice(-6), ["tk_ref", "tk_name", "tk_people", "tk_seat", "name_jp", "address_jp"]);
+  // A row round-trips both; a row from before migrate (no columns) reads them as "".
+  const s = P.validateStop({ ...STOP, nameJp: "鳥花", addressJp: "架空県湖畔市1-2-3" }, DATES).value;
+  const row = P.stopToRow(s);
+  assert.deepEqual([row.name_jp, row.address_jp], ["鳥花", "架空県湖畔市1-2-3"]);
+  assert.deepEqual(P.stopFromRow(row), { ...s, deleted: false });
+  const old = P.stopFromRow({ id: "h1", date: "2026-12-12", title: "x" });
+  assert.deepEqual([old.nameJp, old.addressJp], ["", ""]);
 });
 test("a stop with no time is allowed, and a pasted Maps link is a place", () => {
   assert.equal(P.validateStop({ ...STOP, time: "" }, DATES).value.time, "");

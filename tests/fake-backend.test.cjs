@@ -787,6 +787,57 @@ test("a stop: add, repeat, edit, delete, restore, each logged", async () => {
   assert.deepEqual(h.data.entries.map((x) => x.summary), ["put back Shibuya Sky on Sat Dec 12", "removed Shibuya Sky from Sat Dec 12", "moved Shibuya Sky to Sat Dec 12 15:30", "added Shibuya Sky to Sat Dec 12"]);
 });
 
+test("a stop's Japanese for a taxi driver (#95): added, changed alone, logged in History's words", async () => {
+  const call = client({});
+  const stop = { id: "stopAAAA0001", date: "2026-12-12", title: "Dinner, Torihana", time: "19:00", nameJp: "炭火焼鳥 鳥花 湖畔店", addressJp: "架空県湖畔市港町9-9-9 みどりビル3階" };
+  const a = await call("addStop", { stop });
+  assert.equal(a.ok, true, JSON.stringify(a));
+  assert.deepEqual([a.data.stop.nameJp, a.data.stop.addressJp], [stop.nameJp, stop.addressJp]);
+  const row = call.fake.tables.Stops[0];
+  assert.deepEqual([row.name_jp, row.address_jp], [stop.nameJp, stop.addressJp]);
+  // A patch with only the address: the name stays.
+  const e = await call("updateStop", { id: stop.id, patch: { addressJp: "架空県湖畔市港町1-2-3" } });
+  assert.deepEqual([e.data.stop.nameJp, e.data.stop.addressJp], [stop.nameJp, "架空県湖畔市港町1-2-3"]);
+  const l = await call("load", {});
+  assert.deepEqual([l.data.stops[0].nameJp, l.data.stops[0].addressJp], [stop.nameJp, "架空県湖畔市港町1-2-3"]);
+  const h = await call("history", {});
+  assert.equal(h.data.entries[0].summary, "changed Dinner, Torihana: Japanese address");
+  assert.equal((await call("undo", { logId: e.data.logId })).data.stop.addressJp, stop.addressJp);
+});
+
+test("an older Sheet with no Stops.name_jp or address_jp: stops load with both empty, a stop without them saves, one with them says migrate", async () => {
+  const call = client({ stops: [{ id: "stopAAAA0001", date: "2026-12-12", title: "Shibuya Sky", time: "14:00" }], missingColumns: ["Stops.name_jp", "Stops.address_jp"] });
+  const l = await call("load", {});
+  assert.deepEqual([l.data.stops[0].nameJp, l.data.stops[0].addressJp], ["", ""]);
+  const logs = call.fake.tables.Log.length;
+  for (const patch of [{ nameJp: "鳥花" }, { addressJp: "架空県湖畔市1-2-3" }]) {
+    const r = await call("updateStop", { id: "stopAAAA0001", patch });
+    assert.deepEqual([r.ok, r.error, r.message], [false, "needs_migrate", "The trip sheet needs updating first. Ask Mo to run migrate."], JSON.stringify(patch));
+  }
+  const early = await call("addStop", { stop: { id: "stopAAAA0002", date: "2026-12-12", title: "Dinner", addressJp: "架空県湖畔市1-2-3" } });
+  assert.equal(early.error, "needs_migrate");
+  assert.equal(call.fake.tables.Log.length, logs, "nothing logged, nothing half-saved");
+  assert.equal(call.fake.tables.Stops.length, 1);
+  // Both empty: saved as today, on add and on change.
+  assert.equal((await call("updateStop", { id: "stopAAAA0001", patch: { note: "x", nameJp: "", addressJp: "" } })).ok, true);
+  assert.equal((await call("addStop", { stop: { id: "stopAAAA0003", date: "2026-12-12", title: "Lunch", nameJp: "", addressJp: "" } })).ok, true);
+  // migrate adds the two headers at the end of Stops, then the address saves.
+  const m = await call("migrate", {}, AS(undefined));
+  assert.deepEqual(m.data.added, ["Stops.name_jp", "Stops.address_jp"]);
+  assert.deepEqual(TABS.Stops.slice(-2), ["name_jp", "address_jp"]);
+  const after = await call("updateStop", { id: "stopAAAA0001", patch: { addressJp: "架空県湖畔市1-2-3" } });
+  assert.equal(after.ok, true, JSON.stringify(after));
+  assert.equal(after.data.stop.addressJp, "架空県湖畔市1-2-3");
+});
+
+test("review M1 (#95): a Sheet with address_jp but no name_jp (a header added by hand) still says migrate, so a name is never dropped", async () => {
+  const call = client({ stops: [{ id: "stopAAAA0001", date: "2026-12-12", title: "Shibuya Sky" }], missingColumns: ["Stops.name_jp"] });
+  for (const patch of [{ nameJp: "鳥花" }, { addressJp: "架空県湖畔市1-2-3" }]) {
+    assert.equal((await call("updateStop", { id: "stopAAAA0001", patch })).error, "needs_migrate", JSON.stringify(patch));
+  }
+  assert.equal((await call("updateStop", { id: "stopAAAA0001", patch: { note: "x" } })).ok, true);
+});
+
 test("undo puts a stop back, and refuses once it changed again", async () => {
   const call = client({ stops: [{ id: "stopAAAA0001", date: "2026-12-12", title: "Shibuya Sky", time: "14:00" }] });
   const e1 = await call("updateStop", { id: "stopAAAA0001", patch: { time: "15:30" } });

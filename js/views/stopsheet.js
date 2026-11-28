@@ -34,6 +34,10 @@
 // after the stop is saved, one by one, each with its progress. One refused
 // keeps the sheet open with the reason; the others are saved.
 //
+// For a taxi driver (#95): the stop's full name and address in Japanese,
+// after the sign name, saved with the rest; on an older Sheet (before
+// migrate) a save with either answers needs_migrate in the backend's words.
+//
 // Drafts (issue 22): what is typed is kept on the phone (mat.stopDraft.*,
 // per person and stop, or per day and new stop's id) until it is saved,
 // removed or discarded. Reopening the stop, or ＋ Add a stop on that day
@@ -75,7 +79,9 @@ const MARKUP = `
   <label class="st-f"><span>Place name or pasted Maps link</span><input id="stPlace" maxlength="200" autocomplete="off" enterkeyhint="next"></label>
   <label class="st-f st-at"><span class="st-at-h"><b id="stAtW">Not on the map</b><i id="stAtS"></i></span><input id="stPin" type="url" inputmode="url" maxlength="2000" autocomplete="off" enterkeyhint="next" placeholder="Paste a Google Maps link"></label>
   <label class="st-f"><span>Link to a ticket or confirmation</span><input id="stLink" type="url" inputmode="url" maxlength="500" autocomplete="off" enterkeyhint="next"></label>
-  <label class="st-f"><span>Japanese name on signs</span><input id="stSign" maxlength="20" lang="ja" autocomplete="off" enterkeyhint="done"></label>
+  <label class="st-f"><span>Japanese name on signs</span><input id="stSign" maxlength="20" lang="ja" autocomplete="off" enterkeyhint="next"></label>
+  <label class="st-f"><span>Full name in Japanese, for a taxi driver</span><input id="stNameJp" maxlength="80" lang="ja" autocomplete="off" enterkeyhint="next"></label>
+  <label class="st-f"><span>Address in Japanese, for a taxi driver</span><input id="stAddrJp" maxlength="200" lang="ja" autocomplete="off" enterkeyhint="next"></label>
   <div id="stTix" hidden></div>
   <p class="st-msg" id="stMsg" role="status"></p>
   <button type="button" id="stDiscard" hidden>Discard draft</button>
@@ -270,6 +276,7 @@ export function mountStopSheet(root, store, { keep = null, storage = null } = {}
   const f = {
     title: $("stWhat"), time: $("stTime"), detail: $("stDetail"), gettingThere: $("stGo"), travelMin: $("stMin"),
     fixed: $("stFixed"), place: $("stPlace"), link: $("stLink"), signJp: $("stSign"),
+    nameJp: $("stNameJp"), addressJp: $("stAddrJp"),
   };
   const pin = $("stPin");
   const atWord = $("stAtW");
@@ -364,6 +371,8 @@ export function mountStopSheet(root, store, { keep = null, storage = null } = {}
       place,
       link: f.link.value.trim(),
       signJp: f.signJp.value.trim(),
+      nameJp: f.nameJp.value.trim(),
+      addressJp: f.addressJp.value.trim(),
       lat: w.lat,
       lng: w.lng,
       ...(withTix ? part.read() : {}),
@@ -383,6 +392,8 @@ export function mountStopSheet(root, store, { keep = null, storage = null } = {}
       place: str(stop.place).trim(),
       link: str(stop.link).trim(),
       signJp: str(stop.signJp).trim(),
+      nameJp: str(stop.nameJp).trim(),
+      addressJp: str(stop.addressJp).trim(),
       lat: str(stop.lat),
       lng: str(stop.lng),
       ...(withTix ? part.fieldsOf(stop) : {}),
@@ -400,11 +411,13 @@ export function mountStopSheet(root, store, { keep = null, storage = null } = {}
     f.place.value = str(stop.place);
     f.link.value = str(stop.link);
     f.signJp.value = str(stop.signJp);
+    f.nameJp.value = str(stop.nameJp);
+    f.addressJp.value = str(stop.addressJp);
     pin.value = "";
     withTix = !!part && store.state.ticketsReady === true;
     tixBox.hidden = !withTix;
     // The keyboard's key says what Enter does: on to the ticket's facts, or done.
-    f.signJp.enterKeyHint = withTix ? "next" : "done";
+    f.addressJp.enterKeyHint = withTix ? "next" : "done";
     if (part) part.fill(withTix ? stop : {});
     at = str(stop.lat) !== "" && str(stop.lng) !== "" ? { lat: str(stop.lat), lng: str(stop.lng) } : { lat: "", lng: "" };
     was = null;
@@ -755,7 +768,7 @@ export function mountStopSheet(root, store, { keep = null, storage = null } = {}
   // The keyboard's Next, in a one-line field, goes to the next field (the
   // directions box among them); on the last one it puts the keyboard away.
   // Enter in the directions box is its own (a new line).
-  const order = [f.title, f.time, f.detail, f.gettingThere, f.travelMin, f.place, pin, f.link, f.signJp, ...(part ? part.inputs() : [])];
+  const order = [f.title, f.time, f.detail, f.gettingThere, f.travelMin, f.place, pin, f.link, f.signJp, f.nameJp, f.addressJp, ...(part ? part.inputs() : [])];
   sheet.addEventListener("keydown", (ev) => {
     // Only the fields that show (the ticket's facts are hidden before migrate: minor 1).
     const shown = order.filter((x) => !x.closest("[hidden]"));

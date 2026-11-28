@@ -149,7 +149,7 @@ function mcpStopFields_(args) {
     out.time = time;
   }
   if (args.travel_min !== undefined && args.travel_min < 0) mcpBad_("travel_min has to be 0 or more.");
-  ["date", "title", "detail", "getting_there", "travel_min", "fixed", "place", "sign_jp", "booked", "link", "photo", "note"].forEach(function (k) {
+  ["date", "title", "detail", "getting_there", "travel_min", "fixed", "place", "sign_jp", "booked", "link", "photo", "note", "name_jp", "address_jp"].forEach(function (k) {
     if (args[k] !== undefined) out[mcpCamel_(k)] = args[k];
   });
   return out;
@@ -497,6 +497,8 @@ function mcpTools_() {
       link: arg("string", "A https:// link, such as the booking."),
       photo: arg("string", "A https:// link to a photo."),
       note: arg("string", "A note, under 300 letters."),
+      name_jp: arg("string", "The place’s full name in Japanese, to show a taxi driver."),
+      address_jp: arg("string", "The address in Japanese, to show a taxi driver."),
     };
   };
   var changeArgs = stopArgs(false);

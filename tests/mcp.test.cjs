@@ -181,7 +181,7 @@ test("tools/list names the twelve tools in order, each schema listing its own ar
   assert.deepEqual(tools.map((t) => t.name), ["get_trip", "explain_debt", "add_expense", "add_stop", "change_stop", "remove_stop", "save_stay", "remove_stay", "set_day", "get_history", "undo", "sync_payments"]);
   const props = Object.fromEntries(tools.map((t) => [t.name, Object.keys(t.inputSchema.properties).sort()]));
   assert.deepEqual(props.add_expense, ["amount", "currency", "day", "kind", "note", "paid_by", "split", "title"]);
-  assert.deepEqual(props.add_stop, ["booked", "date", "detail", "fixed", "getting_there", "link", "note", "photo", "place", "sign_jp", "time", "title", "travel_min"]);
+  assert.deepEqual(props.add_stop, ["address_jp", "booked", "date", "detail", "fixed", "getting_there", "link", "name_jp", "note", "photo", "place", "sign_jp", "time", "title", "travel_min"]);
   assert.deepEqual(props.change_stop, [...props.add_stop, "id"].sort());
   assert.deepEqual(props.save_stay, ["address_jp", "first_night", "id", "last_night", "link", "name", "name_jp", "note", "photo", "place", "tk_name", "tk_people", "tk_ref", "tk_room"]);
   assert.deepEqual(props.set_day, ["city", "date", "from_en", "from_jp", "line_colour", "line_en", "line_jp", "title", "to_en", "to_jp"]);
@@ -300,6 +300,23 @@ test("the write tools map their arguments to the API and answer { <kind>, log_id
   assert.deepEqual([e.expense.amount, e.expense.currency, e.expense.paidBy, e.expense.split, e.expense.note, e.expense.kind, e.expense.day, e.expense.rate], [12.5, "CAD", "Ajen", ["Mo", "Ajen"], "airport", "transport", "2026-12-13", 111]);
   assert.equal(refusal(fake, "add_expense", { title: "x", amount: 1, currency: "USD", paid_by: "Mo" }), "Use yen or Canadian dollars.");
   assert.equal(refusal(fake, "add_expense", { title: "x", amount: 1, currency: "JPY", paid_by: "Nobody" }), "Pick who paid.");
+});
+
+test("the connector sets a stop's Japanese for a taxi driver (#95): add_stop and change_stop take name_jp and address_jp", () => {
+  const fake = createFakeBackend(plan, { clock: () => "2026-12-11T01:00:00.000Z" });
+  const s = ok(fake, "add_stop", { date: "2026-12-12", title: "Dinner, Torihana", time: "19:00", name_jp: "炭火焼鳥 鳥花 湖畔店", address_jp: "架空県湖畔市港町9-9-9 みどりビル3階" });
+  assert.deepEqual([s.stop.nameJp, s.stop.addressJp], ["炭火焼鳥 鳥花 湖畔店", "架空県湖畔市港町9-9-9 みどりビル3階"]);
+  const row = fake.tables.Stops.find((r) => r.id === s.stop.id);
+  assert.deepEqual([row.name_jp, row.address_jp], ["炭火焼鳥 鳥花 湖畔店", "架空県湖畔市港町9-9-9 みどりビル3階"]);
+  // change_stop with only the address keeps the name.
+  const c = ok(fake, "change_stop", { id: s.stop.id, address_jp: "架空県湖畔市港町1-2-3" });
+  assert.deepEqual([c.stop.nameJp, c.stop.addressJp], ["炭火焼鳥 鳥花 湖畔店", "架空県湖畔市港町1-2-3"]);
+  const n = ok(fake, "change_stop", { id: s.stop.id, name_jp: "" });
+  assert.deepEqual([n.stop.nameJp, n.stop.addressJp], ["", "架空県湖畔市港町1-2-3"]);
+  assert.equal(refusal(fake, "change_stop", { id: s.stop.id, address_jp: "あ".repeat(201) }), "Keep the address under 200 letters.");
+  // get_trip reads them with the stop.
+  const trip = ok(fake, "get_trip", {});
+  assert.equal(trip.stops.find((x) => x.id === s.stop.id).addressJp, "架空県湖畔市港町1-2-3");
 });
 
 test("change_stop writes only the columns that changed (a hand-typed cell elsewhere is kept)", () => {

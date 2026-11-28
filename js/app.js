@@ -15,6 +15,7 @@ import { mountLine } from "./views/line.js";
 import { mountHistory } from "./views/history.js";
 import { mountYou } from "./views/you.js";
 import { mountStayCard } from "./views/staycard.js";
+import { mountDriver } from "./views/driver.js";
 import { mountAllDays } from "./views/alldays.js";
 import { mountStopSheet } from "./views/stopsheet.js";
 import { mountUndoBar } from "./views/ubar.js";
@@ -416,7 +417,11 @@ function start() {
   // The Days sheets: the hotel card, the list of every day and the stop sheet.
   // The hotel card's Edit opens Edit stay (js/views/staysheet.js); its Done or a
   // finished Save opens the card again. Show booking holds the booking up.
+  // The driver's screen (js/views/driver.js), mounted once: the hotel card's
+  // 運転手さんへ and an open stop's 行先 (#95) both hold it up.
+  const driver = mountDriver(phone);
   const stayCard = mountStayCard(phone, store, {
+    driver,
     where,
     keep,
     clock,
@@ -451,6 +456,7 @@ function start() {
   // booking off its hook, its night by the trip's clock.
   const stub = mountStub(phone, store, keep, { clock: () => tripNow(store.state, clock.now()) });
   const closeDaySheets = () => {
+    driver.close(false);
     stub.close(false);
     stayCard.close(false);
     allDays.close(false);
@@ -806,6 +812,33 @@ function start() {
     }
     return out;
   };
+  // An open stop's 行先 (#95): the driver's screen with the stop's time and
+  // title for the one holding the phone. While it is up a store change
+  // redraws it from the stop as it is now; a stop removed, or one that lost
+  // its Japanese, closes it. Done gives focus back to the block (found again
+  // if a redraw replaced it).
+  let driverStop = null;
+  const liveStop = (id) => (store.state.stops || []).find((x) => x && x.id === id && !x.deleted) || null;
+  const stopWhat = (st) => ({ mark: "行先", title: [st.time, st.title].filter(Boolean).join(" "), nameJp: st.nameJp, addressJp: st.addressJp });
+  const openStopDriver = (id, button) => {
+    const st = liveStop(id);
+    if (!st) return;
+    closeForDays();
+    const block = () => (button.isConnected ? button : document.querySelector('#rail .r[data-id="' + CSS.escape(id) + '"] .dst'));
+    if (driver.open(stopWhat(st), block)) driverStop = id;
+  };
+  driver.onChange((on) => {
+    if (!on) driverStop = null;
+  });
+  store.subscribe((s) => {
+    if (s && s.status === "nokey") {
+      driver.close(false);
+      return;
+    }
+    if (!driverStop || !driver.isOpen()) return;
+    const st = liveStop(driverStop);
+    driver.update(st ? stopWhat(st) : null);
+  });
   const days = mountDays(document.getElementById("vDays"), store, {
     clock,
     where,
@@ -843,6 +876,7 @@ function start() {
       closeForDays();
       stub.open(id, button);
     },
+    onDriver: (id, button) => openStopDriver(id, button),
   });
   mountMoney(document.getElementById("vMoney"), store, {
     onRing: ring,

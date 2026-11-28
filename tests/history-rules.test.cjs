@@ -144,6 +144,8 @@ test("stop sentences", () => {
   assert.equal(P.summarize("edit", "stop", A, { ...A, time: "15:30" }), "moved Shibuya Sky to Sat Dec 12 15:30");
   assert.equal(P.summarize("edit", "stop", A, { ...A, date: "2026-12-13", time: "" }), "moved Shibuya Sky to Sun Dec 13");
   assert.equal(P.summarize("edit", "stop", A, { ...A, gettingThere: "Walk", travelMin: 5, link: "https://x.test" }), "changed Shibuya Sky: directions, travel time, link");
+  // The Japanese for a taxi driver (#95), in History's own words; the words themselves never go in a sentence.
+  assert.equal(P.summarize("edit", "stop", { ...A, nameJp: "", addressJp: "" }, { ...A, nameJp: "鳥花", addressJp: "架空県湖畔市1-2-3" }), "changed Shibuya Sky: Japanese name, Japanese address");
 });
 test("stay and day sentences", () => {
   const stay = { id: "y1", name: "Asakusa hotel" };

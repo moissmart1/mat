@@ -2677,6 +2677,17 @@ test("a stop: added, shown at once, confirmed, undone", async () => {
   assert.equal(fake.tables.Stops.length, 1);
 });
 
+test("a stop added with no Japanese holds both as \"\" at once (STOP_BLANK, #95)", async () => {
+  const { store } = phone({ seed: {} });
+  await store.boot();
+  store.addStop({ date: "2026-12-12", title: "Shibuya Sky" });
+  const shown = store.state.stops.at(-1);
+  assert.deepEqual([shown.nameJp, shown.addressJp], ["", ""]);
+  await store.idle();
+  const saved = store.state.stops.at(-1);
+  assert.deepEqual([saved.nameJp, saved.addressJp, saved.pending], ["", "", undefined]);
+});
+
 test("a stop edit the phone knows never left is rolled back and said not saved; nothing is queued", async () => {
   const { store, net, storage } = phone({ seed: { stops: [SKY] } });
   await store.boot();

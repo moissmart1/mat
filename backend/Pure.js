@@ -7,7 +7,7 @@ var TABS = {
   // tz: a day in its own time zone (blank: the trip's); kind: "eve" for the
   // evening before the first day. Both typed in the Sheet only: no action writes them.
   Days: ["date", "city", "title", "line_jp", "line_en", "line_colour", "from_jp", "from_en", "to_jp", "to_en", "lat", "lng", "tz", "kind"],
-  Stops: ["id", "date", "time", "title", "detail", "getting_there", "travel_min", "fixed", "place", "sign_jp", "booked", "link", "photo", "note", "deleted_at", "lat", "lng", "tk_ref", "tk_name", "tk_people", "tk_seat"],
+  Stops: ["id", "date", "time", "title", "detail", "getting_there", "travel_min", "fixed", "place", "sign_jp", "booked", "link", "photo", "note", "deleted_at", "lat", "lng", "tk_ref", "tk_name", "tk_people", "tk_seat", "name_jp", "address_jp"],
   Stays: ["id", "name", "name_jp", "address_jp", "first_night", "last_night", "note", "place", "link", "photo", "deleted_at", "lat", "lng", "tk_ref", "tk_name", "tk_people", "tk_room"],
   Expenses: ["id", "day", "title", "amount", "currency", "rate", "paid_by", "split", "split_mode", "split_vals", "note", "kind", "receipt", "added_by", "added_at", "deleted_at", "planner_id"],
   Settlements: ["id", "from", "to", "cad", "stamped_by", "stamped_at", "seed", "rot", "removed_at"],
@@ -369,9 +369,14 @@ function validateStop(input, dayDates) {
     if (!fact.ok) return fact;
     facts[TICKET_FACTS_[i]] = fact.value;
   }
+  // For a taxi driver (#95): the stay's own words and limits.
+  var nameJp = optText_(input.nameJp, 80, "Keep the Japanese name under 80 letters.");
+  if (!nameJp.ok) return nameJp;
+  var addressJp = optText_(input.addressJp, 200, "Keep the address under 200 letters.");
+  if (!addressJp.ok) return addressJp;
   return {
     ok: true,
-    value: { id: input.id, date: input.date, time: time, title: title, detail: detail.value, gettingThere: there.value, travelMin: travel, fixed: fixed.value, place: place.value, signJp: sign.value, booked: booked.value, link: link.value, photo: photo.value, note: note.value, lat: at.value.lat, lng: at.value.lng, tkRef: facts.tkRef, tkName: facts.tkName, tkPeople: facts.tkPeople, tkSeat: facts.tkSeat },
+    value: { id: input.id, date: input.date, time: time, title: title, detail: detail.value, gettingThere: there.value, travelMin: travel, fixed: fixed.value, place: place.value, signJp: sign.value, booked: booked.value, link: link.value, photo: photo.value, note: note.value, lat: at.value.lat, lng: at.value.lng, tkRef: facts.tkRef, tkName: facts.tkName, tkPeople: facts.tkPeople, tkSeat: facts.tkSeat, nameJp: nameJp.value, addressJp: addressJp.value },
   };
 }
 
@@ -556,6 +561,8 @@ function stopFromRow(o) {
     tkName: cellText_(o.tk_name),
     tkPeople: cellText_(o.tk_people),
     tkSeat: cellText_(o.tk_seat),
+    nameJp: cellText_(o.name_jp),
+    addressJp: cellText_(o.address_jp),
   };
 }
 
@@ -668,6 +675,8 @@ function stopToRow(s) {
   put_(o, "tk_name", s.tkName);
   put_(o, "tk_people", s.tkPeople);
   put_(o, "tk_seat", s.tkSeat);
+  put_(o, "name_jp", s.nameJp);
+  put_(o, "address_jp", s.addressJp);
   return o;
 }
 
@@ -969,7 +978,7 @@ function expenseDiff_(before, after) {
   return "changed " + after.title + (changed.length ? ": " + changed.join(", ") : "");
 }
 
-var STOP_FIELD_LABELS_ = [["detail", "detail"], ["gettingThere", "directions"], ["travelMin", "travel time"], ["fixed", "fixed time"], ["place", "place"], ["signJp", "sign name"], ["booked", "booked"], ["link", "link"], ["photo", "photo"], ["note", "note"], ["lat", "map"], ["lng", "map"], ["tkRef", "ticket"], ["tkName", "ticket"], ["tkPeople", "ticket"], ["tkSeat", "ticket"]];
+var STOP_FIELD_LABELS_ = [["detail", "detail"], ["gettingThere", "directions"], ["travelMin", "travel time"], ["fixed", "fixed time"], ["place", "place"], ["signJp", "sign name"], ["booked", "booked"], ["link", "link"], ["photo", "photo"], ["note", "note"], ["lat", "map"], ["lng", "map"], ["tkRef", "ticket"], ["tkName", "ticket"], ["tkPeople", "ticket"], ["tkSeat", "ticket"], ["nameJp", "Japanese name"], ["addressJp", "Japanese address"]];
 
 function stopDiff_(before, after) {
   if (before.title !== after.title) return "renamed " + before.title + " to " + after.title;

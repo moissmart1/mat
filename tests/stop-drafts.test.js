@@ -100,3 +100,18 @@ test("dropAddDraft takes one new-stop draft off the phone and nothing else", asy
   assert.ok(s.getItem(draftKey([...day, "two00002"])));
   dropAddDraft({ removeItem() { throw new Error("blocked"); } }, day, "two00002");
 });
+
+test("a half-typed Japanese address for a taxi driver comes back from a draft (#95)", async () => {
+  const { updateStopDraft, draftToRestore, stopDrafts } = await import("../js/views/stopsheet.js");
+  const s = memory();
+  const scope = ["Trip", "2030-01-01", "A", "edit", "stop0001"];
+  // The sheet opened with no Japanese; the address is half typed, then the sheet is closed.
+  const opened = { stWhat: "Dinner, Torihana", stSign: "鳥花", stNameJp: "", stAddrJp: "" };
+  const draft = updateStopDraft(null, opened, { ...opened, stNameJp: "炭火焼鳥 鳥花", stAddrJp: "架空県湖畔市港町9-9" }, null);
+  assert.deepEqual(draft.fields, { stNameJp: "炭火焼鳥 鳥花", stAddrJp: "架空県湖畔市港町9-9" });
+  stopDrafts(s, scope).write(draft);
+  // Reopened as it was: both come back.
+  assert.deepEqual(draftToRestore(stopDrafts(s, scope).read(), opened), { stNameJp: "炭火焼鳥 鳥花", stAddrJp: "架空県湖畔市港町9-9" });
+  // Another phone filled the address since: its value wins, the name still comes back.
+  assert.deepEqual(draftToRestore(stopDrafts(s, scope).read(), { ...opened, stAddrJp: "架空県湖畔市1-2-3" }), { stNameJp: "炭火焼鳥 鳥花" });
+});

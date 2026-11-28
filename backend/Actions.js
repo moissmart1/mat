@@ -100,7 +100,7 @@ function planKind_(kind) {
   if (kind === "stop") {
     return {
       tab: "Stops", key: "id", deletable: true, fromRow: stopFromRow, toRow: stopToRow, missing: MSG_.noStop,
-      fields: ["date", "time", "title", "detail", "gettingThere", "travelMin", "fixed", "place", "signJp", "booked", "link", "photo", "note", "lat", "lng", "tkRef", "tkName", "tkPeople", "tkSeat"],
+      fields: ["date", "time", "title", "detail", "gettingThere", "travelMin", "fixed", "place", "signJp", "booked", "link", "photo", "note", "lat", "lng", "tkRef", "tkName", "tkPeople", "tkSeat", "nameJp", "addressJp"],
     };
   }
   if (kind === "stay") {
@@ -999,6 +999,7 @@ function addStop_(args, ctx) {
   var v = validateStop(args.stop, tripDates_());
   if (!v.ok) return err_("bad_input", v.message);
   if (factsNeedMigrate_(v.value)) return err_("needs_migrate", MSG_.needsMigrate);
+  if (driverNeedsMigrate_(v.value)) return err_("needs_migrate", MSG_.needsMigrate);
   return addPlanItem_("stop", v.value, ctx);
 }
 
@@ -1025,6 +1026,7 @@ function updateStop_(args, ctx) {
   var v = validateStop(merged, tripDates_());
   if (!v.ok) return err_("bad_input", v.message);
   if (factsNeedMigrate_(v.value)) return err_("needs_migrate", MSG_.needsMigrate);
+  if (driverNeedsMigrate_(v.value)) return err_("needs_migrate", MSG_.needsMigrate);
   // A new place: the old coordinates were for the old one (unless new ones came with it).
   if (v.value.place !== cur.place && patch.lat === undefined && patch.lng === undefined) {
     v.value.lat = "";
@@ -2293,6 +2295,11 @@ function ticketsReady_() {
 function factsNeedMigrate_(stop) {
   var any = stop.tkRef !== "" || stop.tkName !== "" || stop.tkPeople !== "" || stop.tkSeat !== "";
   return any && !hasColumn_("Stops", "tk_seat");
+}
+
+// A stop with its Japanese for a taxi driver (#95) on a Sheet whose Stops tab lacks the columns: refused rather than dropped.
+function driverNeedsMigrate_(stop) {
+  return (stop.nameJp !== "" || stop.addressJp !== "") && (!hasColumn_("Stops", "name_jp") || !hasColumn_("Stops", "address_jp"));
 }
 
 // A stay with any booking fact filled on a Sheet whose Stays tab lacks the columns: refused rather than dropped.
