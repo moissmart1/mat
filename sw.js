@@ -217,9 +217,11 @@ function offlinePage() {
 
 async function shell(request) {
   const navigate = request.mode === "navigate";
-  const cache = await caches.open(SHELL_CACHE);
+  // Looked up with cacheName, never caches.open: open makes the cache when it is not there, and
+  // after Forget or a refill that failed an empty mat-shell- cache must not come back from a fetch.
+  const only = { cacheName: SHELL_CACHE };
   // Opening the app is always the kept front page.
-  const kept = navigate ? await cache.match("./") : await cache.match(request);
+  const kept = navigate ? await caches.match("./", only) : await caches.match(request, only);
   if (kept) return kept;
   try {
     return await fetch(request);
