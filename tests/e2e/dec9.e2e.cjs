@@ -460,6 +460,15 @@ cases.push(
     },
   },
   {
+    name: "one hotel for both nights keeps both rows before 04:00 on Dec 9",
+    timezoneId: ET,
+    async run({ page }) {
+      await ready(page, et("2026-12-09T02:00"), { seed: withStay({ lastNight: "2026-12-09" }) });
+      assert.equal(await count(page, D1 + " .tk-stay"), 2);
+      assert.equal(await count(page, EVE_STAY), 1, "one in the strip");
+    },
+  },
+  {
     name: "an eve with no stay has no stay row",
     timezoneId: ET,
     async run({ page }) {
@@ -474,13 +483,26 @@ cases.push(
     async run({ page }) {
       const backend = await ready(page, et("2026-12-08T17:00"));
       assert.equal(await has(page, row(TRAIN), "is-open"), true, "the eve's next stop is open");
-      await page.evaluate((sel) => { document.querySelector(sel).__mine = true; }, EVE_STAY);
-      const w = await backend.fake({ key: "test-key", actor: "Ajen", action: "setDay", args: { date: "2026-12-15", patch: { title: "Snow" } } });
-      assert.equal(w.ok, true, JSON.stringify(w));
+      assert.equal(await text(page, row(TRAIN) + " .r-lv"), "Next, in 10 min.");
+      await page.evaluate(([sel, r]) => { document.querySelector(sel).__mine = true; document.querySelector(r).__mine = true; }, [EVE_STAY, row(TRAIN)]);
+      const mine = (sel) => page.evaluate((x) => !!document.querySelector(x).__mine, sel);
+      // A minute passes and a sync brings nothing new: Day 1 redraws (the line moves), the row and the open stop are the same nodes.
+      const before = backend.requests.length;
       await advance(page, backend, 60000);
-      await until(() => page.evaluate(() => document.querySelectorAll("#rail .pg .tk").length === 12), "the twelve tickets draw", 8000);
+      await until(() => backend.requests.length > before, "a sync went out");
+      await until(async () => (await text(page, row(TRAIN) + " .r-lv")) === "Next, in 9 min.", "Day 1 redrew with the new minute");
       assert.equal(await has(page, row(TRAIN), "is-open"), true, "the stop is still open");
-      assert.equal(await page.evaluate((sel) => !!document.querySelector(sel).__mine, EVE_STAY), true, "the row is the same node");
+      assert.equal(await mine(EVE_STAY), true, "the row is the same node when it did not change");
+      // Another phone renames the hotel: the row is replaced, the stop above it is the same node and still open.
+      const w = await backend.fake({ key: "test-key", actor: "Ajen", action: "saveStay", args: { merge: true, stay: { id: "dec9stay0801", name: "Lakeside Airport Inn East" } } });
+      assert.equal(w.ok, true, JSON.stringify(w));
+      await advance(page, backend, 20000);
+      await until(async () => /Lakeside Airport Inn East/.test((await stayRowShape(page)).text || ""), "the renamed hotel reaches the strip", 8000);
+      assert.equal(await mine(EVE_STAY), false, "the row was replaced");
+      assert.equal((await stayRowShape(page)).last, true, "and still ends the strip");
+      assert.equal(await count(page, D1 + " .tk-stay"), 1);
+      assert.equal(await mine(row(TRAIN)), true, "the stop above kept its node");
+      assert.equal(await has(page, row(TRAIN), "is-open"), true, "and is still open");
     },
   },
   {
