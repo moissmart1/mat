@@ -120,7 +120,6 @@ export function mountCheck(phone, store, { clock, beforeOpen = () => {}, onOpenL
     go.setAttribute("aria-hidden", "true");
     const b = el("button", "ck-r");
     b.type = "button";
-    b.setAttribute("role", "listitem");
     b.dataset.id = l.id;
     b.setAttribute("aria-label", dayHead(l.date, []).en + ". " + l.title + ". " + l.why + ". Open to fix");
     b.append(date, body, go);
@@ -128,7 +127,11 @@ export function mountCheck(phone, store, { clock, beforeOpen = () => {}, onOpenL
       close(false);
       onOpenLine(l.open);
     });
-    return b;
+    // The list item is the wrapper: the button keeps its own role for a screen reader.
+    const li = el("div", "ck-li");
+    li.setAttribute("role", "listitem");
+    li.append(b);
+    return li;
   }
 
   function drawSheet() {

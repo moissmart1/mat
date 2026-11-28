@@ -190,5 +190,5 @@ button.set-r:active,a.set-r:active{background:var(--key-hi);transform:translateY
 
 /* Held sideways: the stop sheet's Done bar lines up with its 14 px top (base.css). */
 @media (orientation:landscape) and (max-height:520px){
-  .sheet.stop .sheet-top{top:-14px;margin-top:-14px;padding-top:14px}
+  .sheet.stop .sheet-top,.sheet.ck .sheet-top{top:-14px;margin-top:-14px;padding-top:14px}
 }

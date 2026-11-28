@@ -226,7 +226,7 @@ i{font-style:normal}
   #reg,#line,#lineScrim,#hist,#histScrim,#you,#youScrim,#bulk,#bulkScrim{left:calc(50% - var(--rail) / 2);right:var(--rail)}
   /* Done stays in reach while a long sheet scrolls under it (as held sideways). */
   .sheet-top{position:sticky;top:-12px;z-index:1;margin:-12px calc(var(--gr) * -1) 8px calc(var(--gl) * -1);padding:12px var(--gr) 0 var(--gl);background:inherit}
-  .sheet.stop .sheet-top,.sheet.stay .sheet-top{top:-14px;margin-top:-14px;padding-top:14px}
+  .sheet.stop .sheet-top,.sheet.stay .sheet-top,.sheet.ck .sheet-top{top:-14px;margin-top:-14px;padding-top:14px}
   /* Which one are you: a sheet of a phone's width in the middle of the block, over everything (it waits for an answer). */
   .veil .sheet{right:0;left:0;margin:0 auto;width:min(100%,560px)}
   /* Notices and the no-signal strip span the two panes. */

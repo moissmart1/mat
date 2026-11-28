@@ -30,17 +30,24 @@ const EIGHT = ["stay-booking:" + INN, "place:" + LUNCH, "ticket:" + SKY, "place:
 
 const SHOTS = process.env.MAT_CHECK_SHOTS || "";
 // A picture at device scale 2 of the viewport the case runs in.
+const scaled = new WeakMap(); // page -> its protocol session, with the override on
 async function shot(page, name) {
   if (!SHOTS) return;
   fs.mkdirSync(SHOTS, { recursive: true });
-  const size = await page.evaluate(() => ({ w: innerWidth, h: innerHeight }));
-  const cdp = await page.context().newCDPSession(page);
-  await cdp.send("Emulation.setDeviceMetricsOverride", { width: size.w, height: size.h, deviceScaleFactor: 2, mobile: true });
+  // Once per page, at the page's own size, and left on (clearing it would size the page to the window).
+  if (!scaled.has(page)) {
+    const session = await page.context().newCDPSession(page);
+    scaled.set(page, session);
+    const size = page.viewportSize();
+    await session.send("Emulation.setDeviceMetricsOverride", { width: size.width, height: size.height, deviceScaleFactor: 2, mobile: true });
+  }
+  const cdp = scaled.get(page);
   await page.evaluate(() => document.fonts && document.fonts.ready);
   // The board's lines have filled in (a CSS animation).
   await until(() => page.evaluate(() => [...document.querySelectorAll(".led-wipe")].every((n) => !n.getClientRects().length)), "the board has filled in");
-  await page.screenshot({ path: path.join(SHOTS, name + ".jpg"), type: "jpeg", quality: 90 });
-  await cdp.send("Emulation.clearDeviceMetricsOverride");
+  // Through the protocol, so the picture is at the override's device scale (page.screenshot would be at 1).
+  const { data } = await cdp.send("Page.captureScreenshot", { format: "jpeg", quality: 90 });
+  fs.writeFileSync(path.join(SHOTS, name + ".jpg"), Buffer.from(data, "base64"));
 }
 
 const asOwner = { seed: WITH_PLAN, own: "Mo", tab: "days" };
@@ -181,7 +188,7 @@ cases.push({
     // A Japanese name: the hotel card.
     await tap("stay-jp:" + LODGE);
     await atRest(page, "#stay");
-    await expectText(page, "#stay .sy-name", /Niseko lodge|^$/);
+    await expectText(page, "#stay .sy-name", "Niseko lodge");
     await page.click("#stayDone");
     await atRest(page, "#stay", { open: false });
     // Nights with no stay: that day, on Days.
@@ -342,9 +349,10 @@ cases.push({
     assert.equal(await hit(x, box.ck.t - 4), "check", "its reach above " + JSON.stringify(box));
     assert.equal(await hit(x, box.ck.t + 3), "check");
     assert.equal(await hit(x, box.ck.b - 3), "check");
-    assert.equal(await hit(x, box.ck.b + 3), "check", "its reach below");
-    // Under that, This phone's own.
-    assert.equal(await hit(x, box.rdy.t + 7), "ready", "the line below keeps its own part");
+    // Neither line reaches into the other's visible part: the top of the green line is the green line's.
+    assert.equal(await hit(x, box.rdy.t + 1), "ready", "the visible top of This phone goes to This phone");
+    assert.equal(await hit(x, box.rdy.t + 3), "ready");
+    assert.equal(await hit(x, box.rdy.t + 7), "ready");
     assert.equal(await hit(x, box.rdy.b - 3), "ready");
     // Real taps: each opens its own sheet and not the other.
     await page.click("#ckLine");
@@ -372,9 +380,6 @@ cases.push({
     await lineUp(page);
     await thisPhone(page);
     assert.equal(await page.evaluate(() => !!document.querySelector("#vDays .has-foot")), true);
-    await page.evaluate(() => { document.getElementById("vDays").scrollTop = 0; });
-    await until(() => page.evaluate(() => document.getElementById("ckLine").getBoundingClientRect().top > 10), "Days is at its top");
-    await shot(page, "1-board-line");
   },
 });
 
@@ -384,13 +389,11 @@ cases.push({
   async run({ page }) {
     await owner(page);
     await lineUp(page);
-    const line = await page.evaluate(() => { const l = document.getElementById("ckLine"); const r = l.getBoundingClientRect(); return { w: r.width, sw: l.scrollWidth, cw: l.clientWidth, h: r.height, rights: r.right <= innerWidth, t: l.querySelector(".ck-t").getClientRects().length }; });
+    const line = await page.evaluate(() => { const l = document.getElementById("ckLine"); const r = l.getBoundingClientRect(); const t = l.querySelector(".ck-t"); return { sw: l.scrollWidth, cw: l.clientWidth, h: r.height, rights: r.right <= innerWidth, tsw: t.scrollWidth, tcw: t.clientWidth, tsh: t.scrollHeight, tch: t.clientHeight }; });
     assert.ok(line.sw <= line.cw + 0.5, "the line does not run sideways");
+    assert.ok(line.tsw <= line.tcw + 0.5 && line.tsh <= line.tch + 2, "no word of the count is clipped: " + JSON.stringify(line));
     assert.ok(line.rights, "the line is on the screen");
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-    await page.evaluate(() => { document.getElementById("vDays").scrollTop = 0; });
-    await until(() => page.evaluate(() => document.getElementById("ckLine").getBoundingClientRect().top > 10), "Days is at its top");
-    await shot(page, "1-board-line-320");
     await openSheet(page);
     const m = await page.evaluate(() => {
       const s = document.getElementById("check");
@@ -402,32 +405,42 @@ cases.push({
     assert.equal(m.rows.length, 8);
     assert.ok(m.rows.every((h) => h >= 44), "every row 44 px or more: " + m.rows);
     assert.ok(m.done >= 44, "Done is 44 px");
-    assert.ok(m.link >= 44 - 0.5 || m.link >= 36, "the Sheet link has its padding: " + m.link);
+    assert.ok(m.link >= 44, "the Sheet link is 44 px or more: " + m.link);
   },
 });
 
-cases.push({
-  name: "the sheet at 390 and 320 px: pictures",
-  viewport: { width: 320, height: 700 },
-  async run({ page }) {
-    if (!SHOTS) return;
-    await owner(page);
-    await lineUp(page);
-    await openSheet(page);
-    await shot(page, "1-sheet-320");
-  },
-});
-
-cases.push({
-  name: "the sheet at 390 px: picture",
-  async run({ page }) {
-    if (!SHOTS) return;
-    await owner(page);
-    await lineUp(page);
-    await openSheet(page);
-    await shot(page, "1-sheet");
-  },
-});
+// The pictures of the built screens: only when MAT_CHECK_SHOTS names a folder (otherwise these cases are not in the list).
+if (SHOTS) {
+  const atTop = async (page) => {
+    await page.evaluate(() => { document.getElementById("vDays").scrollTop = 0; });
+    await until(() => page.evaluate(() => document.getElementById("ckLine").getBoundingClientRect().top > 10), "Days is at its top");
+  };
+  cases.push({
+    name: "pictures at 390 px: the board line and the sheet",
+    async run({ page }) {
+      await owner(page);
+      await lineUp(page);
+      await thisPhone(page);
+      await atTop(page);
+      await shot(page, "1-board-line");
+      await openSheet(page);
+      await shot(page, "1-sheet");
+    },
+  });
+  cases.push({
+    name: "pictures at 320 px: the board line and the sheet",
+    viewport: { width: 320, height: 700 },
+    async run({ page }) {
+      await owner(page);
+      await lineUp(page);
+      await thisPhone(page);
+      await atTop(page);
+      await shot(page, "1-board-line-320");
+      await openSheet(page);
+      await shot(page, "1-sheet-320");
+    },
+  });
+}
 
 cases.push({
   name: "a new release waits while the sheet is open",
@@ -443,7 +456,10 @@ cases.push({
       setTimeout(() => resolve(false), 500);
     }));
     assert.equal(answered, true, "the page answers");
-    await advance(page, backend, 10000);
+    // Raced against a navigation, so a wrong reload fails here instead of hanging the call.
+    const navigated = new Promise((resolve) => page.once("framenavigated", () => resolve("reloaded")));
+    const moved = await Promise.race([advance(page, backend, 10000).then(() => "waited"), navigated]);
+    assert.equal(moved, "waited", "not while the sheet is open");
     assert.equal(await page.evaluate(() => window.__notReloaded !== true).catch(() => true), false, "not while the sheet is open");
     await page.click("#ckDone");
     await atRest(page, "#check", { open: false });

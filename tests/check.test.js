@@ -109,7 +109,7 @@ test("codes for some: names the holders and the others in trip order; a picture 
   const why = (state) => missing(state, NOW).filter((l) => l.kind === "codes").map((l) => l.why);
   assert.deepEqual(why(s([T("a", { stop: "c1" }, { who: "Mo" })])), ["A code for Mo, none for Ajen and Trenton"]);
   assert.deepEqual(why(s([T("a", { stop: "c1" }, { who: "Trenton" }), T("b", { stop: "c1" }, { who: "Mo" })])), ["Codes for Mo and Trenton, none for Ajen"]);
-  assert.deepEqual(why(s([T("a", { stop: "c1" }, { who: "Mo" }), T("b", { stop: "c1" }, { who: "Ajen" })], [{ name: "Mo" }, { name: "Ajen" }, { name: "Trenton" }, { name: "Izzah" }])), ["Codes for Mo and Ajen, none for Trenton and Izzah"]);
+  assert.deepEqual(why(s([T("a", { stop: "c1" }, { who: "Mo" }), T("b", { stop: "c1" }, { who: "Ajen" })], [{ name: "Mo" }, { name: "Ajen" }, { name: "Trenton" }, { name: "Kenji" }])), ["Codes for Mo and Ajen, none for Trenton and Kenji"]);
   assert.deepEqual(why(s([T("a", { stop: "c1" }, { who: "Mo" }), T("b", { stop: "c1" }, { who: "Ajen" }), T("c", { stop: "c1" }, { who: "trenton" })])), [], "all three hold one (any case)");
   assert.deepEqual(why(s([T("a", { stop: "c1" }, { who: "Mo" }), T("b", { stop: "c1" }, { who: "" })])), [], "one for everyone");
   assert.deepEqual(why(s([T("a", { stop: "c1" }, { who: "" })])), [], "a plain picture is not per person");
