@@ -3,7 +3,8 @@
 // e-Transfer address. While merely loading or offline, what is drawn stays.
 
 const assert = require("node:assert/strict");
-const { WITH_PLAN, NOON12, makeBackend, open, until, atRest, text, visible } = require("./helpers.cjs");
+const { WITH_PLAN, NOON12, makeBackend, open, advance, until, atRest, text, visible } = require("./helpers.cjs");
+const { geoStub } = require("./geostub.cjs");
 const { png } = require("./pictures.cjs");
 
 const line = (o) => ({ day: "2026-12-11", currency: "CAD", rate: 111, splitMode: "equal", splitVals: [], note: "", kind: "", deleted: false, ...o });
@@ -194,5 +195,66 @@ for (const size of SIZES) {
     },
   });
 }
+
+// ---- Location after the trip is taken off (review of mat#109, Important 1) ----
+// Location on, a request still on its way (held by the test), then the trip
+// comes off: its late answers write nothing back into the emptied storage, and
+// the phone is not asked again, also when the app comes back on screen.
+async function locationHeld(page) {
+  await geoStub(page, { mode: "silent", permission: "granted" });
+  await page.addInitScript(() => {
+    window.__geoHeld = [];
+    const g = navigator.geolocation;
+    g.getCurrentPosition = (ok, no, opts) => {
+      window.__geoCalls.push(opts || null);
+      window.__geoHeld.push({ ok, no });
+    };
+  });
+  const backend = await open(page, { seed: WITH_PLAN, nowMs: NOON12, tab: "days", storage: { "mat.where": "on" } });
+  await until(() => page.evaluate(() => window.__geoCalls.length === 1), "Location on: asked once on opening");
+  return backend;
+}
+async function assertLocationGone(page, backend) {
+  await page.evaluate(() => {
+    const h = window.__geoHeld[0];
+    h.no({ code: 1, message: "User denied Geolocation" });
+    h.ok({ coords: { latitude: 35.0036612, longitude: 135.7787213, accuracy: 20 }, timestamp: Date.now() });
+  });
+  await advance(page, backend, 3 * 60000);
+  await page.evaluate(() => {
+    for (const v of ["hidden", "visible"]) {
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => v });
+      document.dispatchEvent(new Event("visibilitychange"));
+    }
+  });
+  await advance(page, backend, 3 * 60000);
+  assert.equal(await page.evaluate(() => window.__geoCalls.length), 1, "the phone is not asked again");
+  assert.equal(await page.evaluate(() => localStorage.getItem("mat.where")), null, "nothing written back into the emptied storage");
+}
+
+cases.push({
+  name: "Forget this phone with Location on: a late answer writes nothing back and nothing asks again",
+  async run({ page }) {
+    const backend = await locationHeld(page);
+    await page.dispatchEvent("#youBtn", "click");
+    await atRest(page, "#you", { message: "settings open" });
+    await page.dispatchEvent("#setForget", "click");
+    await page.dispatchEvent("#setForget", "click");
+    await until(() => page.evaluate(() => globalThis.__matTest.store.state.status === "nokey" && localStorage.getItem("mat.key") === null), "the trip is off the phone");
+    await assertLocationGone(page, backend);
+  },
+});
+
+cases.push({
+  name: "a refused key with Location on: a late answer writes nothing back and nothing asks again",
+  async run({ page }) {
+    const backend = await locationHeld(page);
+    backend.failWith = "bad_key";
+    await page.evaluate(() => globalThis.__matTest.store.checkRev());
+    await until(() => page.evaluate(() => globalThis.__matTest.store.state.status === "nokey" && localStorage.getItem("mat.key") === null), "the trip is off the phone");
+    assert.equal(await page.evaluate(() => localStorage.getItem("mat.where")), null);
+    await assertLocationGone(page, backend);
+  },
+});
 
 module.exports = cases;

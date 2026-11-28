@@ -467,7 +467,14 @@ export function mountDays(root, store, { clock, where = null, storage = null, re
   }
   // A mouse press on a neighboring control must not focus it and scroll
   // the strip before the click has a chance to select its day.
-  const neighborPaper = (ev) => ev.target.closest(".pg.is-neighbor .tk");
+  // The day a jump is gliding to is never a neighbor: until the strip is half
+  // way there, the scroll above puts cur back on the day it left, which marks
+  // the chosen day a neighbor again, and a click on its stay row or a stop
+  // only selected the day it was already going to (CI 2026-11-27, stay.e2e).
+  const neighborPaper = (ev) => {
+    const paper = ev.target.closest(".pg.is-neighbor .tk");
+    return paper && !(aim !== null && paper.closest(".pg").dataset.date === dates[aim]) ? paper : null;
+  };
   rail.addEventListener("pointerdown", (ev) => {
     if (ev.button === 0 && ev.pointerType === "mouse" && neighborPaper(ev)) ev.preventDefault();
   });
