@@ -14,11 +14,17 @@
 //   Dec 16  four nights with no stay           (night:2026-12-16)
 // Pictures of the built screens are taken only when MAT_CHECK_SHOTS names a
 // folder (390 x 844 and 320 x 700 at device scale 2, invented data).
+//
+// The roll call (issue 96): the owner's sheet also stamps who has opened MAT
+// on their own link and whose phone said it is ready for no signal, and the
+// line names who needs a nudge. The cases of part 1 open the others' links
+// first (everyoneOpened), so the line there is about missing things alone.
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
-const { WITH_PLAN, open, advance, until, atRest, text, expectText, visible } = require("./helpers.cjs");
+const { WITH_PLAN, NOON12, makeBackend, ownKey, open, advance, until, atRest, text, expectText, visible } = require("./helpers.cjs");
+const { png } = require("./pictures.cjs");
 
 const KEY = "test-key";
 const D12 = "2026-12-12";
@@ -52,9 +58,20 @@ async function shot(page, name) {
 
 const asOwner = { seed: WITH_PLAN, own: "Mo", tab: "days" };
 
+// A backend on which Ajen and Trenton have each opened MAT once on their own
+// link (as a phone's first load would): nobody needs a nudge.
+async function everyoneOpened(seed = WITH_PLAN, nowMs = NOON12) {
+  const backend = makeBackend(seed, { now: nowMs });
+  for (const name of ["Ajen", "Trenton"]) {
+    const r = await backend.fake({ key: ownKey(backend, name), action: "load", args: {} });
+    assert.equal(r.ok, true, r.message);
+  }
+  return backend;
+}
+
 // The owner's phone on the plan; the line has drawn.
 async function owner(page, over = {}) {
-  const backend = await open(page, { ...asOwner, ...over });
+  const backend = await open(page, { ...asOwner, backend: over.backend || (await everyoneOpened(over.seed || WITH_PLAN)), ...over });
   await until(() => page.evaluate(() => document.querySelectorAll("#rail .pg .tk").length === 11), "the tickets draw");
   return backend;
 }
@@ -251,7 +268,7 @@ cases.push({
       // Every stay named in Japanese and booked, and one for the nights from Dec 16 on, so no night is bare.
       stays: [...WITH_PLAN.stays, { id: "planstay0003", name: "Kyoto inn", firstNight: "2026-12-16", lastNight: "2026-12-19" }].map((s) => ({ ...s, nameJp: s.nameJp || "宿", addressJp: s.addressJp || "住所", tkRef: "R-1" })),
     };
-    await open(page, { seed, own: "Mo", tab: "days" });
+    await open(page, { backend: await everyoneOpened(seed), own: "Mo", tab: "days" });
     await until(() => page.evaluate(() => document.querySelectorAll("#rail .pg .tk").length === 11), "the tickets draw");
     await thisPhone(page);
     assert.equal(await visible(page, "#ckLine"), false, "no line");
@@ -278,7 +295,7 @@ cases.push({
     await page.click("#youBtn");
     await atRest(page, "#you");
     assert.equal(await visible(page, "#setCheck"), true);
-    await expectText(page, "#setCheck", "点検Trip checkWhat the trip is still missing8 missing");
+    await expectText(page, "#setCheck", "点検Trip checkWhat the trip is still missing, and who has opened8 missing");
     await page.evaluate(() => document.getElementById("setCheck").scrollIntoView({ block: "center" }));
     await shot(page, "1-you-row");
     await page.click("#setCheck");
@@ -482,5 +499,244 @@ cases.push({
     assert.deepEqual(await rowIds(page), ["stay-jp:" + LODGE, "stay-booking:" + LODGE, "night:2026-12-16"]);
   },
 });
+
+// ---------- the roll call (issue 96) ----------
+
+// 10:00 on Sun Nov 22 in Toronto: before the trip a link is dated by the Toronto calendar (review I1).
+const LINK_DAY = Date.parse("2026-11-22T10:00:00-05:00");
+// Each row of the roll call as [name, words under the name, opened cell's label, the stamp's day, ready cell's label, ready box].
+const rollRows = (page) => page.evaluate(() => [...document.querySelectorAll("#ckRoll .ck-p")].map((r) => {
+  const cells = r.querySelectorAll(".ck-st");
+  return [
+    r.querySelector(".ck-n b").textContent,
+    [...r.querySelectorAll(".ck-n small")].map((n) => (n.classList.contains("is-not") ? "!" : "") + n.textContent).join(" / "),
+    cells[0].getAttribute("aria-label"),
+    cells[0].querySelector(".ck-ds b") ? cells[0].querySelector(".ck-ds b").textContent : cells[0].querySelector(".ck-no") ? "empty " + cells[0].querySelector(".ck-no").textContent : "?",
+    cells[1].getAttribute("aria-label"),
+    cells[1].querySelector(".ck-ok") ? "済" : cells[1].querySelector(".ck-no") ? "empty" : "?",
+  ];
+}));
+// The kind the line "This phone" shows on a page (its model's kind).
+const kindOf = (page) => page.evaluate(() => { const n = document.querySelector("#vDays .rdy"); return n && !n.hidden && !n.classList.contains("is-pending") ? n.dataset.kind : null; });
+const seen = (backend) => JSON.parse(backend.fake.props.SEEN || "{}");
+// Mo's phone loads again (as after a change of rev, or Fetch): the roll call is what that load answered.
+const moLoads = (page) => page.evaluate(() => globalThis.__matTest.store.refresh());
+let picN = 0;
+async function addPic(backend, where) {
+  const ticket = { id: "tkt96" + String(++picN).padStart(5, "0"), ...where, who: "", seat: "", page: 1, mime: "image/png", w: 120, h: 120, data: png(120, 120, 40 + picN) };
+  const r = await backend.fake({ key: KEY, actor: "Mo", action: "addTicket", args: { ticket } });
+  assert.equal(r.ok, true, r.message);
+}
+
+cases.push({
+  name: "Ajen opens: Mo's sheet stamps Ajen's opened day after Mo's next load",
+  async run(ctx) {
+    const { page } = ctx;
+    const backend = makeBackend(WITH_PLAN, { now: NOON12 });
+    ownKey(backend, "Ajen");
+    await open(page, { ...asOwner, backend });
+    await lineUp(page);
+    await thisPhone(page);
+    await expectText(page, "#ckLine .ck-t", "8 missing · 2 have not opened");
+    assert.equal(await page.getAttribute("#ckLine", "aria-label"), "Trip check: 8 missing · 2 have not opened. Open the list");
+    await openSheet(page);
+    assert.equal(await visible(page, "#ckRoll"), true);
+    assert.equal(await page.getAttribute("#ckRoll", "role"), "table");
+    assert.equal(await page.getAttribute("#ckRoll", "aria-label"), "Roll call");
+    await expectText(page, "#ckRoll .ck-rh", "点呼Roll call開封Opened圏外Ready");
+    // The roll call sits above the missing list, the note under its last person.
+    assert.deepEqual(await page.evaluate(() => [...document.getElementById("check").children].map((n) => n.id || n.className)), ["sheet-top", "ckRoll", "ckRollNote", "ckMissH", "ckRows", "ckNone", "ck-foot"]);
+    await expectText(page, "#ckRollNote", "Each phone says two things only: that it opened, and whether it is ready for no signal.");
+    assert.deepEqual(await rollRows(page), [
+      ["Mo", "This phone", "Opened Dec 12", "12.12", "Ready", "済"],
+      ["Ajen", "!Not opened yet / Link made Dec 12", "Not opened", "empty 開", "Nothing said yet", "empty"],
+      ["Trenton", "!No link yet", "Not opened", "empty 開", "Nothing said yet", "empty"],
+    ]);
+    // The owner's seal is on (red); rows are not buttons: nothing in the roll call takes focus.
+    assert.equal(await page.evaluate(() => document.querySelector("#ckRoll .ck-p .seal").classList.contains("is-on")), true);
+    assert.equal(await page.evaluate(() => document.querySelectorAll("#ckRoll button, #ckRoll a, #ckRoll [tabindex]").length), 0);
+    // Ajen opens MAT on his own link.
+    const ajen = await ctx.newPhone();
+    await open(ajen, { backend, own: "Ajen", tab: "days" });
+    await until(() => seen(backend).Ajen, "Ajen's load is noted");
+    assert.deepEqual(Object.keys(seen(backend).Ajen), ["o"]);
+    // Mo's sheet is as it was until Mo's phone loads again (no rev bump, so no phone reloads for it).
+    assert.equal((await rollRows(page))[1][1], "!Not opened yet / Link made Dec 12");
+    await moLoads(page);
+    await until(async () => (await rollRows(page))[1][3] === "12.12", "Ajen's row is stamped");
+    assert.deepEqual((await rollRows(page))[1], ["Ajen", "Opened Dec 12 / Nothing said about no signal yet", "Opened Dec 12", "12.12", "Nothing said yet", "empty"]);
+    await expectText(page, "#ckLine .ck-t", "8 missing · Trenton has not opened");
+  },
+});
+
+cases.push({
+  name: "Ajen's phone says ready: Mo sees 済; says not ready: the circle is empty and the line names him",
+  async run(ctx) {
+    const { page } = ctx;
+    const backend = makeBackend(WITH_PLAN, { now: NOON12 });
+    await backend.fake({ key: ownKey(backend, "Trenton"), action: "load", args: {} });
+    // Ajen's phone fetches pictures only when he opens one: a picture added later is not on it.
+    const ajen = await ctx.newPhone();
+    await open(ajen, { backend, own: "Ajen", tab: "days", storage: { "mat.tixFetch": "open" } });
+    await until(async () => (await kindOf(ajen)) === "ready", "Ajen's phone is ready (no pictures yet)");
+    // Held 30 s: one load of its own says so.
+    await advance(ajen, backend, 31000);
+    await until(() => seen(backend).Ajen && seen(backend).Ajen.r === 1, "Ajen's phone said ready");
+    assert.equal(await ajen.evaluate(() => localStorage.getItem("mat.readySaid")), "1");
+    await open(page, { ...asOwner, backend });
+    await lineUp(page);
+    await thisPhone(page);
+    await expectText(page, "#ckLine .ck-t", "8 things missing");
+    await openSheet(page);
+    assert.deepEqual((await rollRows(page))[1], ["Ajen", "Ready for no signal, said Dec 12", "Opened Dec 12", "12.12", "Ready", "済"]);
+    await closeSheet(page);
+    // A picture is added that Ajen's phone does not fetch by itself: not ready.
+    await addPic(backend, { stay: LODGE });
+    await advance(ajen, backend, 21000);
+    await until(async () => (await kindOf(ajen)) === "missing", "Ajen's phone is missing a picture");
+    await advance(ajen, backend, 31000);
+    await until(() => seen(backend).Ajen.r === 0, "Ajen's phone said not ready");
+    await moLoads(page);
+    await expectText(page, "#ckLine .ck-t", /^\d+ missing · Ajen’s phone is not ready$/);
+    assert.match(await page.getAttribute("#ckLine", "aria-label"), /^Trip check: \d+ missing · Ajen’s phone is not ready\. Open the list$/);
+    await openSheet(page);
+    assert.deepEqual((await rollRows(page))[1], ["Ajen", "!Not ready yet, said Dec 12", "Opened Dec 12", "12.12", "Not ready", "empty"]);
+    await shot(page, "2-sheet");
+  },
+});
+
+cases.push({
+  name: "a person who has not opened shows the day the link was made",
+  async run({ page }) {
+    const backend = makeBackend(WITH_PLAN, { now: NOON12 });
+    await backend.fake({ key: ownKey(backend, "Ajen"), action: "load", args: { ready: true } });
+    backend.now = LINK_DAY;
+    ownKey(backend, "Trenton");
+    backend.now = NOON12;
+    await open(page, { ...asOwner, backend });
+    await lineUp(page);
+    await thisPhone(page);
+    await expectText(page, "#ckLine .ck-t", "8 missing · Trenton has not opened");
+    await openSheet(page);
+    assert.deepEqual((await rollRows(page))[2], ["Trenton", "!Not opened yet / Link made Nov 22", "Not opened", "empty 開", "Nothing said yet", "empty"]);
+    // Its words are bold black, not red (the red is kept for the stamps and the margin rule).
+    const ink = await page.evaluate(() => { const n = document.querySelector("#ckRoll .ck-p:nth-child(3) small.is-not"); const c = getComputedStyle(n); return [c.fontWeight, c.color]; });
+    assert.deepEqual(ink, ["900", await page.evaluate(() => getComputedStyle(document.querySelector("#ckRoll .ck-n b")).color)]);
+  },
+});
+
+cases.push({
+  name: "the line shows for people alone, with nothing missing",
+  async run({ page }) {
+    const seed = {
+      ...WITH_PLAN,
+      stops: WITH_PLAN.stops.map((s) => ({ ...s, place: s.place || "Somewhere", tkRef: s.fixed ? "MADE-UP-1" : s.tkRef })),
+      stays: [...WITH_PLAN.stays, { id: "planstay0003", name: "Kyoto inn", firstNight: "2026-12-16", lastNight: "2026-12-19" }].map((s) => ({ ...s, nameJp: s.nameJp || "宿", addressJp: s.addressJp || "住所", tkRef: "R-1" })),
+    };
+    const backend = makeBackend(seed, { now: NOON12 });
+    await open(page, { backend, own: "Mo", tab: "days" });
+    await lineUp(page);
+    await thisPhone(page);
+    await expectText(page, "#ckLine .ck-t", "2 have not opened");
+    assert.equal(await page.getAttribute("#ckLine", "aria-label"), "Trip check: 2 have not opened. Open the list");
+    await openSheet(page);
+    await expectText(page, "#ckMissT", "Still missing: nothing");
+    assert.equal(await visible(page, "#ckRoll"), true);
+    await closeSheet(page);
+    // Both open: nothing to nudge and nothing missing, the line goes.
+    for (const name of ["Ajen", "Trenton"]) await backend.fake({ key: ownKey(backend, name), action: "load", args: {} });
+    await moLoads(page);
+    await until(async () => !(await visible(page, "#ckLine")), "the line goes");
+    // You's row still opens the sheet, with the roll call.
+    await page.click("#youBtn");
+    await atRest(page, "#you");
+    await expectText(page, "#setCheckS", "What the trip is still missing, and who has opened");
+    await expectText(page, "#setCheckV", "Open");
+  },
+});
+
+cases.push({
+  name: "a friend's phone has no roll call anywhere and its This phone sheet carries the line",
+  async run(ctx) {
+    const { page } = ctx;
+    const backend = await everyoneOpened();
+    const ajen = page;
+    await open(ajen, { backend, own: "Ajen", tab: "days" });
+    await thisPhone(ajen);
+    assert.equal(await ajen.evaluate(() => globalThis.__matTest.store.state.roll), null);
+    assert.equal(await ajen.evaluate(() => JSON.parse(localStorage.getItem("mat.cache")).data.roll === undefined), true, "not in the saved copy");
+    assert.equal(await ajen.evaluate(() => document.querySelectorAll("#ckRoll, .ck-roll, .ck-rf, #check").length), 0);
+    assert.equal(await ajen.evaluate(() => /Roll call|点呼/.test(document.body.innerText)), false);
+    await ajen.click("#vDays .rdy-w");
+    await atRest(ajen, "#rdy");
+    const notes = await ajen.evaluate(() => [...document.querySelectorAll("#rdy .rdy-note-r")].map((n) => n.textContent));
+    assert.equal(notes.at(-1), "Mo can see that you have opened MAT and whether this phone is ready for no signal. Nothing else.");
+    await shot(ajen, "2-friend-line");
+    await ajen.click("#rdyDone");
+    await atRest(ajen, "#rdy", { open: false });
+    // The owner's own sheet says it the other way; the shared link says nothing.
+    const mo = await ctx.newPhone();
+    await open(mo, { backend, own: "Mo", tab: "days" });
+    await thisPhone(mo);
+    await mo.click("#vDays .rdy-w");
+    await atRest(mo, "#rdy");
+    assert.equal(await mo.evaluate(() => [...document.querySelectorAll("#rdy .rdy-note-r")].at(-1).textContent), "The others’ phones tell you that they have opened MAT and whether they are ready for no signal. Nothing else.");
+    const shared = await ctx.newPhone();
+    await open(shared, { backend, key: KEY, me: "Mo", tab: "days" });
+    await thisPhone(shared);
+    await shared.click("#vDays .rdy-w");
+    await atRest(shared, "#rdy");
+    assert.equal(await shared.evaluate(() => [...document.querySelectorAll("#rdy .rdy-note-r")].some((n) => /can see|tell you/.test(n.textContent))), false);
+    assert.equal(await shared.evaluate(() => globalThis.__matTest.store.state.roll), null);
+  },
+});
+
+cases.push({
+  name: "the roll call at 320 px: nothing wider than the sheet",
+  viewport: { width: 320, height: 700 },
+  async run({ page }) {
+    const backend = makeBackend(WITH_PLAN, { now: NOON12 });
+    await backend.fake({ key: ownKey(backend, "Ajen"), action: "load", args: { ready: false } });
+    backend.now = LINK_DAY;
+    ownKey(backend, "Trenton");
+    backend.now = NOON12;
+    await open(page, { ...asOwner, backend });
+    await lineUp(page);
+    await thisPhone(page);
+    const line = await page.evaluate(() => { const l = document.getElementById("ckLine"); const t = l.querySelector(".ck-t"); return { sw: l.scrollWidth, cw: l.clientWidth, tsw: t.scrollWidth, tcw: t.clientWidth, tsh: t.scrollHeight, tch: t.clientHeight, right: l.getBoundingClientRect().right <= innerWidth }; });
+    assert.ok(line.sw <= line.cw + 0.5 && line.tsw <= line.tcw + 0.5 && line.tsh <= line.tch + 2 && line.right, "the line's words fit: " + JSON.stringify(line));
+    await openSheet(page);
+    const m = await page.evaluate(() => {
+      const s = document.getElementById("check");
+      const right = s.getBoundingClientRect().right;
+      const over = [...s.querySelectorAll("#ckRoll *, #ckRollNote")].filter((n) => n.getClientRects().length && n.getBoundingClientRect().right > right + 0.5).map((n) => n.className || n.tagName);
+      return { fits: s.scrollWidth <= s.clientWidth, over, rows: [...s.querySelectorAll("#ckRoll .ck-p")].map((r) => r.getBoundingClientRect().height), boxes: [...s.querySelectorAll("#ckRoll .ck-ds, #ckRoll .ck-ok, #ckRoll .ck-no")].map((b) => Math.round(b.getBoundingClientRect().width)) };
+    });
+    assert.equal(m.fits, true, "scrollWidth <= clientWidth");
+    assert.deepEqual(m.over, []);
+    assert.equal(m.rows.length, 3);
+    assert.ok(m.boxes.every((w) => w >= 44 && w <= 54), "every stamp whole in its column: " + m.boxes);
+    await shot(page, "2-sheet-320");
+  },
+});
+
+if (SHOTS) {
+  cases.push({
+    name: "pictures at 390 px: the line with a person to nudge",
+    async run({ page }) {
+      const backend = makeBackend(WITH_PLAN, { now: NOON12 });
+      await backend.fake({ key: ownKey(backend, "Ajen"), action: "load", args: { ready: true } });
+      backend.now = LINK_DAY;
+      ownKey(backend, "Trenton");
+      backend.now = NOON12;
+      await open(page, { ...asOwner, backend });
+      await lineUp(page);
+      await thisPhone(page);
+      await page.evaluate(() => { document.getElementById("vDays").scrollTop = 0; });
+      await until(() => page.evaluate(() => document.getElementById("ckLine").getBoundingClientRect().top > 10), "Days is at its top");
+      await shot(page, "2-board-line");
+    },
+  });
+}
 
 module.exports = cases;

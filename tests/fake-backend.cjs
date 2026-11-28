@@ -404,6 +404,15 @@ function createFakeBackend(seed, { clock, lockFails, keepsApostrophe = false } =
       rows.splice(at - 1, 0, new Array(start).fill("").concat(copy(values)));
       planner.writes.push({ kind: "append", tab, headerRow, values: copy(values) });
     },
+    // Same as Env.js: the day at an ISO instant in a zone; "" when either cannot be read.
+    dayIn_(iso, tz) {
+      if (typeof iso !== "string" || !isFinite(Date.parse(iso))) return "";
+      try {
+        return dayIn(iso, tz);
+      } catch {
+        return "";
+      }
+    },
     // Same as Env.js: now in Toronto, "YYYY-MM-DD HH:MM ET", by this backend's clock.
     torontoNow_() {
       const parts = {};

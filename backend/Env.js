@@ -225,6 +225,18 @@ function plannerAppendRow_(tab, headerRow, firstCol, values) {
   Sheets.Spreadsheets.Values.append({ values: [values] }, plannerId_(), range, { valueInputOption: "RAW", insertDataOption: "INSERT_ROWS" });
 }
 
+// The day ("YYYY-MM-DD") at the ISO instant `iso` in the zone `tz`; "" when
+// either cannot be read. Reads nothing (the owner's roll call, issue 96).
+function dayIn_(iso, tz) {
+  var ms = Date.parse(iso);
+  if (typeof iso !== "string" || !isFinite(ms)) return "";
+  try {
+    return Utilities.formatDate(new Date(ms), tz, "yyyy-MM-dd");
+  } catch (e) {
+    return "";
+  }
+}
+
 // Now in Toronto, as the planner's Change Log writes it: "YYYY-MM-DD HH:MM ET".
 function torontoNow_() {
   return Utilities.formatDate(new Date(), "America/Toronto", "yyyy-MM-dd HH:mm") + " ET";

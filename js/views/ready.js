@@ -289,7 +289,10 @@ export function mountReady(phone, store, { keep, clock, storage, durable = true,
       close(true);
       return;
     }
-    const sh = sheetFor(m);
+    // The last note says what the trip's organiser can see (issue 96): only on a person's own link.
+    const s = store.state;
+    const first = Array.isArray(s.people) && s.people[0] && typeof s.people[0].name === "string" ? s.people[0].name : "";
+    const sh = sheetFor(m, { owner: first, mine: s.personal === true && typeof s.me === "string" ? s.me : "" });
     put(verdict, sh.verdict);
     verdict.classList.toggle("is-ready", m.kind === "ready" || m.kind === "ready-off");
     const want = JSON.stringify([sh.rows, sh.notes]);

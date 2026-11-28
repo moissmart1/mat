@@ -44,7 +44,7 @@ function memStorage(init = {}) {
 //   net.garble         actions that reach the backend but get a non-envelope reply
 //   net.knownOffline   the phone itself says it has no network: nothing is sent
 //   timeoutMs          how long the api waits for a reply (the app's own 30 s by default)
-function phone({ seed, fake, storage, me = "Mo", durableStorage = true, nowMs = NOW, clock, timeoutMs, ticketData, isHidden } = {}) {
+function phone({ seed, fake, storage, me = "Mo", durableStorage = true, nowMs = NOW, clock, timeoutMs, ticketData, isHidden, getReady } = {}) {
   fake = fake || createFakeBackend(seed);
   storage = storage || memStorage({ "mat.key": KEY, "mat.me": me });
   const net = { offline: false, knownOffline: false, failing: new Set(), lose: new Set(), garble: new Set(), override: null, holds: [], sent: [] };
@@ -71,7 +71,7 @@ function phone({ seed, fake, storage, me = "Mo", durableStorage = true, nowMs = 
   };
   const api = createApi({ url: URL, getKey: () => storage.getItem("mat.key"), getActor: () => storage.getItem("mat.me"), fetchImpl, isOnline: () => !net.knownOffline, ...(timeoutMs ? { timeoutMs } : {}) });
   const waits = [];
-  const store = createStore({ api, storage, durableStorage, now: clock || (() => nowMs), wait: async (ms) => { waits.push(ms); }, ...(ticketData ? { ticketData } : {}), ...(isHidden ? { isHidden } : {}) });
+  const store = createStore({ api, storage, durableStorage, now: clock || (() => nowMs), wait: async (ms) => { waits.push(ms); }, ...(ticketData ? { ticketData } : {}), ...(isHidden ? { isHidden } : {}), ...(getReady ? { getReady } : {}) });
   return { fake, storage, net, api, store, waits };
 }
 
@@ -4590,4 +4590,247 @@ test("the hidden-page rule still holds alongside: a failure while hidden is not 
   p.net.offline = true;
   await p.store.checkRev();
   assert.equal(p.store.state.online, true);
+});
+
+// ---------- issue 96: the ready answer each load sends, and the owner's roll call ----------
+
+// A phone on person `who`'s own link, its ready answer in `said.answer` and its clock in `said.t`.
+function readyPhone({ fake, who = "Mo", storage } = {}) {
+  fake = fake || createFakeBackend(SEED);
+  const key = fake.personKey(who);
+  const said = { answer: null, t: NOW };
+  const p = phone({ fake, storage: storage || memStorage({ "mat.key": key }), clock: () => said.t, getReady: () => said.answer });
+  return { ...p, key, said, loads: () => p.net.sent.filter((b) => b.action === "load") };
+}
+
+test("load sends ready when the phone has an answer, and nothing when it has none", async () => {
+  const p = readyPhone();
+  await p.store.boot();
+  assert.deepEqual(p.loads().map((b) => b.args), [{}], "nothing to say yet");
+  p.said.answer = true;
+  await p.store.refresh();
+  p.said.answer = false;
+  await p.store.refresh();
+  // After another phone's change, the load the 20-second check makes carries it too.
+  await p.fake({ key: KEY, actor: "Ajen", action: "addExpense", args: { expense: { id: "exp0000r96", day: "2026-12-11", title: "Made-up tea", amount: 900, currency: "JPY", paidBy: "Ajen", split: ALL } } });
+  p.said.answer = true;
+  await p.store.checkRev();
+  // Anything but true or false is nothing.
+  p.said.answer = "yes";
+  await p.store.refresh();
+  assert.deepEqual(p.loads().map((b) => b.args), [{}, { ready: true }, { ready: false }, { ready: true }, {}]);
+  assert.equal(p.net.sent.filter((b) => b.action === "rev").every((b) => JSON.stringify(b.args) === "{}"), true, "the 20-second check sends nothing of it");
+  // Nothing of it in the address: every request is a POST body (createApi), and the key is not in it twice.
+  assert.equal(p.net.sent.every((b) => !("ready" in b)), true, "only in args");
+});
+
+test("the candidate-key load sends no flag", async () => {
+  const fake = createFakeBackend(SEED);
+  const ajen = fake.personKey("Ajen");
+  const p = readyPhone({ fake, who: "Mo" });
+  p.said.answer = true;
+  await p.store.boot({ candidate: ajen });
+  const loads = p.loads();
+  assert.equal(loads[0].key, ajen, "the address key is tried first");
+  assert.deepEqual(loads[0].args, {}, "and says nothing");
+  // Taken (a personal key): the ordinary loads after it are this phone's, and say it.
+  assert.equal(p.storage.getItem("mat.key"), ajen);
+  assert.deepEqual(loads.slice(1).map((b) => b.args), [{ ready: true }]);
+});
+
+test("roll is kept on the owner's phone and null on a friend's", async () => {
+  const fake = createFakeBackend(SEED);
+  const ajen = readyPhone({ fake, who: "Ajen" });
+  await ajen.store.boot();
+  assert.equal(ajen.store.state.roll, null);
+  assert.equal("roll" in JSON.parse(ajen.storage.getItem("mat.cache")).data, false);
+  const mo = readyPhone({ fake, who: "Mo" });
+  await mo.store.boot();
+  assert.deepEqual(mo.store.state.roll.map((e) => [e.name, e.opened !== ""]), [["Mo", true], ["Ajen", true], ["Trenton", false]]);
+  assert.deepEqual(JSON.parse(mo.storage.getItem("mat.cache")).data.roll, mo.store.state.roll, "in the saved copy");
+  // Opened again with no signal: the saved copy's roll call.
+  const again = phone({ fake, storage: mo.storage, nowMs: NOW });
+  again.net.offline = true;
+  await again.store.boot();
+  assert.deepEqual(again.store.state.roll, mo.store.state.roll);
+  // The shared link: none.
+  const shared = phone({ fake });
+  await shared.store.boot();
+  assert.equal(shared.store.state.roll, null);
+  // An old saved copy with no roll call: null, not undefined.
+  const old = memStorage({ "mat.key": mo.key, "mat.cache": JSON.stringify({ data: { ...JSON.parse(mo.storage.getItem("mat.cache")).data, roll: undefined }, rev: 0, loadedAt: NOW }) });
+  const oldPhone = phone({ fake, storage: old });
+  oldPhone.net.offline = true;
+  await oldPhone.store.boot();
+  assert.equal(oldPhone.store.state.roll, null);
+});
+
+test("a changed answer held 30 s makes one load, not two, and none with no signal", async () => {
+  const p = readyPhone({ who: "Ajen" });
+  await p.store.boot();
+  const n0 = p.loads().length;
+  p.said.answer = true;
+  assert.equal(p.store.readyTick(), 30000, "it must hold 30 s first");
+  p.said.t += 29999;
+  assert.equal(p.store.readyTick(), 1);
+  assert.equal(p.loads().length, n0);
+  p.said.t += 1;
+  assert.equal(p.store.readyTick(), null);
+  assert.equal(p.store.readyTick(), null, "a second call while it runs");
+  await p.store.idle();
+  assert.equal(p.loads().length, n0 + 1, "one load, not two");
+  assert.deepEqual(p.loads().at(-1).args, { ready: true });
+  p.said.t += 60000;
+  assert.equal(p.store.readyTick(), null);
+  await p.store.idle();
+  assert.equal(p.loads().length, n0 + 1, "said: nothing more");
+  // The answer flips back within 30 s and returns: nothing to say.
+  p.said.answer = false;
+  p.store.readyTick();
+  p.said.t += 10000;
+  p.said.answer = true;
+  p.store.readyTick();
+  p.said.t += 40000;
+  p.store.readyTick();
+  await p.store.idle();
+  assert.equal(p.loads().length, n0 + 1);
+  // No signal: held, but nothing goes; with signal back, the next call sends it.
+  p.said.answer = false;
+  p.store.readyTick();
+  p.net.offline = true;
+  await p.store.checkRev();
+  assert.equal(p.store.state.online, false);
+  p.said.t += 30000;
+  assert.equal(p.store.readyTick(), null);
+  await p.store.idle();
+  assert.equal(p.loads().length, n0 + 1, "none with no signal");
+  p.net.offline = false;
+  await p.store.checkRev();
+  p.store.readyTick();
+  await p.store.idle();
+  assert.equal(p.loads().length, n0 + 2);
+  assert.deepEqual(p.loads().at(-1).args, { ready: false });
+  // Hidden, or while saving: it waits.
+  const hidden = { on: true };
+  const qSaid = { answer: null };
+  const q = phone({ fake: p.fake, storage: memStorage({ "mat.key": p.fake.personKey("Trenton") }), clock: () => p.said.t, getReady: () => qSaid.answer, isHidden: () => hidden.on });
+  await q.store.boot();
+  const qLoads = () => q.net.sent.filter((b) => b.action === "load").length;
+  qSaid.answer = true;
+  q.store.readyTick();
+  p.said.t += 30000;
+  q.store.readyTick();
+  await q.store.idle();
+  assert.equal(qLoads(), 1, "hidden: nothing");
+  hidden.on = false;
+  // While saving (a write in flight): nothing either.
+  const release = q.net.hold("addExpense");
+  q.store.addExpense({ id: "exp0000s96", day: "2026-12-11", title: "Made-up snack", amount: 300, currency: "JPY", paidBy: "Trenton", split: ALL });
+  q.store.readyTick();
+  assert.equal(qLoads(), 1, "while saving: nothing");
+  release();
+  await q.store.idle();
+  q.store.readyTick();
+  await q.store.idle();
+  assert.equal(qLoads(), 2);
+  assert.equal(q.storage.getItem("mat.readySaid"), "1");
+});
+
+test("readySaid is set only after the load answered ok; Forget and a refused key clear it and roll", async () => {
+  const fake = createFakeBackend(SEED);
+  const p = readyPhone({ fake, who: "Mo" });
+  p.said.answer = true;
+  p.net.failing.add("load");
+  await p.store.boot();
+  assert.equal(p.storage.getItem("mat.readySaid"), null, "no answer: not said");
+  p.net.failing.delete("load");
+  p.net.override = (body) => (body.action === "load" ? { ok: false, error: "busy", message: "Someone else is saving right now. Try again in a moment." } : null);
+  await p.store.refresh();
+  assert.equal(p.storage.getItem("mat.readySaid"), null, "refused as busy: not said");
+  p.net.override = null;
+  await p.store.refresh();
+  assert.equal(p.storage.getItem("mat.readySaid"), "1");
+  p.said.answer = false;
+  await p.store.refresh();
+  assert.equal(p.storage.getItem("mat.readySaid"), "0");
+  p.said.answer = null;
+  await p.store.refresh();
+  assert.equal(p.storage.getItem("mat.readySaid"), "0", "a load with nothing to say leaves it");
+  assert.equal(Array.isArray(p.store.state.roll), true);
+  p.store.forgot();
+  assert.equal(p.store.state.roll, null);
+  assert.equal(p.storage.getItem("mat.readySaid"), null);
+  // A refused key.
+  const q = readyPhone({ fake, who: "Mo" });
+  q.said.answer = true;
+  await q.store.boot();
+  assert.equal(q.storage.getItem("mat.readySaid"), "1");
+  assert.equal(Array.isArray(q.store.state.roll), true);
+  q.net.override = () => ({ ok: false, error: "bad_key", message: "test" });
+  await q.store.checkRev();
+  assert.equal(q.store.state.keyRefused, true);
+  assert.equal(q.store.state.roll, null);
+  assert.equal(q.storage.getItem("mat.readySaid"), null);
+  // A new link taken from the address: what the old one said is dropped.
+  const r = readyPhone({ fake, who: "Mo" });
+  r.said.answer = true;
+  await r.store.boot();
+  assert.equal(r.storage.getItem("mat.readySaid"), "1");
+  r.said.answer = null;
+  await r.store.boot({ candidate: fake.personKey("Mo") });
+  assert.equal(r.storage.getItem("mat.readySaid"), null);
+});
+
+test("a phone whose storage refuses mat.readySaid says its answer once, not every 30 s (review M2)", async () => {
+  const fake = createFakeBackend(SEED);
+  const key = fake.personKey("Ajen");
+  const base = memStorage({ "mat.key": key });
+  const storage = { getItem: base.getItem, removeItem: base.removeItem, key: base.key, get length() { return base.length; }, setItem: (k, v) => { if (k === "mat.readySaid") throw new Error("QuotaExceededError"); base.setItem(k, v); } };
+  const said = { answer: null, t: NOW };
+  const p = phone({ fake, storage, clock: () => said.t, getReady: () => said.answer });
+  await p.store.boot();
+  const loads = () => p.net.sent.filter((b) => b.action === "load").length;
+  said.answer = true;
+  p.store.readyTick();
+  for (let i = 0; i < 6; i++) {
+    said.t += 31000;
+    p.store.readyTick();
+    await p.store.idle();
+  }
+  assert.equal(loads(), 2, "the boot load and one ready load, no more");
+  assert.equal(storage.getItem("mat.readySaid"), null);
+  assert.equal(JSON.parse(fake.props.SEEN).Ajen.r, 1);
+});
+
+test("a ready answer the backend could not keep (readyKept false) is said again after 30 s; an old backend's silence counts as kept (review M1)", async () => {
+  const fake = createFakeBackend(SEED);
+  const key = fake.personKey("Ajen");
+  const said = { answer: null, t: NOW };
+  const p = phone({ fake, storage: memStorage({ "mat.key": key }), clock: () => said.t, getReady: () => said.answer });
+  await p.store.boot();
+  const loads = () => p.net.sent.filter((b) => b.action === "load").length;
+  const realLock = fake.world.withLock_;
+  fake.world.withLock_ = () => ({ ok: false, error: "busy", message: "Someone else is saving right now. Try again in a moment." });
+  said.answer = true;
+  p.store.readyTick();
+  said.t += 30000;
+  p.store.readyTick();
+  await p.store.idle();
+  assert.equal(loads(), 2);
+  assert.equal(p.storage.getItem("mat.readySaid"), null, "not kept: not said");
+  fake.world.withLock_ = realLock;
+  said.t += 10000;
+  assert.equal(p.store.readyTick(), 20000, "tried again 30 s after the last try");
+  said.t += 20000;
+  p.store.readyTick();
+  await p.store.idle();
+  assert.equal(loads(), 3);
+  assert.equal(p.storage.getItem("mat.readySaid"), "1");
+  // An old backend (no readyKept in its answer): taken as kept.
+  const oldAnswer = (await fake({ key, action: "load", args: {} })).data;
+  assert.equal("readyKept" in oldAnswer, false);
+  const old = phone({ fake, storage: memStorage({ "mat.key": key }), clock: () => said.t, getReady: () => false });
+  old.net.override = (body) => (body.action === "load" ? { ok: true, rev: 0, data: JSON.parse(JSON.stringify(oldAnswer)) } : null);
+  await old.store.boot();
+  assert.equal(old.storage.getItem("mat.readySaid"), "0");
 });

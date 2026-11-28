@@ -5,7 +5,7 @@
 //   readTable_, appendObj_, updateById_, updateWhere_, ensureColumns_, hasColumn_,
 //   getProp_, setProp_, delProp_, withLock_, getRate_, getRateInfo_, tripKey_, nowIso_, sheetUrl_,
 //   claudeToken_, ensureClaudeToken_, newId_, plannerId_, plannerRows_, holderOf_ (Keys.js),
-//   hasTab_, plannerTab_, plannerSetCell_, plannerAppendRow_, torontoNow_, withPlannerLock_,
+//   hasTab_, plannerTab_, plannerSetCell_, plannerAppendRow_, torontoNow_, dayIn_, withPlannerLock_,
 //   appendObjs_, columnValues_, cellsAt_, deleteRowsAt_ (ticket pictures),
 //   deskPost_, deskReady_, cacheGet_, cachePut_ (tickets from the planner's list)
 // It also uses the pure helpers from Pure.js.
@@ -200,7 +200,7 @@ function dispatch_(body, holder, pre) {
   var action = body.action;
   if (holder.kind === "check" && CHECK_ACTIONS_.indexOf(action) === -1) return err_("bad_input", MSG_.checkOnly);
   if (holder.kind === "claude" && CLAUDE_ACTIONS_.indexOf(action) === -1) return err_("bad_input", MSG_.badAction);
-  if (action === "load") return load_(holder, pre);
+  if (action === "load") return load_(holder, pre, args);
   if (action === "rev") return ok_({}, rev_());
   if (action === "history") return history_(args);
   // One ticket picture's data, for a phone to keep: a read, no lock, no Log.
@@ -410,7 +410,9 @@ function tripInfo_() {
 }
 
 // The Script Properties load reads, in one getProperties() (issue 16).
-var LOAD_PROPS_ = ["REV", "PLANNER_ID", "TODOS_PULLED_AT", "PAYMENTS_PULLED_AT", "PAYMENT_PROBLEMS", "TODO_PROBLEMS", "TICKET_DESK_URL", "TICKET_DESK_KEY"];
+// SEEN (issue 96, the owner's roll call) and PERSON_KEYS (only each link's
+// day, for that roll call) come in the same read: no read of their own.
+var LOAD_PROPS_ = ["REV", "PLANNER_ID", "TODOS_PULLED_AT", "PAYMENTS_PULLED_AT", "PAYMENT_PROBLEMS", "TODO_PROBLEMS", "TICKET_DESK_URL", "TICKET_DESK_KEY", "SEEN", "PERSON_KEYS"];
 
 // holder: who asked (handle_). me is the key's person ("" for the shared or
 // check key) and personal whether it is a person's own key, so a phone on
@@ -419,7 +421,9 @@ var LOAD_PROPS_ = ["REV", "PLANNER_ID", "TODOS_PULLED_AT", "PAYMENTS_PULLED_AT",
 // pre: LOAD_PROPS_ and the People rows if handleAs_ read them (issue 16),
 // in this order: the properties, REV among them, before anything else, so
 // the rev handed back is never newer than the data.
-function load_(holder, pre) {
+// args: the request's args; only args.ready is read (issue 96: whether the
+// person's phone says it is ready for no signal, trusted only as a boolean).
+function load_(holder, pre, args) {
   var props = pre && pre.props ? pre.props : getProps_(LOAD_PROPS_);
   var rev = revOf_(props.REV);
   // As plannerId_ and deskReady_ (Env.js) read them.
@@ -480,7 +484,50 @@ function load_(holder, pre) {
   // column are there. Everyone else's load has no such key.
   if (tickets !== null && holder && holder.kind === "person" && data.people.length && data.people[0].name === holder.name &&
       plannerLinked && deskReady && hasColumn_("Tickets", "planner_id")) data.ticketList = true;
+  // Issue 96: a load on a person's own link notes that they have opened MAT
+  // (the day, once) and what their phone says about no signal. Never the
+  // check key, the shared key or the connector. The trip's first person on
+  // their own link is answered the roll call; nobody else has the key.
+  // Days are dated where the group is (review I1): Toronto until the trip's
+  // first day begins in the trip's zone, the trip-zone day from then on.
+  // readyKept (only when the load carried an answer): whether SEEN now holds
+  // it, so a phone whose answer was not written (a busy lock) says it again.
+  if (holder && holder.kind === "person") {
+    var names = data.people.map(function (p) { return p.name; });
+    var tz = data.trip.tz || "Asia/Tokyo";
+    var start = data.trip.start;
+    var day = seenDay(torontoNow_().slice(0, 10), dayIn_(nowIso_(), tz), start);
+    var ready = args ? args.ready : undefined;
+    var noted = noteSeen_(holder.name, day, props.SEEN, ready, names);
+    if (ready === true || ready === false) data.readyKept = noted.kept;
+    if (names.length && names[0] === holder.name) {
+      data.roll = rollFrom(noted.seen, names, personKeysFrom(props.PERSON_KEYS), function (at) {
+        return seenDay(dayIn_(at, "America/Toronto"), dayIn_(at, tz), start);
+      });
+    }
+  }
   return ok_(data, rev);
+}
+
+// SEEN after this person's load (issue 96), written only when it changed,
+// under the lock, laid over SEEN read again inside it (two phones loading at
+// once keep each other's entry). Never a rev bump, never a Log or History
+// row, nothing logged. A busy lock or a failed write leaves it for the next
+// load; the load answers as normal either way. day: "YYYY-MM-DD" (seenDay).
+// -> { seen: SEEN as it now stands (or would), kept: whether it is stored }
+function noteSeen_(name, day, raw, ready, names) {
+  var next = seenAfter(seenFrom(raw), name, day, ready, names);
+  if (!next.changed) return { seen: next.seen, kept: true };
+  try {
+    var wrote = withLock_(function () {
+      var fresh = seenAfter(seenFrom(getProp_("SEEN")), name, day, ready, names);
+      if (fresh.changed) setProp_("SEEN", JSON.stringify(fresh.seen));
+      return { ok: true, seen: fresh.seen };
+    });
+    return wrote && wrote.ok === true ? { seen: wrote.seen, kept: true } : { seen: next.seen, kept: false };
+  } catch (e) {
+    return { seen: next.seen, kept: false };
+  }
 }
 
 // The last planner pull's problems as stored in a Script Property

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { missing, ownerOf, lineWords } from "../js/check.js";
+import { missing, ownerOf, lineWords, peopleWords, checkWords, rollRow, shortDay, stampDay } from "../js/check.js";
 
 // Made-up trip: Thu Dec 10 to Sun Dec 20, in Japan; the eve is Wed Dec 9.
 const DAYS = Array.from({ length: 11 }, (_, i) => ({ date: "2026-12-" + String(10 + i).padStart(2, "0") }));
@@ -188,4 +188,61 @@ test("a state with nothing loaded gives nothing and does not throw", () => {
   assert.deepEqual(missing(null, NOW), []);
   assert.deepEqual(missing({}, NOW), []);
   assert.deepEqual(missing({ trip: null, days: "x", stops: {}, stays: null }, NOW), []);
+});
+
+// ---------- the roll call (issue 96) ----------
+
+const R = (name, more = {}) => ({ name, opened: "2026-11-25", ready: null, said: "", linkDay: "2026-11-22", ...more });
+
+test("people words: one not opened, two, one not ready, two; opened with nothing said is no nudge; the owner never counted", () => {
+  assert.equal(peopleWords([R("Mo"), R("Ajen", { opened: "" }), R("Trenton")], "Mo"), "Ajen has not opened");
+  assert.equal(peopleWords([R("Mo"), R("Ajen", { opened: "" }), R("Trenton", { opened: "", linkDay: "" })], "Mo"), "2 have not opened");
+  assert.equal(peopleWords([R("Mo"), R("Ajen", { ready: false, said: "2026-11-26" }), R("Trenton", { ready: true })], "Mo"), "Ajen’s phone is not ready");
+  assert.equal(peopleWords([R("Mo"), R("Ajen", { ready: false }), R("Trenton", { ready: false })], "Mo"), "2 phones not ready");
+  assert.equal(peopleWords([R("Mo"), R("Ajen", { opened: "" }), R("Trenton", { ready: false })], "Mo"), "Ajen has not opened", "not opened comes first");
+  assert.equal(peopleWords([R("Mo"), R("Ajen"), R("Trenton")], "Mo"), "", "opened, nothing said: no nudge");
+  assert.equal(peopleWords([R("Mo", { opened: "", ready: false }), R("Ajen"), R("Trenton", { ready: true })], "Mo"), "", "the owner never counted");
+  assert.equal(peopleWords(null, "Mo"), "");
+  assert.equal(peopleWords([R("Mo"), null, { name: "" }, R("Ajen", { opened: "" })], "mo"), "Ajen has not opened", "junk is skipped; names match in any case");
+});
+
+test("the line's words: missing and people, either alone, or nothing", () => {
+  assert.equal(checkWords(8, "Ajen has not opened"), "8 missing · Ajen has not opened");
+  assert.equal(checkWords(8, ""), "8 things missing");
+  assert.equal(checkWords(1, ""), "1 thing missing");
+  assert.equal(checkWords(0, "2 phones not ready"), "2 phones not ready");
+  assert.equal(checkWords(0, ""), "");
+});
+
+test("the six row states", () => {
+  const words = (r) => r.lines.map((l) => (l.not ? "!" : "") + l.text);
+  // The owner (this phone): the stamp of the day, the ready box from this phone's own answer now.
+  const me = rollRow(R("Mo", { ready: false, said: "2026-11-24" }), { owner: true, ownReady: true });
+  assert.deepEqual([words(me), me.opened, me.openedLabel, me.ready, me.readyLabel], [["This phone"], "11.25", "Opened Nov 25", "ok", "Ready"]);
+  assert.deepEqual([rollRow(R("Mo"), { owner: true, ownReady: false }).ready, rollRow(R("Mo"), { owner: true, ownReady: false }).readyLabel], ["no", "Not ready"]);
+  assert.deepEqual([rollRow(R("Mo"), { owner: true }).ready, rollRow(R("Mo"), { owner: true }).readyLabel], ["no", "Nothing said yet"]);
+  // Not opened, with a link.
+  const shut = rollRow(R("Trenton", { opened: "" }));
+  assert.deepEqual([words(shut), shut.opened, shut.openedLabel, shut.ready, shut.readyLabel], [["!Not opened yet", "Link made Nov 22"], "", "Not opened", "no", "Nothing said yet"]);
+  // Not opened, no link.
+  const none = rollRow(R("Trenton", { opened: "", linkDay: "" }));
+  assert.deepEqual([words(none), none.opened, none.ready], [["!No link yet"], "", "no"]);
+  // Opened, nothing said.
+  const quiet = rollRow(R("Ajen"));
+  assert.deepEqual([words(quiet), quiet.opened, quiet.openedLabel, quiet.ready, quiet.readyLabel], [["Opened Nov 25", "Nothing said about no signal yet"], "11.25", "Opened Nov 25", "no", "Nothing said yet"]);
+  // Opened, ready.
+  const yes = rollRow(R("Ajen", { ready: true, said: "2026-11-26" }));
+  assert.deepEqual([words(yes), yes.ready, yes.readyLabel], [["Ready for no signal, said Nov 26"], "ok", "Ready"]);
+  // Opened, not ready.
+  const no = rollRow(R("Ajen", { ready: false, said: "2026-11-26" }));
+  assert.deepEqual([words(no), no.opened, no.ready, no.readyLabel], [["!Not ready yet, said Nov 26"], "11.25", "no", "Not ready"]);
+});
+
+test("dates from the date string alone: Nov 25 and 11.25", () => {
+  assert.equal(shortDay("2026-11-25"), "Nov 25");
+  assert.equal(shortDay("2026-12-01"), "Dec 1");
+  assert.equal(shortDay("2027-01-09"), "Jan 9");
+  assert.equal(stampDay("2026-11-05"), "11.05");
+  assert.equal(shortDay(""), "");
+  assert.equal(stampDay("soon"), "");
 });

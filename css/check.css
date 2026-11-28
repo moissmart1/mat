@@ -59,6 +59,36 @@
   .ck-r{grid-template-columns:54px minmax(0,1fr) auto}
   .ck-go{padding-right:12px}
 }
+/* The roll call (issue 96): who has opened MAT and whose phone is ready for no
+   signal, stamped as a register. Owner's phone only; rows are not buttons. */
+.ck-roll{margin:0 calc(var(--gr) * -1) 0 calc(var(--gl) * -1)}
+.ck-roll[hidden],.ck-rf[hidden]{display:none}
+.ck-rh,.ck-p{display:grid;grid-template-columns:minmax(0,1fr) 62px 62px}
+.ck-rh{color:var(--ai);font-size:10.5px;font-weight:700;border-bottom:1px solid rgba(40,64,143,.4);background:rgba(40,64,143,.09)}
+.ck-rh span{padding:4px 0;text-align:center;line-height:1.15;align-self:center}
+.ck-rh .ck-rt{text-align:left;padding-left:var(--gl);font-size:11.5px}
+.ck-rh .ck-jp{font-family:var(--seal);font-style:normal;font-weight:400;font-size:14px;letter-spacing:.3em;margin-right:8px}
+.ck-rh span+span,.ck-st{border-left:1px dotted rgba(40,64,143,.55)}
+.ck-p{border-bottom:1px solid rgba(40,64,143,.4)}
+.ck-n{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:9px;align-items:center;padding:8px 6px 8px var(--gl)}
+.ck-n > span:last-child{min-width:0;overflow-wrap:anywhere}
+.ck-n .seal{width:30px;height:30px;font-size:10.5px;display:grid;place-items:center;border-color:var(--print);color:var(--print)}
+.ck-n .seal.is-on{color:#fff;border-color:var(--shu)}
+.ck-n b{display:block;font-size:16px;font-weight:900;line-height:1.2}
+.ck-n small{display:block;font-size:12px;font-weight:500;line-height:1.3}
+.ck-n small.is-not{font-weight:900}
+.ck-st{display:grid;place-items:center;padding:7px 0}
+.ck-ds{width:44px;height:44px;border-radius:50%;border:1.7px solid var(--shu);color:var(--shu);display:grid;grid-template-rows:1fr auto 1fr;justify-items:center;align-items:center;transform:rotate(-7deg);opacity:.9;line-height:1}
+.ck-ds b{width:100%;text-align:center;border-block:1.2px solid var(--shu);font-family:var(--dot);font-weight:400;font-size:11.5px;line-height:15px}
+.ck-ds i{font-family:var(--seal);font-style:normal;font-size:8.5px}
+.ck-ds i:last-child{font-family:var(--f);font-weight:900;font-size:7px;letter-spacing:.08em}
+.ck-ok{width:44px;height:44px;border-radius:50%;border:2px solid var(--shu);color:var(--shu);display:grid;place-items:center;font-family:var(--seal);font-size:23px;line-height:1;transform:rotate(6deg);opacity:.9}
+.ck-no{width:44px;height:44px;border-radius:50%;border:1.4px dashed rgba(21,18,15,.38);display:grid;place-items:center;font-family:var(--seal);font-size:20px;color:rgba(21,18,15,.16)}
+.ck-rf{margin:0;padding:8px 0 10px;font-size:11.5px;font-weight:500;line-height:1.35}
+@media (max-width:350px){
+  .ck-rh,.ck-p{grid-template-columns:minmax(0,1fr) 54px 54px}
+}
+
 /* On a computer the sheet is the Days pane's, as the other Days sheets. */
 @media (min-width:1000px) and (min-height:521px){
   #check,#ckScrim{left:0;right:calc(50% + var(--rail) / 2)}

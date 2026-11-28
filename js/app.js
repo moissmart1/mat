@@ -32,6 +32,7 @@ import { createWhere } from "./where.js";
 import { createKeep, fetchMissing, isFetching, ticketMark, stayMark, whoseOf, sameName, fetchesAll, pruneKeep, readKept } from "./tickets.js";
 import { isPicture } from "./picture.js";
 import { mountReady } from "./views/ready.js";
+import { readyAnswer } from "./ready.js";
 import { mountStub } from "./views/stub.js";
 import { mountStaySheet } from "./views/staysheet.js";
 import { mountCheck } from "./views/check.js";
@@ -312,6 +313,9 @@ function start() {
       pruneKeep(store, keep);
       if (fetchesAll(raw)) background();
     },
+    // Whether this phone is ready for no signal, as the line "This phone" says it: every load
+    // tells the backend, so the trip's organiser can see it (issue 96). null: nothing to say yet.
+    getReady: () => readyAnswer(ready ? ready.model() : null),
   });
 
   // Every fetching pass goes through here, so the line "This phone" (issue 84,
@@ -381,6 +385,17 @@ function start() {
     beforeOpen: () => closeForDays(),
     refillShell: () => refillShell(),
   });
+  // A ready answer that changed since the backend last took it is said by a
+  // load of its own once it has held 30 s (js/store.js readyTick): looked at
+  // on every change of the line, at the 20-second look, and when it is due.
+  let readyTimer = null;
+  const readyTick = () => {
+    clearTimeout(readyTimer);
+    readyTimer = null;
+    const ms = store.readyTick();
+    if (typeof ms === "number" && ms > 0) readyTimer = setTimeout(readyTick, ms + 50);
+  };
+  ready.subscribe(() => readyTick());
   // Ring up on Days shows Money while the register is open, so each line is
   // seen printing onto the receipt, and goes back to Days when it closes.
   // Borrowed: mat.tab is left as it was.
@@ -418,6 +433,8 @@ function start() {
   // A row's tap has closed the sheet; this opens the thing to fix, over Days.
   const tripCheck = mountCheck(phone, store, {
     clock,
+    // The owner's own row of the roll call (issue 96): this phone's answer now.
+    ready: { answer: () => readyAnswer(ready.model()), subscribe: (fn) => ready.subscribe(fn) },
     beforeOpen: () => closeForDays(),
     onOpenLine: (to) => {
       closeForDays();
@@ -937,6 +954,7 @@ function start() {
   // And, on the owner's phone, at the planner's ticket list (auto-add), at most every 10 minutes.
   const look = () => {
     check();
+    readyTick();
     store.autoPayments();
     bulk.maybeCheckList();
   };
