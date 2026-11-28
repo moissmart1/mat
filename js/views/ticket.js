@@ -51,8 +51,9 @@
 //   Eastern." On any other day only that line. null on a day in the trip's
 //   zone: the ticket is then node for node as it was.
 // - eve: the evening before this day (前夜, a Days row of kind "eve"), when it
-//   has stops: { date, local, stops, state, minutes, nextId, hereNext? }, a
-//   strip between the band and .tk-head (.eve > .eve-h, .rows) whose rows are
+//   has stops: { date, local, stops, state, minutes, nextId, hereNext?, stay?,
+//   stayTag? }, a strip between the band and .tk-head (.eve > .eve-h, .rows,
+//   and that night's .tk-stay row when stay is set) whose rows are
 //   drawn as any stop's, judged by its own state and minutes; local: its zone
 //   is not the trip's (現地 on the right). No ＋ Add a stop for it.
 // - tix: { [stopId]: { kind, label, saved } } (js/tickets.js ticketMark) for
@@ -475,6 +476,7 @@ function eveStrip(eve, model) {
   const judged = { state: eve.state, minutes: eve.minutes, nextId: eve.nextId, tix: model.tix, hereNext: eve.hereNext || null };
   rows.append(...eve.stops.map((stop) => row(stop, judged)));
   d.append(h, rows);
+  if (eve.stay) d.append(stayRow(eve.stay, eve.stayTag || null));
   return d;
 }
 

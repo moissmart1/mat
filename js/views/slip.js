@@ -41,6 +41,18 @@ export function sentCents(str) {
   return cents > 0 && cents <= MAX_CENTS ? cents : null;
 }
 
+// The words of the 振込先 field: the address and its sub-line, or, with no
+// address saved (empty or spaces), the sentence that says so.
+export function payWords(toName, address) {
+  const a = address === undefined || address === null ? "" : String(address).trim();
+  if (!a) return { none: toName + " hasn’t added an e-Transfer address yet. Ask " + toName + " how to pay." };
+  return { address: a, sub: toName + "’s e-Transfer address" };
+}
+
+// The line under the form: tells someone with something to pay to send first.
+export const footLine = (mine) =>
+  mine ? "Send it from your bank, then stamp 済 here. What’s left is always what’s shown here." : "Stamp it the moment you send. What’s left is always what’s shown here.";
+
 const plain = (cents) => Math.floor(cents / 100) + "." + String(cents % 100).padStart(2, "0");
 
 // The message Remind hands to the share sheet.
@@ -223,6 +235,27 @@ export function mountSlip(slip, store) {
     return "Paid " + dayHead(localDay(ms), []).en + ".";
   }
 
+  // 振込先: where to send it, printed on the row that is yours to pay.
+  function payField(v, t) {
+    const w = payWords(t.to, v.address[t.to]);
+    const box = el("div", "s-pay");
+    const l = el("span", "s-pay-l");
+    l.append(el("b", "", "振込先"), "Send it to");
+    box.append(l);
+    if (w.none) {
+      box.append(el("span", "s-pay-a is-none", w.none));
+      return box;
+    }
+    const a = el("span", "s-pay-a", w.address);
+    a.append(el("small", "", w.sub));
+    const c = button("s-pay-c", "Copy");
+    c.dataset.key = t.key;
+    c.setAttribute("aria-label", "Copy " + t.to + "’s e-Transfer address");
+    if (v.provisional) c.setAttribute("aria-describedby", "slipProvisional");
+    box.append(a, c);
+    return box;
+  }
+
   function openRow(v, t) {
     const armed = ui.armed === t.key;
     const row = el("div", "s-row is-open");
@@ -262,8 +295,10 @@ export function mountSlip(slip, store) {
     spot.append(el("span", "ghost", "済"));
     row.append(left, spot);
 
+    const mine = !!v.me && t.from === v.me;
+    if (mine) row.append(payField(v, t));
     const address = v.address[t.to];
-    if (armed && address) {
+    if (armed && address && !mine) {
       const send = el("div", "s-send");
       const to = el("span", "", address);
       to.id = "sendTo";
@@ -446,8 +481,7 @@ export function mountSlip(slip, store) {
     if (!v.me) ui.ask = false;
 
     notice.hidden = !v.provisional;
-    const copyButton = slip.querySelector("#copyTo");
-    if (copyButton) {
+    for (const copyButton of slip.querySelectorAll("#copyTo, .s-pay-c")) {
       if (v.provisional) copyButton.setAttribute("aria-describedby", notice.id);
       else copyButton.removeAttribute("aria-describedby");
     }
@@ -481,7 +515,7 @@ export function mountSlip(slip, store) {
       older.id = "older";
       rows.push(older);
     }
-    const foot = el("div", "slip-f", "Stamp it the moment you send. What’s left is always what’s shown here.");
+    const foot = el("div", "slip-f", footLine(!!v.me && v.open.some((t) => t.from === v.me)));
     const but = el("div", "cf-but");
     but.append(el("b", "", "但"), el("span", "", v.purpose));
     const body = [cols(), ...rows, but, foot, ...(v.me ? [simpBlock(v)] : [])];
@@ -579,6 +613,12 @@ export function mountSlip(slip, store) {
       if (first) first.focus({ preventScroll: true });
       return;
     }
+    const pc = t.closest("button.s-pay-c[data-key]");
+    if (pc) {
+      const tr = view.open.find((x) => x.key === pc.dataset.key);
+      return tr && copy(view.address[tr.to] || "", "Address copied.");
+    }
+    if (t.closest(".s-pay")) return;
     const spotBtn = t.closest("button.spot[data-key]");
     if (spotBtn) return tapSpot(spotBtn.dataset.key);
     if (t.closest("#copyTo")) {
