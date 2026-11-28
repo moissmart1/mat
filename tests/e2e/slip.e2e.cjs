@@ -3,8 +3,19 @@
 // under one reading settling the other, and Remind.
 
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
 const P = require("../../backend/Pure.js");
-const { NOON12, open, until, text, expectText, visible } = require("./helpers.cjs");
+const { SEED: BASE, NOON12, open, until, text, expectText, visible } = require("./helpers.cjs");
+
+// Pictures are taken only when MAT_TAB_SHOTS names an output folder.
+const SHOTS = process.env.MAT_TAB_SHOTS || "";
+async function shot(page, name) {
+  if (!SHOTS) return;
+  fs.mkdirSync(SHOTS, { recursive: true });
+  await page.evaluate(() => document.fonts && document.fonts.ready);
+  await page.evaluate(() => document.getElementById("slip").scrollIntoView({ block: "start" }));
+  await page.screenshot({ path: SHOTS + "/" + name });
+}
 
 // Task 2's chain: Mo owes Ajen $10, Ajen owes Trenton $10.
 const line = (o) => ({ day: "2026-12-11", currency: "CAD", rate: 111, splitMode: "equal", splitVals: [], note: "", kind: "", deleted: false, ...o });
@@ -213,6 +224,198 @@ module.exports = [
       assert.equal(await page.locator('#slip button.remind[data-key="Mo>Ajen"]').count(), 0);
       assert.equal(await page.locator('#slip button.remind[data-key="Ajen>Trenton"]').count(), 1);
       assert.equal(await page.locator("#slip button.remind").count(), 1);
+    },
+  },
+
+  // ---- #89: 振込先, where to send it, on the row that is yours to pay ----
+  {
+    name: "your own open row shows where to send it before anything is tapped",
+    async run({ page }) {
+      await ready(page, { own: "Ajen", seed: { ...BASE, people: { Mo: { etransfer: "mo@example.com" } } } });
+      const r = row("Ajen>Mo");
+      await until(() => page.locator(r + " .s-pay").count(), "the field draws");
+      assert.equal(await text(page, r + " .s-pay-l"), "振込先Send it to");
+      assert.equal(await text(page, r + " .s-pay-a"), "mo@example.com" + "Mo’s e-Transfer address");
+      assert.equal(await text(page, r + " .s-pay-c"), "Copy");
+      assert.equal(await page.getAttribute(r + " .s-pay-c", "aria-label"), "Copy Mo’s e-Transfer address");
+      assert.equal(await page.locator("#slip .spot.is-armed").count(), 0, "not armed");
+      assert.equal((await page.locator(r + " .s-pay-c").boundingBox()).height >= 44, true, "Copy is a 44 px tap target");
+      assert.equal(await page.locator("#stampAmt").count(), 0);
+      assert.equal(await page.locator(r + " .s-send").count(), 0);
+      const us = await page.evaluate(() => getComputedStyle(document.querySelector(".s-pay-a")).userSelect);
+      assert.equal(us, "text");
+      await shot(page, "pay-to-390.png");
+    },
+  },
+  {
+    name: "Copy puts the address on the clipboard and says so",
+    async run({ page }) {
+      await ready(page, { own: "Ajen", seed: { ...BASE, people: { Mo: { etransfer: "mo@example.com" } } } });
+      await page.click(row("Ajen>Mo") + " .s-pay-c");
+      await until(async () => (await page.evaluate(() => navigator.clipboard.readText())) === "mo@example.com", "the address is on the clipboard");
+      await expectText(page, "#ubarT", "Address copied.");
+      assert.equal(await page.locator("#slip .spot.is-armed").count(), 0, "Copy does not arm the stamp");
+    },
+  },
+  {
+    name: "only your own row carries it",
+    async run({ page }) {
+      await ready(page, { own: "Ajen", seed: { ...BASE, people: { Mo: { etransfer: "mo@example.com" } } } });
+      await until(() => page.locator(row("Ajen>Mo") + " .s-pay").count(), "the field draws");
+      assert.equal(await page.locator(row("Trenton>Mo")).count(), 1);
+      assert.equal(await page.locator(row("Trenton>Mo") + " .s-pay").count(), 0);
+      assert.equal(await page.locator("#slip .s-pay").count(), 1);
+      await page.click('#slip button.spot[data-key="Trenton>Mo"]');
+      await expectText(page, row("Trenton>Mo") + " #sendTo", "mo@example.com");
+      assert.equal(await page.locator(row("Trenton>Mo") + " .s-pay").count(), 0);
+      assert.equal(await page.locator(row("Ajen>Mo") + " .s-pay").count(), 1, "Ajen's own field stays");
+    },
+  },
+  {
+    name: "arming your own row keeps one address, not two; the second tap stamps and the field goes",
+    async run({ page }) {
+      const backend = await ready(page, { own: "Ajen", seed: { ...BASE, people: { Mo: { etransfer: "mo@example.com" } } } });
+      const k = row("Ajen>Mo");
+      await until(() => page.locator(k + " .s-pay").count(), "the field draws");
+      await page.click('#slip button.spot[data-key="Ajen>Mo"]');
+      await until(() => page.locator("#stampAmt").count(), "armed");
+      assert.equal(await page.locator(k + " .s-pay").count(), 1);
+      assert.equal(await page.locator(k + " .s-send").count(), 0);
+      await expectText(page, k + " .s-sub", "Did Mo get it? Tap again to stamp.");
+      await shot(page, "pay-to-armed-390.png");
+      await page.click('#slip button.spot[data-key="Ajen>Mo"]');
+      await until(async () => (await page.locator("#slip .s-row.is-paid").count()) === 1, "a stamped row");
+      assert.equal(await page.locator(k).count(), 0, "the open row is gone");
+      assert.equal(await page.locator("#slip .s-row.is-paid .s-pay").count(), 0, "paid rows carry no field");
+      assert.equal(await page.evaluate(() => globalThis.__matTest.store.idle().then(() => true)), true);
+      assert.equal(backend.requests.filter((r) => r.action === "addPayment").length, 1);
+    },
+  },
+  {
+    name: "no address saved: the row says so and has no Copy",
+    async run({ page }) {
+      await ready(page, { own: "Ajen", seed: { ...BASE, people: { Mo: { etransfer: "   " } } } });
+      const r = row("Ajen>Mo");
+      await until(() => page.locator(r + " .s-pay").count(), "the field draws");
+      assert.equal(await text(page, r + " .s-pay-a"), "Mo hasn’t added an e-Transfer address yet. Ask Mo how to pay.");
+      assert.equal(await page.locator(r + " .s-pay-c").count(), 0);
+      await shot(page, "pay-to-none-390.png");
+    },
+  },
+  {
+    name: "the line under the form tells you to send first; for someone who owes nothing it is unchanged",
+    async run(ctx) {
+      const { page } = ctx;
+      await ready(page, { own: "Ajen", seed: BASE });
+      await expectText(page, "#slip .slip-f", "Send it from your bank, then stamp 済 here. What’s left is always what’s shown here.");
+      const b = await ctx.newPhone();
+      await ready(b, { me: "Mo", seed: BASE });
+      await expectText(b, "#slip .slip-f", "Stamp it the moment you send. What’s left is always what’s shown here.");
+      assert.equal(await b.locator("#slip .s-pay").count(), 0, "Mo is owed: nothing new");
+      await shot(b, "pay-to-mo-view-390.png");
+    },
+  },
+  {
+    name: "an address added on another phone appears without a reload",
+    async run({ page }) {
+      const backend = await ready(page, { own: "Ajen", seed: BASE });
+      const r = row("Ajen>Mo");
+      await until(() => page.locator(r + " .s-pay-a.is-none").count(), "no address yet");
+      backend.fake.primitives.updateWhere_("People", "name", "Mo", { etransfer: "mo@example.com" });
+      await page.evaluate(() => globalThis.__matTest.store.refresh());
+      await until(async () => (await text(page, r + " .s-pay-a")).startsWith("mo@example.com"), "the address appears");
+      assert.equal(await page.locator(r + " .s-pay-c").count(), 1);
+      // And a change to it.
+      backend.fake.primitives.updateWhere_("People", "name", "Mo", { etransfer: "mo2@example.com" });
+      await page.evaluate(() => globalThis.__matTest.store.refresh());
+      await until(async () => (await text(page, r + " .s-pay-a")).startsWith("mo2@example.com"), "the change appears");
+    },
+  },
+  {
+    name: "tapping the field neither arms the stamp nor opens the working",
+    async run({ page }) {
+      await ready(page, { own: "Ajen", seed: { ...BASE, people: { Mo: { etransfer: "mo@example.com" } } } });
+      const r = row("Ajen>Mo");
+      await until(() => page.locator(r + " .s-pay").count(), "the field draws");
+      await page.click(r + " .s-pay-a");
+      await page.click(r + " .s-pay-l");
+      await page.click(r + " .s-pay", { position: { x: 3, y: 3 } });
+      assert.equal(await page.locator("#slip .spot.is-armed").count(), 0);
+      assert.equal(await page.locator("#slip .s-work").count(), 0);
+      assert.equal(await page.locator("#stampAmt").count(), 0);
+    },
+  },
+  {
+    name: "a half-typed amount in an armed row survives a new address arriving",
+    async run({ page }) {
+      const backend = await ready(page, { own: "Ajen", seed: { ...BASE, people: { Mo: { etransfer: "mo@example.com" } } } });
+      await until(() => page.locator(row("Ajen>Mo") + " .s-pay").count(), "the field draws");
+      await page.click('#slip button.spot[data-key="Ajen>Mo"]');
+      await until(() => page.locator("#stampAmt").count(), "armed");
+      await page.fill("#stampAmt", "12.5");
+      backend.fake.primitives.updateWhere_("People", "name", "Mo", { etransfer: "mo3@example.com" });
+      await page.evaluate(() => globalThis.__matTest.store.refresh());
+      await until(async () => (await text(page, row("Ajen>Mo") + " .s-pay-a")).startsWith("mo3@example.com"), "the address changes");
+      assert.equal(await page.inputValue("#stampAmt"), "12.5");
+      assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.id), "stampAmt");
+    },
+  },
+  {
+    name: "several rows of your own: each shows and copies its own payee's address",
+    async run({ page }) {
+      await ready(page, { own: "Trenton", seed: { ...BASE, people: { Trenton: { simplify: false }, Mo: { etransfer: "mo@example.com" }, Ajen: { etransfer: "ajen@example.com" } } } });
+      const toMo = row("Trenton>Mo");
+      const toAjen = row("Trenton>Ajen");
+      await until(async () => (await page.locator("#slip .s-pay").count()) === 2, "two fields");
+      assert.equal((await text(page, toMo + " .s-pay-a")).startsWith("mo@example.com"), true);
+      assert.equal(await text(page, toMo + " .s-pay-a small"), "Mo’s e-Transfer address");
+      assert.equal((await text(page, toAjen + " .s-pay-a")).startsWith("ajen@example.com"), true);
+      assert.equal(await text(page, toAjen + " .s-pay-a small"), "Ajen’s e-Transfer address");
+      assert.equal(await page.getAttribute(toAjen + " .s-pay-c", "aria-label"), "Copy Ajen’s e-Transfer address");
+      await page.click(toAjen + " .s-pay-c");
+      await until(async () => (await page.evaluate(() => navigator.clipboard.readText())) === "ajen@example.com", "Ajen's address is on the clipboard");
+      await page.click(toMo + " .s-pay-c");
+      await until(async () => (await page.evaluate(() => navigator.clipboard.readText())) === "mo@example.com", "Mo's address is on the clipboard");
+      // Arming one row leaves the other's field in place, and no second address line anywhere.
+      await page.click('#slip button.spot[data-key="Trenton>Ajen"]');
+      await until(() => page.locator("#stampAmt").count(), "armed");
+      assert.equal(await page.locator("#slip .s-pay").count(), 2);
+      assert.equal(await page.locator("#slip .s-send").count(), 0);
+      assert.equal((await text(page, toMo + " .s-pay-a")).startsWith("mo@example.com"), true);
+    },
+  },
+  {
+    name: "focus on Copy survives a new address arriving",
+    async run({ page }) {
+      const backend = await ready(page, { own: "Ajen", seed: { ...BASE, people: { Mo: { etransfer: "mo@example.com" } } } });
+      const r = row("Ajen>Mo");
+      await until(() => page.locator(r + " .s-pay-c").count(), "the field draws");
+      await page.focus(r + " .s-pay-c");
+      backend.fake.primitives.updateWhere_("People", "name", "Mo", { etransfer: "mo4@example.com" });
+      await page.evaluate(() => globalThis.__matTest.store.refresh());
+      await until(async () => (await text(page, r + " .s-pay-a")).startsWith("mo4@example.com"), "the address changes");
+      assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.matches(".s-row[data-key='Ajen>Mo'] .s-pay-c")), true);
+    },
+  },
+  {
+    name: "at 320 nothing runs past the slip's edge, with a long address",
+    viewport: { width: 320, height: 640 },
+    async run({ page }) {
+      const long = "a".repeat(40) + "@example.com";
+      await ready(page, { own: "Ajen", seed: { ...BASE, people: { Mo: { etransfer: long } } } });
+      const r = row("Ajen>Mo");
+      await until(() => page.locator(r + " .s-pay").count(), "the field draws");
+      const over = await page.evaluate(() => {
+        const slip = document.getElementById("slip").getBoundingClientRect();
+        return {
+          doc: document.scrollingElement.scrollWidth <= innerWidth,
+          out: [...document.querySelectorAll("#slip .s-pay, #slip .s-pay *")].filter((e) => e.getBoundingClientRect().width && e.getBoundingClientRect().right > slip.right + 0.5).map((e) => e.className),
+        };
+      });
+      assert.deepEqual(over, { doc: true, out: [] });
+      assert.equal((await page.locator(r + " .s-pay-c").boundingBox()).height >= 44, true, "Copy is a 44 px tap target");
+      assert.equal(await page.locator(r + " .s-pay-c").isVisible(), true);
+      await shot(page, "pay-to-320.png");
     },
   },
 ];

@@ -21,7 +21,7 @@
 //   script.googleusercontent.com), and anything else not listed here.
 // - Only OK answers are ever kept.
 
-const SW_VERSION = "75257d82a1";
+const SW_VERSION = "d6f3df108a";
 const SHELL_CACHE = "mat-shell-" + SW_VERSION;
 const FONT_CACHE = "mat-fonts";
 
@@ -36,6 +36,7 @@ const SHELL = [
   "css/before.css",
   "css/board.css",
   "css/bulk.css",
+  "css/check.css",
   "css/days.css",
   "css/history.css",
   "css/money.css",
@@ -53,6 +54,7 @@ const SHELL = [
   "js/bulk.js",
   "js/bulkbatch.js",
   "js/bulkslip.js",
+  "js/check.js",
   "js/clip.js",
   "js/clock.js",
   "js/config.js",
@@ -83,6 +85,7 @@ const SHELL = [
   "js/views/alldays.js",
   "js/views/board.js",
   "js/views/bulkadd.js",
+  "js/views/check.js",
   "js/views/days.js",
   "js/views/first.js",
   "js/views/history.js",
@@ -217,9 +220,11 @@ function offlinePage() {
 
 async function shell(request) {
   const navigate = request.mode === "navigate";
-  const cache = await caches.open(SHELL_CACHE);
+  // Looked up with cacheName, never caches.open: open makes the cache when it is not there, and
+  // after Forget or a refill that failed an empty mat-shell- cache must not come back from a fetch.
+  const only = { cacheName: SHELL_CACHE };
   // Opening the app is always the kept front page.
-  const kept = navigate ? await cache.match("./") : await cache.match(request);
+  const kept = navigate ? await caches.match("./", only) : await caches.match(request, only);
   if (kept) return kept;
   try {
     return await fetch(request);

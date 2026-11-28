@@ -66,10 +66,12 @@ async function shellKept() {
     // script stand for the whole list, which the worker writes all at once (addAll).
     const page = new URL("./", reg.scope).href;
     const app = new URL("js/app.js", reg.scope).href;
+    // caches.match with cacheName, never caches.open: open makes the cache when it is not there,
+    // so a look that lands just after the worker deleted a refill that failed would leave an
+    // empty mat-shell- cache behind (the phoneready flake of run 46096048563).
     for (const name of await caches.keys()) {
       if (!name.startsWith("mat-shell-")) continue;
-      const c = await caches.open(name);
-      if ((await c.match(page)) && (await c.match(app))) return true;
+      if ((await caches.match(page, { cacheName: name })) && (await caches.match(app, { cacheName: name }))) return true;
     }
     return false;
   } catch {

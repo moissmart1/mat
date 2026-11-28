@@ -221,7 +221,7 @@ for (const size of [...SIZES, TAB]) {
         await page.click("#ring");
         await waitOpen(page, "reg");
         await page.fill("#xWhat", "Sideways tea");
-        await keys(page, "8 0 0");
+        await keys(page, "8 0");
         await page.click('#xPayer .seal[data-p="Ajen"]');
         await until(() => page.evaluate(() => !document.getElementById("kGo").disabled), "Ring it up is on");
         await page.click("#kGo");
@@ -234,7 +234,7 @@ for (const size of [...SIZES, TAB]) {
         await page.evaluate(() => globalThis.__matTest.store.idle());
         const saved = backend.fake.primitives.readTable_("Expenses").map(P.expenseFromRow).filter((e) => e.title === "Sideways tea");
         assert.equal(saved.length, 1);
-        assert.equal(saved[0].amount, 800);
+        assert.equal(saved[0].amount, 80);
         assert.equal(saved[0].paidBy, "Ajen");
         await expectReach(page, '#nav [data-tab="days"]');
       },

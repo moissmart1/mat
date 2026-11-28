@@ -136,6 +136,13 @@ function patchEve(old, fresh) {
   const rows = old.querySelector(".rows");
   const nr = fresh.querySelector(".rows");
   if (rows && nr) patchRows(rows, nr);
+  // The strip's 宿泊 row: replaced when it changed, added when new, gone when gone.
+  const st = old.querySelector(":scope > .tk-stay");
+  const ns = fresh.querySelector(":scope > .tk-stay");
+  if (st && ns) {
+    if (st.outerHTML !== ns.outerHTML) st.replaceWith(ns);
+  } else if (ns) old.append(ns);
+  else if (st) st.remove();
 }
 
 // A head that differs only in its two clocks (T1, every minute): only the
@@ -179,7 +186,7 @@ function patchTicket(old, fresh) {
   return old;
 }
 
-export function mountDays(root, store, { clock, where = null, storage = null, ready = null, onAllDays = () => {}, onStay = () => {}, onStop = () => {}, onAddStop = () => {}, onStampBook = () => {}, held = () => false, tickets = null, onTicket = () => {} } = {}) {
+export function mountDays(root, store, { clock, where = null, storage = null, ready = null, check = null, onAllDays = () => {}, onStay = () => {}, onStop = () => {}, onAddStop = () => {}, onStampBook = () => {}, held = () => false, tickets = null, onTicket = () => {} } = {}) {
   const count = el("button", "bar-t");
   count.type = "button";
   count.id = "dayCount";
@@ -215,14 +222,25 @@ export function mountDays(root, store, { clock, where = null, storage = null, re
   // The departure board (js/views/board.js): between the top line and the rail.
   // The line "This phone" (js/views/ready.js, issue 84) right after it: the
   // board's foot when the board shows, alone in the same glass when not.
+  // Between them, the owner's trip check line (js/views/check.js, issue 86):
+  // board, check line and "This phone" are one piece of glass. The board keeps
+  // its foot while either line shows; with no board above, the first line
+  // showing has round top corners, the last one round bottom corners.
   const board = mountBoard({ storage, onToggle: (on) => joinFoot(on) });
   function joinFoot(on = board.isShown()) {
-    if (!ready) return;
+    if (!ready && !check) return;
     // The line's place counts while it is being decided too (js/views/ready.js is-pending).
-    board.foot(on && !ready.el.hidden);
-    ready.el.classList.toggle("is-alone", !on);
+    const readyOn = !!ready && !ready.el.hidden;
+    const checkOn = !!check && !check.el.hidden;
+    board.foot(on && (checkOn || readyOn));
+    if (ready) ready.el.classList.toggle("is-alone", !on && !checkOn);
+    if (check) {
+      check.el.classList.toggle("is-top", !on);
+      check.el.classList.toggle("is-last", !readyOn);
+    }
   }
   root.replaceChildren(demo, bar, board.el, ...(ready ? [ready.el] : []), rail);
+  if (check) check.attach(root, ready ? ready.el : rail);
 
   let dates = []; // the dates of the drawn tickets, in order
   let states = []; // each one's dayState
@@ -532,7 +550,7 @@ export function mountDays(root, store, { clock, where = null, storage = null, re
     // A ticket's own buttons, found again by their day.
     const own = ["tk-stay", "tk-add"].find((c) => a.classList.contains(c));
     const pg = own ? a.closest(".pg") : null;
-    return { node: a, id: r ? r.dataset.id : null, cls: a.className, on: pg ? pg.dataset.date : null, own };
+    return { node: a, id: r ? r.dataset.id : null, cls: a.className, on: pg ? pg.dataset.date : null, own, stay: own === "tk-stay" ? a.dataset.stay : null, inEve: !!a.closest(".eve") };
   }
   function restoreFocus(spot) {
     if (!spot || document.activeElement === spot.node) return;
@@ -541,7 +559,12 @@ export function mountDays(root, store, { clock, where = null, storage = null, re
       const r = rail.querySelector('.r[data-id="' + CSS.escape(spot.id) + '"]');
       target = r && ((spot.cls && r.getElementsByClassName(spot.cls.split(" ")[0])[0]) || r.querySelector(".r-b"));
     }
-    if (!target && spot.on) target = rail.querySelector('.pg[data-date="' + CSS.escape(spot.on) + '"] .' + spot.own);
+    if (!target && spot.on) {
+      const pg = rail.querySelector('.pg[data-date="' + CSS.escape(spot.on) + '"]');
+      // A ticket can hold two stay rows (the strip's and its own): the same one.
+      if (pg && spot.stay) target = [...pg.querySelectorAll(".tk-stay")].find((x) => x.dataset.stay === spot.stay && !!x.closest(".eve") === spot.inEve);
+      if (!target && pg) target = pg.querySelector("." + spot.own);
+    }
     if (target) target.focus({ preventScroll: true });
   }
 
@@ -581,6 +604,7 @@ export function mountDays(root, store, { clock, where = null, storage = null, re
   function wipe() {
     board.clear();
     if (ready) ready.update(true);
+    if (check) check.update();
     joinFoot();
     dates = [];
     states = [];
@@ -611,6 +635,7 @@ export function mountDays(root, store, { clock, where = null, storage = null, re
     const stampToday = showStamps(s);
     const ok = s.status === "ready" && s.trip && s.trip.start && list(s.days).length;
     if (ready) ready.update(true);
+    if (check) check.update();
     if (!ok) {
       board.update(null);
       joinFoot();
@@ -701,6 +726,15 @@ export function mountDays(root, store, { clock, where = null, storage = null, re
           const hl = hereLine(eveStops.find((x) => x.id === eveNext), now.minutes, here);
           if (hl) model.eve.hereNext = hl;
         }
+        // That night's stay ends the strip, as every ticket ends with its own (#93).
+        const eveStay = stayShownFor(stays, eve.date);
+        if (eveStay && typeof eveStay.id === "string" && eveStay.id) {
+          model.eve.stay = eveStay;
+          // Before 04:00 the day's own last row is this same stay (R37): never twice,
+          // unless it really covers both nights.
+          const own = stayShownFor(stays, day.date);
+          if (model.stay && model.stay.id === eveStay.id && !(own && own.id === eveStay.id)) model.stay = null;
+        }
       }
       // Leave by, from where you are: only with a usable position near the next stop.
       if (nextId && here) {
@@ -724,6 +758,8 @@ export function mountDays(root, store, { clock, where = null, storage = null, re
         // with that ticket's own night (today's, before 04:00, last night's).
         const m = model.stay && tickets.stayMark ? tickets.stayMark(model.stay, s) : null;
         if (m) model.stayTag = { ...m, ...nightOf(model.stay, { today: day.date, minutes: day.date === now.date ? now.minutes : NIGHT_ENDS_MIN }) };
+        const em = model.eve && model.eve.stay && tickets.stayMark ? tickets.stayMark(model.eve.stay, s) : null;
+        if (em) model.eve.stayTag = { ...em, ...nightOf(model.eve.stay, { today: model.eve.date, minutes: model.eve.state === "today" ? now.minutes : NIGHT_ENDS_MIN }) };
       }
       // Asked once, on today's ticket, the first time a day has a next stop.
       if (nextId && where && where.supported() && where.state() === "unset") model.ask = true;
@@ -828,6 +864,8 @@ export function mountDays(root, store, { clock, where = null, storage = null, re
   store.subscribe(render);
   // What the line says changed (a picture kept, signal, a pass): the board may give or take back its face.
   if (ready) ready.subscribe(() => render(store.state));
+  // The trip check line comes or goes (a count, the day turning over): the block of lines is placed again.
+  if (check) check.subscribe(() => joinFoot());
   if (where) where.subscribe(() => render(store.state));
   // A picture reaching this phone turns its 券 box solid.
   if (tickets && tickets.subscribe) tickets.subscribe(() => render(store.state));

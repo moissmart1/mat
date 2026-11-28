@@ -163,10 +163,10 @@ for (const size of [BIG, LAPTOP]) {
         const l = await layout(page);
         assert.ok(l.daysShown && l.moneyShown, "the ticket is still beside the receipt");
         // Enter with focus on no field does what Ring it up does (a quick chip gives the title).
-        for (const k of ["8", "0", "0"]) await page.keyboard.press(k);
+        for (const k of ["8", "0"]) await page.keyboard.press(k);
         await page.click('#xQuick .chip[data-q="Coffee"]');
         await page.keyboard.press("Enter");
-        await until(() => backend.fake.tables.Expenses.filter((e) => Number(e.amount) === 800).length === 1, "the second line is sent");
+        await until(() => backend.fake.tables.Expenses.filter((e) => Number(e.amount) === 80).length === 1, "the second line is sent");
         // Enter on a key reached with Tab presses that key instead (here Done).
         await page.focus("#regDone");
         await page.keyboard.press("Shift+Tab");
