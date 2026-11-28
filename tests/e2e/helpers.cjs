@@ -206,6 +206,28 @@ async function atRest(page, selector, { open: isOpen = true, cls = "is-open", ti
   }, (message || selector + (isOpen ? " opens" : " closes")) + " (and comes to rest)", timeout);
 }
 
+// Waits until the strip of tickets (#rail) stands on `day` (1-based): the
+// counter says that day and the strip has glided all the way onto its ticket.
+// A square or an arrow starts a smooth glide, and the counter changes before
+// it ends. A click aimed at the arriving ticket during the glide races it:
+// Playwright passes the moment the target holds still for one frame and
+// scrolls it into view itself, and a scroll of the strip in the glide's first
+// half can cut the glide short and snap the strip back to the day it left. The
+// click then lands on a neighbour, which only selects that day (stay.e2e, CI
+// 2026-11-28, run 46118348947). A test that means to race the glide does so
+// on purpose, in one page.evaluate (stay.e2e's "a click on the day a square
+// is gliding to").
+async function railOn(page, day, timeout = 5000) {
+  await until(() => page.evaluate((d) => {
+    const rail = document.getElementById("rail");
+    const count = document.getElementById("dayCount");
+    const pages = rail ? rail.querySelectorAll(".pg") : [];
+    if (!pages[d - 1] || pages.length < 2 || !count || !count.textContent.startsWith("Day " + d + " ")) return false;
+    const step = pages[1].offsetLeft - pages[0].offsetLeft;
+    return step > 0 && Math.abs(rail.scrollLeft - (d - 1) * step) <= 1;
+  }, day), "the strip comes to rest on day " + day, timeout);
+}
+
 // The trimmed textContent of the first match, or null when there is none.
 function text(page, selector) {
   return page.evaluate((sel) => {
@@ -235,4 +257,4 @@ function visible(page, selector) {
   }, selector);
 }
 
-module.exports = { PORT, ORIGIN, SEED, PLAN, WITH_PLAN, NOON12, SEEDED_AT, makeBackend, open, ownKey, advance, until, atRest, text, expectText, visible };
+module.exports = { PORT, ORIGIN, SEED, PLAN, WITH_PLAN, NOON12, SEEDED_AT, makeBackend, open, ownKey, advance, until, atRest, railOn, text, expectText, visible };

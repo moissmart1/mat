@@ -788,10 +788,15 @@ cases.push({
     await expectText(page, "#tix .who3", "YouMoTrenton");
     // Mo's seal: his page, his picture by his name, not yours.
     await page.click('#tix .who3 button[data-k="1"]');
+    // The ring's colour fades over 0.12 s (.seal's transition) each time is-on
+    // moves, and while the pages glide it moves back to You until they are half
+    // way: so wait for the seals to come to rest too, or a slow runner reads a
+    // colour part way between ink and vermilion (CI 2026-11-28, run 46118348947).
     await until(() => page.evaluate(() => {
       const pp = document.querySelector("#tix [data-pp]");
-      return document.querySelectorAll("#tix .who3 .seal")[1].classList.contains("is-on") && Math.abs(pp.scrollLeft - pp.clientWidth) < 2;
-    }), "Mo's page is in view");
+      const seals = [...document.querySelectorAll("#tix .who3 .seal")];
+      return seals[1].classList.contains("is-on") && Math.abs(pp.scrollLeft - pp.clientWidth) < 2 && !seals.some((x) => x.getAnimations({ subtree: true }).some((a) => a.playState === "running"));
+    }), "Mo's page is in view and the seals have come to rest");
     const mo = await page.evaluate(() => {
       const pg = document.querySelector('#tix .pp-pg[data-who="Mo"]');
       return { head: pg.querySelector(".stub-who").textContent.replace(/\s+/g, " ").trim(), img: pg.querySelector(".wh-head .wh-s img").getAttribute("src"), ring: getComputedStyle(pg.querySelector(".wh-head .wh-s")).borderTopColor };

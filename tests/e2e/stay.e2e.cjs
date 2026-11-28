@@ -4,7 +4,7 @@
 // seed; the clock is 13:20 on Dec 12 in Japan, Day 3.
 
 const assert = require("node:assert/strict");
-const { WITH_PLAN, open, advance, until, atRest, text, expectText } = require("./helpers.cjs");
+const { WITH_PLAN, open, advance, until, atRest, railOn, text, expectText } = require("./helpers.cjs");
 
 // A 1x1 PNG in place of a real photo, and a stay seed with a photo address.
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==", "base64");
@@ -252,6 +252,9 @@ module.exports = [
     async run({ page }) {
       await ready(page);
       await page.click("#pager .sq:nth-child(4)");
+      // Its ticket in place first: a click while the strip glides races it (a
+      // click during the glide has its own case, below).
+      await railOn(page, 4);
       await openCard(page, "2026-12-13");
       assert.equal(await text(page, "#stay .sy-name"), "Niseko lodge");
       assert.ok((await size(page, "#stay .sy-name")) >= 28);

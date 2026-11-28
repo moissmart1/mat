@@ -8,7 +8,7 @@
 
 const assert = require("node:assert/strict");
 const fs = require("fs");
-const { WITH_PLAN, open, until, atRest, text } = require("./helpers.cjs");
+const { WITH_PLAN, open, until, atRest, railOn, text } = require("./helpers.cjs");
 
 const SHOTS = require("./shots.cjs")("loc");
 const shot = async (page, name) => {
@@ -182,6 +182,7 @@ module.exports = [
     async run({ page }) {
       await ready(page);
       await page.click("#pager .sq:nth-child(4)");
+      await railOn(page, 4);
       await openCard(page, "2026-12-13");
       assert.equal(await page.evaluate(() => document.querySelectorAll("#stay .drv").length), 0);
     },
