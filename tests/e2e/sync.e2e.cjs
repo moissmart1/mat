@@ -128,7 +128,7 @@ module.exports = [
     name: "a line rung up on one phone shows on the other at its next check, marked new",
     async run(ctx) {
       const { a, b } = await twoPhones(ctx);
-      await ringUp(a, "Yakitori", "1 2 0 0");
+      await ringUp(a, "Yakitori", "1 2 0");
       await waitRow(a, "Yakitori", (r) => !r.cls.includes("is-pending"), "saved on A");
       await idle(a);
       assert.equal(await rowOf(b, "Yakitori"), null, "B has not checked yet");
@@ -147,7 +147,7 @@ module.exports = [
     name: "coming back to the app checks at once",
     async run(ctx) {
       const { a, b } = await twoPhones(ctx);
-      await ringUp(a, "Gyoza", "8 0 0");
+      await ringUp(a, "Gyoza", "8 0");
       await waitRow(a, "Gyoza", (r) => !r.cls.includes("is-pending"), "saved on A");
       await idle(a);
       await comeBack(b);
@@ -159,7 +159,7 @@ module.exports = [
     name: "an undo on one phone takes the line off the other at its next check",
     async run(ctx) {
       const { a, b } = await twoPhones(ctx);
-      await ringUp(a, "Taxi", "3 0 0 0");
+      await ringUp(a, "Taxi", "3 0 0");
       await waitRow(a, "Taxi", (r) => !r.cls.includes("is-pending"), "saved on A");
       await idle(a);
       await comeBack(b);

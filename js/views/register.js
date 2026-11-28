@@ -8,10 +8,12 @@
 // root is the phone; the register sits at its bottom over the Money view.
 // Every new entry starts in dollars (CAD), also the next one after ringing up; the ¥/$ key
 // switches the one in hand, and a half-typed entry keeps its currency when put away and reopened.
+// Ring it up on whole dollars of $500 or more on a day in Japan asks "Yen or
+// dollars?" once first (issue #90, yenAsk); it changes no default.
 // storage is only used to clear the old mat.cur memory once.
 
 import { defaultRingDay, newId } from "../time.js";
-import { tripNow } from "../plan.js";
+import { tripNow, zoneOf } from "../plan.js";
 import { yen, dollars, pt, dayShort } from "../format.js";
 import { mountUneven, splitOf, toUnits, fromUnits } from "./uneven.js";
 import { isWide } from "../shape.js";
@@ -40,6 +42,36 @@ const WHY_MIN_ROOM = 200;
 const SIDEWAYS = "(orientation:landscape) and (max-height:520px)";
 const WHY_NOTE = "Each box is a tenth of a share. Counts what each of you paid for the group, plus what was sent on the slip. A hint, not a rule: whoever pays, the slip sorts it out.";
 const FIELDS = ["title", "amount", "currency", "paidBy", "day", "kind"]; // split, splitMode, splitVals go together
+// Ring it up asks "Yen or dollars?" (issue #90) for a whole-dollar amount of
+// at least this much, in cents: $500, Mo's figure.
+export const YEN_ASK_CENTS = 50000;
+// How long the question's keys ignore taps after it appears, so the second tap
+// of a double tap on Ring it up answers nothing.
+const ASK_GUARD_MS = 400;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+// Whether Ring it up should ask "Yen or dollars?" before ringing up this
+// draft (issue #90): an amount typed in dollars, the currency key never
+// pressed during this entry, no cents anywhere, at least YEN_ASK_CENTS, a
+// legal yen amount as the same digits, on a trip day in the trip's own zone
+// (Japan), and new or with its amount changed. Pure: no DOM.
+export function yenAsk(d, state) {
+  if (!d || d.cur !== "CAD" || d.curTouched === true) return false;
+  const amt = String(d.amt || "");
+  if (amt.includes(".")) return false;
+  if (d.mode === "exact" && (d.split || []).some((n) => String((d.exact || {})[n] || "").includes("."))) return false;
+  const cents = toUnits(amt, "CAD");
+  if (!(cents >= YEN_ASK_CENTS)) return false;
+  if (!(Number(amt) <= MAX_UNITS.JPY)) return false;
+  const trip = state && state.trip;
+  const day = d.day;
+  if (!trip || !DATE_RE.test(trip.start || "") || !DATE_RE.test(trip.end || "") || typeof day !== "string" || !DATE_RE.test(day)) return false;
+  if (day < trip.start || day > trip.end) return false;
+  const row = ((state && state.days) || []).find((x) => x && x.date === day);
+  if (zoneOf(trip, row) !== zoneOf(trip, null)) return false;
+  if (d.editId) return !!d.orig && cents !== Math.round(Number(d.orig.amount) * 100);
+  return true;
+}
 
 // Fixed markup only: names and titles go in later with textContent.
 const MARKUP = `
@@ -63,6 +95,12 @@ const MARKUP = `
   <button type="button" class="key" data-k="4">4</button><button type="button" class="key" data-k="5">5</button><button type="button" class="key" data-k="6">6</button><button type="button" class="key" data-k="cur" id="kCur">$ → ¥</button>
   <button type="button" class="key" data-k="1">1</button><button type="button" class="key" data-k="2">2</button><button type="button" class="key" data-k="3">3</button><button type="button" class="key go" data-k="go" id="kGo" disabled>Ring<br>it up</button>
   <button type="button" class="key" data-k="0">0</button><button type="button" class="key" data-k="00">00</button><button type="button" class="key" data-k=".">.</button>
+</div>
+<div class="ask" id="xAsk" role="group" aria-label="Yen or dollars?" tabindex="-1" hidden>
+  <button type="button" class="ask-y" id="askYen"><b></b><span></span></button>
+  <button type="button" class="ask-d" id="askCad"><b></b><span></span></button>
+  <div class="go-off" id="askOff" aria-hidden="true"></div>
+  <button type="button" class="ask-b" id="askBack">‹ Back to the keys</button>
 </div>`;
 
 function el(tag, cls, text) {
@@ -154,9 +192,14 @@ export function mountRegister(root, store, { now = () => Date.now(), storage = d
   };
 
   // tagged: the label whose kind the line carries while its title still reads so.
-  const blank = () => ({ amt: "", tagged: null, split: names(), mode: null, parts: {}, exact: {} });
+  // curTouched: the ¥/$ key was pressed during this entry (issue #90: then Ring it up never asks).
+  const blank = () => ({ amt: "", tagged: null, split: names(), mode: null, parts: {}, exact: {}, curTouched: false });
   let draft = { ...blank(), editId: null, orig: null, cur: "CAD", payer: "", day: "pre", rate: null };
   let opened = false;
+  // "Yen or dollars?" (issue #90): up while asking; its keys answer once askLive.
+  let asking = false;
+  let askLive = false;
+  let askTimer = null;
   let peopleShown = "";
   let whyOpen = false; // the reasoning under the whose-turn line
   let turnShown = null; // signature of the last drawing of the line
@@ -309,13 +352,105 @@ export function mountRegister(root, store, { now = () => Date.now(), storage = d
     else go.replaceChildren("Ring", el("br"), "it up");
     go.disabled = !canGo();
     uneven.render(draft);
+    drawAsk(shown);
+  }
+
+  // The question in the pad's place (issue #90), or the pad back. shown: the
+  // digits as the display groups them. Every figure goes in with textContent.
+  function drawAsk(shown) {
+    reg.classList.toggle("is-ask", asking);
+    reg.querySelector(".lcd").classList.toggle("is-ask", asking);
+    $("pad").hidden = asking;
+    $("xAsk").hidden = !asking;
+    if (!asking) return;
+    // The display: a boxed ? where the currency was, then the digits.
+    const amt = [el("span", "q", "?")];
+    for (const part of shown.split(/(,)/)) if (part) amt.push(part === "," ? el("span", "pt", ",") : document.createTextNode(part));
+    amtOut.replaceChildren(...amt);
+    $("xConv").textContent = "Yen or dollars?";
+    const n = Number(draft.amt);
+    const r = draft.rate;
+    const asYen = r > 0 ? "about " + dollars(Math.round((n / r) * 100)) : "";
+    const asCad = r > 0 ? "about " + yen(Math.round(n * r)) : "";
+    const verb = draft.editId ? "Save as " : "Ring up ";
+    const fill = (b, figure, word, about) => {
+      b.querySelector("b").textContent = figure;
+      const words = b.querySelector("span");
+      words.replaceChildren(word);
+      if (about) words.append(el("i", "", about));
+      b.setAttribute("aria-label", verb + shown + " " + word + (about ? ", " + about : ""));
+    };
+    fill($("askYen"), yen(n), "yen", asYen);
+    // Whole dollars (no cents can get here): "$12,000", not "$12,000.00".
+    fill($("askCad"), dollars(n * 100).replace(/\.00$/, ""), "dollars", asCad);
+    const off = $("askOff");
+    if (draft.editId) off.textContent = "Save";
+    else off.replaceChildren("Ring", el("br"), "it up");
+  }
+
+  // Everything about the entry stands still while it asks, so the rule cannot
+  // change under the question.
+  function setAskInert(on) {
+    for (const n of [what, reg.querySelector(".step"), chips, $("xTurn"), $("xWhy"), reg.querySelector(".who")]) n.inert = on;
+  }
+
+  function openAsk() {
+    asking = true;
+    askLive = false;
+    clearTimeout(askTimer);
+    askTimer = setTimeout(() => {
+      askTimer = null;
+      askLive = true;
+    }, ASK_GUARD_MS);
+    stopHold();
+    uneven.close();
+    whyOpen = false;
+    setAskInert(true);
+    render();
+    // The group itself, never an answer: Enter must never answer.
+    $("xAsk").focus({ preventScroll: true });
+  }
+
+  // The question goes, with its timer; nothing is saved here.
+  function endAsk() {
+    clearTimeout(askTimer);
+    askTimer = null;
+    askLive = false;
+    if (!asking) return;
+    asking = false;
+    if ($("xAsk").contains(document.activeElement)) document.activeElement.blur();
+    setAskInert(false);
+  }
+
+  function answer(cur) {
+    if (!asking || !askLive) return;
+    endAsk();
+    // Yen: the same whole digits, and an exact split's figures, are now yen.
+    if (cur === "JPY") draft.cur = "JPY";
+    if (!canGo()) {
+      draft.cur = "CAD";
+      render();
+      return;
+    }
+    send();
+  }
+
+  // Back: the keys again, the amount still typed. A tap waits out the guard
+  // like the answers; Escape (force) does not, as it saves nothing.
+  function askBack(force) {
+    if (!asking || (!askLive && !force)) return;
+    endAsk();
+    render();
+    go.focus({ preventScroll: true });
   }
 
   // ---- keys ----
 
   function press(k) {
+    if (asking) return; // the keys are put away while it asks
     if (k === "go") return ringUp();
     if (k === "cur") {
+      draft.curTouched = true;
       draft.cur = draft.cur === "JPY" ? "CAD" : "JPY";
       if (draft.cur === "JPY") {
         draft.amt = draft.amt.split(".")[0];
@@ -357,6 +492,14 @@ export function mountRegister(root, store, { now = () => Date.now(), storage = d
 
   function ringUp() {
     if (!canGo()) return;
+    // Dollars typed where yen is likely: ask once first (issue #90).
+    if (!asking && yenAsk(draft, store.state)) return openAsk();
+    send();
+  }
+
+  // Rings the draft up as it stands (or saves the edit): Ring it up, or an
+  // answer to the question.
+  function send() {
     const line = fields();
     if (draft.editId) {
       const patch = {};
@@ -428,7 +571,7 @@ export function mountRegister(root, store, { now = () => Date.now(), storage = d
       draft.day = day || today();
       // A half-typed entry put away with Done keeps its own currency, so its
       // digits never change meaning; an empty one starts in dollars.
-      if (draft.amt === "") draft.cur = "CAD";
+      if (draft.amt === "") Object.assign(draft, { cur: "CAD", curTouched: false });
     }
     show();
   }
@@ -453,6 +596,7 @@ export function mountRegister(root, store, { now = () => Date.now(), storage = d
   }
 
   function close() {
+    endAsk(); // the question and its timer go with the register, also when something else closes it
     if (!opened) return;
     opened = false;
     stopHold();
@@ -476,6 +620,9 @@ export function mountRegister(root, store, { now = () => Date.now(), storage = d
     if (b && !b.disabled) press(b.dataset.k);
   });
   $("regDone").addEventListener("click", close);
+  $("askYen").addEventListener("click", () => answer("JPY"));
+  $("askCad").addEventListener("click", () => answer("CAD"));
+  $("askBack").addEventListener("click", () => askBack(false));
   $("xTurn").addEventListener("click", () => {
     whyOpen = !whyOpen;
     drawTurn();
@@ -488,6 +635,8 @@ export function mountRegister(root, store, { now = () => Date.now(), storage = d
   });
   document.addEventListener("keydown", (ev) => {
     if (ev.key !== "Escape" || !opened) return;
+    // While it asks, Escape is Back.
+    if (asking) return askBack(true);
     // WIDE: Escape is the top-most panel's Done, so the uneven panel's own first.
     if (isWide() && uneven.isOpen()) $("unDone").click();
     else close();
@@ -503,7 +652,8 @@ export function mountRegister(root, store, { now = () => Date.now(), storage = d
   document.addEventListener("keydown", (ev) => {
     if (ev.key === "Tab") tabbed = true;
     // keyCode 229: an input method is at work (Safari confirms a conversion with Enter and isComposing false).
-    if (!opened || ev.defaultPrevented || ev.isComposing || ev.keyCode === 229 || ev.ctrlKey || ev.metaKey || ev.altKey || !isWide()) return;
+    // While it asks, digits and Enter do nothing (Enter must never answer).
+    if (!opened || asking || ev.defaultPrevented || ev.isComposing || ev.keyCode === 229 || ev.ctrlKey || ev.metaKey || ev.altKey || !isWide()) return;
     const at = ev.target instanceof Element ? ev.target : null;
     if (at && at.closest("input, textarea, select, [contenteditable]")) return;
     let k = null;
